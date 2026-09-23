@@ -1,0 +1,32 @@
+/* Color Palette Variables based on Project Specifications */
+:root {
+  /* Core Palette Colors from Reference Image */
+  --color-bg: #F2F3F5;        /* Light canvas base */
+  --color-dark: #1C1F26;      /* Dark slate text / header primary */
+  --color-primary: #3E5C76;   /* Deep Slate Blue */
+  --color-secondary: #748CAB; /* Steel Slate Blue */
+
+  /* Neutral UI Accents */
+  --color-white: #FFFFFF;
+  --color-border: #D0D7DE;
+  --color-border-light: #E2E8F0;
+  --color-text-muted: #57606A;
+  --color-hover-bg: #EBF3FA;
+
+  /* Semantic Status Colors */
+  --color-success: #2E7D32;
+  --color-success-bg: #DCFCE7;
+  --color-warning: #D97706;
+  --color-warning-bg: #FEF3C7;
+  --color-danger: #D32F2F;
+  --color-danger-bg: #FEF2F2;
+
+  /* Spacing & Layout */
+  --sidebar-width: 250px;
+  --navbar-height: 64px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+}

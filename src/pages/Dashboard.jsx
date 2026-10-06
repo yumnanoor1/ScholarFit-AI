@@ -1,385 +1,243 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { Bell, Edit3 } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
-import { apiService } from '../services/api';
-import { 
-  Building2, 
-  Award, 
-  AlertCircle, 
-  FileText, 
-  Globe, 
-  MessageSquare, 
-  ArrowRight 
-} from 'lucide-react';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, matchStatistics } = useProfile();
+  const firstName = profile.firstName || (profile.name || '').split(' ')[0] || 'there';
 
-  const userName = user?.name || profile?.name || "John";
-  const completionPercentage = profile?.profileCompletionPercentage || 75;
+  const topOpportunities = [
+    {
+      name: 'Chevening Scholarship',
+      country: 'United Kingdom',
+      feasibility: 92,
+      eligibility: 'STRONG',
+      netCost: '$0',
+      deadline: 'Oct 15',
+      deadlineColor: '#D32F2F'
+    },
+    {
+      name: 'Fulbright Student Program',
+      country: 'United States',
+      feasibility: 84,
+      eligibility: 'STRONG',
+      netCost: '$0',
+      deadline: 'Nov 03',
+      deadlineColor: 'inherit'
+    },
+    {
+      name: 'DAAD Research Grant',
+      country: 'Germany',
+      feasibility: 71,
+      eligibility: 'PARTIAL',
+      netCost: '$4,200',
+      deadline: 'Nov 20',
+      deadlineColor: 'inherit'
+    },
+    {
+      name: "Commonwealth Master's Scholarship",
+      country: 'Canada',
+      feasibility: 68,
+      eligibility: 'PARTIAL',
+      netCost: '$6,800',
+      deadline: 'Dec 07',
+      deadlineColor: 'inherit'
+    }
+  ];
+
+  const upcomingDeadlines = [
+    { name: 'Chevening', date: 'Oct 15, 2026', daysLeft: '12 days left', urgent: true },
+    { name: 'Fulbright', date: 'Nov 03, 2026', daysLeft: '31 days left', urgent: false },
+    { name: 'DAAD Master', date: 'Nov 20, 2026', daysLeft: '48 days left', urgent: false },
+    { name: 'Commonwealth', date: 'Dec 07, 2026', daysLeft: '65 days left', urgent: false }
+  ];
 
   return (
-    <div className="page-container" style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px' }}>
+    <div className="page-container" style={{ maxWidth: '1160px', margin: '0 auto', padding: '32px 24px', backgroundColor: 'var(--color-bg)' }}>
       
-      {/* Greeting Header */}
-      <div style={{ textAlign: 'center', margin: '20px 0 36px 0' }}>
-        <h1 style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--color-dark)', marginBottom: '6px' }}>
-          Good morning, {userName.split(' ')[0]}!
-        </h1>
-        <p style={{ fontSize: '1rem', color: 'var(--color-text-muted)' }}>
-          Here's an update on your study abroad journey.
-        </p>
-      </div>
-
-      {/* Main Dashboard Grid Structure */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '24px', alignItems: 'start' }}>
-        
-        {/* Left Primary Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* Profile Completion Card */}
-          <div className="card" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-dark)' }}>
-                Profile Completion
-              </h3>
-              <span style={{
-                backgroundColor: '#FEF3C7',
-                color: '#D97706',
-                padding: '4px 12px',
-                borderRadius: '12px',
-                fontSize: '0.8rem',
-                fontWeight: '700'
-              }}>
-                {completionPercentage}% Complete
-              </span>
+      {/* 1. Header Row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
+        <div>
+          <h1 style={{ fontSize: '2.2rem', fontFamily: 'serif', fontWeight: '600', color: 'var(--color-dark)', marginBottom: '8px' }}>
+            Good morning, {firstName}
+          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Profile completeness</span>
+            <div style={{ width: '120px', height: '4px', backgroundColor: '#E2E8F0', borderRadius: '2px', overflow: 'hidden' }}>
+              <div style={{ width: `${profile.profileCompletionPercentage || 0}%`, height: '100%', backgroundColor: 'var(--color-dark)' }} />
             </div>
-
-            {/* Progress Bar Container */}
-            <div style={{
-              width: '100%',
-              height: '10px',
-              backgroundColor: '#E2E8F0',
-              borderRadius: '5px',
-              overflow: 'hidden',
-              marginBottom: '20px'
-            }}>
-              <div style={{
-                width: `${completionPercentage}%`,
-                height: '100%',
-                backgroundColor: 'var(--color-primary)',
-                borderRadius: '5px',
-                transition: 'width 0.4s ease'
-              }} />
-            </div>
-
-            {/* Best Next Action Sub-box */}
-            <div style={{
-              backgroundColor: '#F8FAFC',
-              border: '1px solid var(--color-border-light)',
-              borderRadius: '8px',
-              padding: '16px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: '16px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  backgroundColor: '#E2E8F0',
-                  color: 'var(--color-primary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0
-                }}>
-                  <AlertCircle size={18} />
-                </div>
-                <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '2px' }}>
-                    Best Next Action
-                  </h4>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-                    Improve English language score or complete missing profile details.
-                  </p>
-                </div>
-              </div>
-
-              <button 
-                className="btn btn-primary" 
-                onClick={() => navigate('/profile')}
-                style={{ padding: '8px 16px', fontSize: '0.85rem', flexShrink: 0 }}
-              >
-                Complete Now
-              </button>
-            </div>
+            <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: 'var(--color-dark)' }}>{profile.profileCompletionPercentage || 0}%</span>
           </div>
-
-          {/* Matches & Scholarships Counter Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            
-            {/* Recommended Universities Card */}
-            <div className="card" style={{ padding: '24px' }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '8px',
-                backgroundColor: '#EBF3FA',
-                color: 'var(--color-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '16px'
-              }}>
-                <Building2 size={22} />
-              </div>
-              <span style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', fontWeight: '500' }}>
-                Recommended Universities
-              </span>
-              <div style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--color-dark)', margin: '4px 0 12px 0' }}>
-                5
-              </div>
-              <button 
-                onClick={() => navigate('/universities')}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--color-primary)',
-                  fontWeight: '600',
-                  fontSize: '0.85rem',
-                  cursor: 'pointer',
-                  padding: 0,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                View Matches →
-              </button>
-            </div>
-
-            {/* Matching Scholarships Card */}
-            <div className="card" style={{ padding: '24px' }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '8px',
-                backgroundColor: '#DCFCE7',
-                color: 'var(--color-success)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '16px'
-              }}>
-                <Award size={22} />
-              </div>
-              <span style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', fontWeight: '500' }}>
-                Matching Scholarships
-              </span>
-              <div style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--color-dark)', margin: '4px 0 12px 0' }}>
-                8
-              </div>
-              <button 
-                onClick={() => navigate('/scholarships')}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--color-success)',
-                  fontWeight: '600',
-                  fontSize: '0.85rem',
-                  cursor: 'pointer',
-                  padding: 0,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                Explore Funding →
-              </button>
-            </div>
-
-          </div>
-
-          {/* Upcoming Deadlines Card */}
-          <div className="card" style={{ padding: '24px' }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '20px' }}>
-              Upcoming Deadlines
-            </h3>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              
-              {/* Deadline Item 1 */}
-              <div style={{
-                border: '1px solid var(--color-border)',
-                borderRadius: '8px',
-                padding: '16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{
-                    backgroundColor: '#F1F5F9',
-                    border: '1px solid var(--color-border-light)',
-                    borderRadius: '6px',
-                    padding: '8px 12px',
-                    textAlign: 'center',
-                    minWidth: '54px'
-                  }}>
-                    <div style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>DEC</div>
-                    <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--color-dark)' }}>15</div>
-                  </div>
-                  <div>
-                    <h4 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '2px' }}>
-                      University of Toronto - Application
-                    </h4>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-                      Early Bird Deadline
-                    </p>
-                  </div>
-                </div>
-                <span style={{ fontSize: '0.82rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
-                  12 Days Left
-                </span>
-              </div>
-
-              {/* Deadline Item 2 */}
-              <div style={{
-                border: '1px solid var(--color-border)',
-                borderRadius: '8px',
-                padding: '16px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <div style={{
-                    backgroundColor: '#F1F5F9',
-                    border: '1px solid var(--color-border-light)',
-                    borderRadius: '6px',
-                    padding: '8px 12px',
-                    textAlign: 'center',
-                    minWidth: '54px'
-                  }}>
-                    <div style={{ fontSize: '0.7rem', fontWeight: '700', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>JAN</div>
-                    <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--color-dark)' }}>05</div>
-                  </div>
-                  <div>
-                    <h4 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '2px' }}>
-                      Global Excellence Scholarship
-                    </h4>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-                      Supporting Documents Required
-                    </p>
-                  </div>
-                </div>
-                <span style={{ fontSize: '0.82rem', fontWeight: '600', color: 'var(--color-text-muted)' }}>
-                  32 Days Left
-                </span>
-              </div>
-
-            </div>
-          </div>
-
         </div>
 
-        {/* Right Secondary Sidebar Column */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
-          {/* Dark Funding Summary Card */}
-          <div style={{
-            backgroundColor: 'var(--color-dark)',
-            color: '#FFFFFF',
-            borderRadius: '12px',
-            padding: '28px 24px',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)'
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button style={{
+            width: '40px',
+            height: '40px',
+            borderRadius: '50%',
+            backgroundColor: '#FFFFFF',
+            border: '1px solid var(--color-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer'
           }}>
-            <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '20px', color: '#FFFFFF' }}>
-              Funding Summary
-            </h3>
+            <Bell size={18} color="var(--color-dark)" />
+          </button>
+          <button 
+            className="btn btn-primary"
+            onClick={() => navigate('/scholarships')}
+            style={{ padding: '10px 20px', fontSize: '0.88rem', backgroundColor: '#1C2833', color: '#FFFFFF', borderRadius: '6px' }}
+          >
+            Find Scholarships
+          </button>
+        </div>
+      </div>
 
-            <div style={{ marginBottom: '24px' }}>
-              <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: '#A0AEC0', fontWeight: '700', letterSpacing: '0.5px' }}>
-                POTENTIAL FUNDING
-              </span>
-              <div style={{ fontSize: '2.2rem', fontWeight: '800', color: '#FFFFFF', margin: '4px 0 2px 0' }}>
-                $42,500
-              </div>
-              <p style={{ fontSize: '0.78rem', color: '#A0AEC0', fontStyle: 'italic' }}>
-                Based on 8 matched scholarships
-              </p>
-            </div>
+      <hr style={{ border: 'none', borderTop: '1px solid #E2E8F0', marginBottom: '32px' }} />
 
-            <hr style={{ border: 'none', borderTop: '1px solid #2D333F', margin: '20px 0' }} />
+      {/* 2. Key Metrics Row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '40px' }}>
+        <div style={{ borderRight: '1px solid #E2E8F0', paddingRight: '16px' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Eligible</span>
+          <div style={{ fontSize: '2.2rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '4px' }}>{matchStatistics.eligibleCount}</div>
+        </div>
+        <div style={{ borderRight: '1px solid #E2E8F0', paddingRight: '16px' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Funded options</span>
+          <div style={{ fontSize: '2.2rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '4px' }}>{matchStatistics.fundedCount}</div>
+        </div>
+        <div style={{ borderRight: '1px solid #E2E8F0', paddingRight: '16px' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Median listed tuition</span>
+          <div style={{ fontSize: '1.6rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '8px' }}>{matchStatistics.medianTuition}</div>
+        </div>
+        <div>
+          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Next deadline</span>
+          <div style={{ fontSize: '2.2rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '4px' }}>
+            12 <span style={{ fontSize: '1rem', fontWeight: 'normal', color: 'var(--color-text-muted)' }}>days</span>
+          </div>
+        </div>
+      </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '0.9rem', marginBottom: '28px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#CBD5E1' }}>
-                <span>Avg. Annual Tuition</span>
-                <strong style={{ color: '#FFFFFF' }}>$28,000</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#CBD5E1' }}>
-                <span>Living Expenses</span>
-                <strong style={{ color: '#FFFFFF' }}>$15,000</strong>
-              </div>
-            </div>
-
+      {/* 3. Main Dashboard Layout Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '32px', alignItems: 'start' }}>
+        
+        {/* Left Table Section */}
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)' }}>Top opportunities</h3>
             <button 
-              className="btn"
-              onClick={() => navigate('/financial')}
-              style={{
-                width: '100%',
-                backgroundColor: 'var(--color-primary)',
-                color: '#FFFFFF',
-                padding: '12px',
-                fontSize: '0.9rem',
-                fontWeight: '600',
-                borderRadius: '6px',
-                border: 'none',
-                cursor: 'pointer'
-              }}
+              onClick={() => navigate('/scholarships')} 
+              style={{ background: 'none', border: 'none', fontSize: '0.82rem', color: 'var(--color-text-muted)', cursor: 'pointer' }}
             >
-              Detailed Financial Plan
+              View all matching
             </button>
           </div>
 
-          {/* Resources Card */}
-          <div className="card" style={{ padding: '24px' }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '16px' }}>
-              Resources
-            </h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #E2E8F0', color: 'var(--color-text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                <th style={{ padding: '12px 0', fontWeight: '600' }}>NAME</th>
+                <th style={{ padding: '12px 0', fontWeight: '600' }}>COUNTRY</th>
+                <th style={{ padding: '12px 0', fontWeight: '600' }}>FEASIBILITY</th>
+                <th style={{ padding: '12px 0', fontWeight: '600' }}>ELIGIBILITY</th>
+                <th style={{ padding: '12px 0', fontWeight: '600', textAlign: 'right' }}>NET COST</th>
+                <th style={{ padding: '12px 0', fontWeight: '600', textAlign: 'right' }}>DEADLINE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topOpportunities.map((item, idx) => (
+                <tr key={idx} style={{ borderBottom: '1px solid #F1F5F9' }}>
+                  <td style={{ padding: '16px 0', fontWeight: '600', color: 'var(--color-dark)' }}>{item.name}</td>
+                  <td style={{ padding: '16px 0', color: 'var(--color-text-muted)' }}>{item.country}</td>
+                  <td style={{ padding: '16px 0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ width: '20px', fontWeight: '600', fontSize: '0.82rem' }}>{item.feasibility}</span>
+                      <div style={{ width: '60px', height: '4px', backgroundColor: '#E2E8F0', borderRadius: '2px', overflow: 'hidden' }}>
+                        <div style={{
+                          width: `${item.feasibility}%`,
+                          height: '100%',
+                          backgroundColor: item.feasibility >= 80 ? '#2E7D32' : '#D97706'
+                        }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ padding: '16px 0' }}>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '2px 10px',
+                      borderRadius: '12px',
+                      fontSize: '0.7rem',
+                      fontWeight: '700',
+                      border: item.eligibility === 'STRONG' ? '1px solid #A7F3D0' : '1px solid #FDE68A',
+                      color: item.eligibility === 'STRONG' ? '#047857' : '#B45309',
+                      backgroundColor: item.eligibility === 'STRONG' ? '#ECFDF5' : '#FFFBEB'
+                    }}>
+                      • {item.eligibility}
+                    </span>
+                  </td>
+                  <td style={{ padding: '16px 0', textAlign: 'right', fontWeight: '600', color: 'var(--color-dark)' }}>{item.netCost}</td>
+                  <td style={{ padding: '16px 0', textAlign: 'right', fontWeight: '600', color: item.deadlineColor }}>{item.deadline}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              
-              <div 
+        {/* Right Sidebar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+          
+          {/* Best Next Action Card */}
+          <div>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '16px' }}>Best next action</h3>
+            <div style={{
+              backgroundColor: '#FFFFFF',
+              border: '1px solid #E2E8F0',
+              borderRadius: '8px',
+              padding: '20px'
+            }}>
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                <Edit3 size={18} color="var(--color-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-dark)', lineHeight: '1.5' }}>
+                  Finish your <strong>personal statement</strong> for the Chevening Scholarship to improve your feasibility score by 15%.
+                </p>
+              </div>
+              <button 
+                className="btn" 
                 onClick={() => navigate('/documents')}
-                style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', color: 'var(--color-dark)', fontSize: '0.9rem', fontWeight: '500' }}
+                style={{
+                  width: '100%',
+                  backgroundColor: '#1C2833',
+                  color: '#FFFFFF',
+                  padding: '10px',
+                  fontSize: '0.85rem',
+                  fontWeight: '600',
+                  borderRadius: '6px',
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
               >
-                <FileText size={18} color="var(--color-text-muted)" />
-                <span>Document Checklist</span>
-              </div>
+                Continue Application
+              </button>
+            </div>
+          </div>
 
-              <div 
-                onClick={() => alert("Redirecting to visa requirement guidelines...")}
-                style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', color: 'var(--color-dark)', fontSize: '0.9rem', fontWeight: '500' }}
-              >
-                <Globe size={18} color="var(--color-text-muted)" />
-                <span>Visa Requirements</span>
-              </div>
-
-              <div 
-                onClick={() => alert("Opening AI Counselor Chat...")}
-                style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', color: 'var(--color-dark)', fontSize: '0.9rem', fontWeight: '500' }}
-              >
-                <MessageSquare size={18} color="var(--color-text-muted)" />
-                <span>Counselor Chat</span>
-              </div>
-
+          {/* Upcoming Deadlines Widget */}
+          <div>
+            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '16px' }}>Upcoming deadlines</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {upcomingDeadlines.map((dl, idx) => (
+                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', paddingBottom: '10px', borderBottom: '1px solid #F1F5F9' }}>
+                  <div>
+                    <div style={{ fontWeight: '600', color: 'var(--color-dark)' }}>{dl.name}</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>{dl.date}</div>
+                  </div>
+                  <span style={{ fontSize: '0.78rem', fontWeight: '600', color: dl.urgent ? '#D32F2F' : '#D97706' }}>
+                    {dl.daysLeft}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
 

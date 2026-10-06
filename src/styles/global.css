@@ -1,4 +1,6 @@
+@import "tailwindcss";
 @import './variables.css';
+@config "../../tailwind.config.js";
 
 * {
   box-sizing: border-box;
@@ -97,4 +99,45 @@ body {
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.home-header {
+  padding: 20px 48px;
+}
+
+.home-nav {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+
+.home-page-aurora {
+  --home-header-height: 78px;
+}
+
+.home-centered-hero {
+  min-height: max(520px, calc(100svh - var(--home-header-height) - var(--home-header-height)));
+}
+
+@media (max-width: 640px) {
+  .home-header {
+    padding: 14px 16px;
+  }
+
+  .home-page-aurora {
+    --home-header-height: 66px;
+  }
+
+  .home-nav {
+    gap: 12px;
+  }
+
+  .home-nav-link {
+    display: none;
+  }
+
+  .home-nav .btn {
+    padding: 8px 14px;
+  }
+
 }

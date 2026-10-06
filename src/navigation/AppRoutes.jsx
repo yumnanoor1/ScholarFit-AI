@@ -1,4 +1,3 @@
-import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 
 // Global Context Providers
@@ -18,6 +17,9 @@ import Register from '../pages/Register';
 // Protected Application Pages
 import Dashboard from '../pages/Dashboard';
 import Profile from '../pages/Profile';
+import ProfileSetupChoice from '../pages/ProfileSetupChoice';
+import CvUpload from '../pages/CvUpload';
+import ProfileVerification from '../pages/ProfileVerification';
 import Documents from '../pages/Documents';
 import Universities from '../pages/Universities';
 import UniversityDetails from '../pages/UniversityDetails';
@@ -56,6 +58,9 @@ export default function AppRoutes() {
                   
                   <main style={{ flex: 1, paddingBottom: '30px' }}>
                     <Routes>
+                      <Route path="/profile-setup" element={<ProfileSetupChoice />} />
+                      <Route path="/profile-setup/cv" element={<CvUpload />} />
+                      <Route path="/profile/verify" element={<ProfileVerification />} />
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/profile" element={<Profile />} />
                       <Route path="/documents" element={<Documents />} />

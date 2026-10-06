@@ -1,21 +1,20 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GraduationCap, Award, DollarSign, ArrowRight } from 'lucide-react';
+import { GraduationCap, Award, DollarSign } from 'lucide-react';
+import { AuroraHero } from '@/components/ui/aurora-hero-bg';
 
 export default function Home() {
   const navigate = useNavigate();
 
   return (
-    <div style={{ backgroundColor: '#FFFFFF', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      
+    <AuroraHero className="home-page-aurora min-h-screen flex-col items-stretch justify-start overflow-hidden bg-slate-950">
+    <div className="min-h-screen w-full" style={{ display: 'flex', flexDirection: 'column', color: '#F8FAFC' }}>
       {/* 1. Header Navigation */}
-      <header style={{
+      <header className="home-header" style={{
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: '20px 48px',
-        borderBottom: '1px solid #E5E7EB',
-        backgroundColor: '#FFFFFF',
+        borderBottom: '1px solid rgba(255,255,255,0.14)',
+        backgroundColor: 'rgba(15,23,42,0.35)',
         position: 'sticky',
         top: 0,
         zIndex: 50
@@ -35,14 +34,14 @@ export default function Home() {
           }}>
             F
           </div>
-          <span style={{ fontWeight: '700', fontSize: '1.1rem', color: 'var(--color-dark)' }}>
-            FitScholar <span style={{ color: 'var(--color-primary)', fontWeight: '400' }}>AI</span>
+          <span style={{ fontWeight: '700', fontSize: '1.1rem', color: '#F8FAFC' }}>
+            FitScholar <span style={{ color: '#C4B5FD', fontWeight: '400' }}>AI</span>
           </span>
         </div>
 
-        <nav style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
-          <a href="#features" style={{ color: 'var(--color-dark)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: '500' }}>Features</a>
-          <a href="#how-it-works" style={{ color: 'var(--color-dark)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: '500' }}>How It Works</a>
+        <nav className="home-nav">
+          <a className="home-nav-link" href="#features" style={{ color: '#E2E8F0', textDecoration: 'none', fontSize: '0.9rem', fontWeight: '500' }}>Features</a>
+          <a className="home-nav-link" href="#how-it-works" style={{ color: '#E2E8F0', textDecoration: 'none', fontSize: '0.9rem', fontWeight: '500' }}>How It Works</a>
           <button 
             className="btn btn-primary" 
             onClick={() => navigate('/login')}
@@ -54,38 +53,23 @@ export default function Home() {
       </header>
 
       {/* 2. Hero Section */}
-      <section style={{
-        textAlign: 'center',
-        padding: '100px 20px 80px 20px',
-        maxWidth: '900px',
-        margin: '0 auto'
-      }}>
-        <h1 style={{
-          fontSize: '3rem',
-          fontWeight: '800',
-          color: 'var(--color-dark)',
-          lineHeight: '1.2',
-          letterSpacing: '-0.5px',
-          marginBottom: '20px'
-        }}>
-          Go from "I want to study abroad" to <span style={{ color: 'var(--color-primary)' }}>"I am going"</span>
-        </h1>
-        <p style={{
-          fontSize: '1.1rem',
-          color: 'var(--color-text-muted)',
-          lineHeight: '1.6',
-          maxWidth: '680px',
-          margin: '0 auto 36px auto'
-        }}>
-          FitScholar AI matches your profile to the best universities, scholarships, and funding opportunities worldwide—saving you time, money, and stress.
-        </p>
-        <button 
-          className="btn btn-primary" 
-          onClick={() => navigate('/register')}
-          style={{ padding: '14px 32px', fontSize: '1rem', borderRadius: '6px' }}
-        >
-          Get Started
-        </button>
+      <section className="home-centered-hero flex flex-col items-center justify-center px-5 py-20 text-center">
+        <div className="mx-auto max-w-4xl">
+          <h1 className="text-4xl font-extrabold leading-tight text-white sm:text-6xl lg:text-7xl">
+            Your Master&apos;s Journey Starts Here
+          </h1>
+          <p className="mx-auto mb-8 mt-6 max-w-2xl text-base leading-relaxed text-slate-200 sm:text-xl">
+            Find Master&apos;s programs, scholarships, and funding that fit your academic profile and goals.
+          </p>
+          <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <button className="btn btn-primary" onClick={() => navigate('/register')} style={{ padding: '14px 32px', fontSize: '1rem', borderRadius: '6px' }}>
+              Get Started
+            </button>
+            <button className="btn btn-outline" onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} style={{ padding: '14px 28px', color: '#F8FAFC', borderColor: 'rgba(255,255,255,0.55)' }}>
+              Explore Features
+            </button>
+          </div>
+        </div>
       </section>
 
       {/* 3. Problem Statement Section */}
@@ -95,22 +79,21 @@ export default function Home() {
         maxWidth: '800px',
         margin: '0 auto'
       }}>
-        <h2 style={{ fontSize: '1.8rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '16px' }}>
+        <h2 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '16px' }}>
           Studying abroad is complex. We make it simple.
         </h2>
-        <p style={{ fontSize: '1rem', color: 'var(--color-text-muted)', lineHeight: '1.6' }}>
+        <p style={{ fontSize: '1rem', color: '#CBD5E1', lineHeight: '1.6' }}>
           Thousands of universities, countless scholarships, and endless application forms. Most students miss opportunities because they can't find them. FitScholar AI scans everything and surfaces only what fits you.
         </p>
       </section>
 
       {/* 4. How It Works Section */}
       <section id="how-it-works" style={{
-        backgroundColor: 'var(--color-bg)',
         padding: '80px 20px',
         textAlign: 'center'
       }}>
         <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-          <h2 style={{ fontSize: '1.8rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '48px' }}>
+          <h2 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '48px' }}>
             How FitScholar AI works
           </h2>
 
@@ -121,7 +104,7 @@ export default function Home() {
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                backgroundColor: 'var(--color-primary)',
+                backgroundColor: 'rgba(139,92,246,0.72)',
                 color: '#FFFFFF',
                 display: 'flex',
                 alignItems: 'center',
@@ -132,10 +115,10 @@ export default function Home() {
               }}>
                 1
               </div>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '8px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '8px' }}>
                 Create Your Profile
               </h3>
-              <p style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+              <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Share your grades, interests, budget, and abroad expectations in minutes.
               </p>
             </div>
@@ -146,7 +129,7 @@ export default function Home() {
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                backgroundColor: 'var(--color-primary)',
+                backgroundColor: 'rgba(59,130,246,0.72)',
                 color: '#FFFFFF',
                 display: 'flex',
                 alignItems: 'center',
@@ -157,10 +140,10 @@ export default function Home() {
               }}>
                 2
               </div>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '8px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '8px' }}>
                 Get Matched
               </h3>
-              <p style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+              <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Our AI ranks universities and scholarships by your real chance of success.
               </p>
             </div>
@@ -171,7 +154,7 @@ export default function Home() {
                 width: '48px',
                 height: '48px',
                 borderRadius: '50%',
-                backgroundColor: 'var(--color-primary)',
+                backgroundColor: 'rgba(236,72,153,0.72)',
                 color: '#FFFFFF',
                 display: 'flex',
                 alignItems: 'center',
@@ -182,10 +165,10 @@ export default function Home() {
               }}>
                 3
               </div>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '8px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '8px' }}>
                 Apply Confidently
               </h3>
-              <p style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+              <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Track deadlines, get step-by-step guidance, and apply to the right place at the right time.
               </p>
             </div>
@@ -196,19 +179,19 @@ export default function Home() {
       {/* 5. Features Grid Section */}
       <section id="features" style={{ padding: '80px 20px', textAlign: 'center' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
-          <h2 style={{ fontSize: '1.8rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '48px' }}>
+          <h2 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '48px' }}>
             Everything you need to go global
           </h2>
 
           <div className="grid-3" style={{ gap: '24px' }}>
             {/* Feature 1 */}
-            <div className="card" style={{ textAlign: 'left', padding: '28px 24px' }}>
+            <div className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
               <div style={{
                 width: '36px',
                 height: '36px',
                 borderRadius: '8px',
-                backgroundColor: 'var(--color-hover-bg)',
-                color: 'var(--color-primary)',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                color: '#C4B5FD',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -216,22 +199,22 @@ export default function Home() {
               }}>
                 <GraduationCap size={20} />
               </div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '8px' }}>
+              <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '8px' }}>
                 University Matching
               </h3>
-              <p style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+              <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Find programs ranked by fit—not just prestige. See acceptance probability based on your profile.
               </p>
             </div>
 
             {/* Feature 2 */}
-            <div className="card" style={{ textAlign: 'left', padding: '28px 24px' }}>
+            <div className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
               <div style={{
                 width: '36px',
                 height: '36px',
                 borderRadius: '8px',
-                backgroundColor: 'var(--color-hover-bg)',
-                color: 'var(--color-primary)',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                color: '#C4B5FD',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -239,22 +222,22 @@ export default function Home() {
               }}>
                 <Award size={20} />
               </div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '8px' }}>
+              <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '8px' }}>
                 Scholarship Finder
               </h3>
-              <p style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+              <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Discover fully-funded and partial scholarships you didn't know existed. Filter by eligibility and amount.
               </p>
             </div>
 
             {/* Feature 3 */}
-            <div className="card" style={{ textAlign: 'left', padding: '28px 24px' }}>
+            <div className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
               <div style={{
                 width: '36px',
                 height: '36px',
                 borderRadius: '8px',
-                backgroundColor: 'var(--color-hover-bg)',
-                color: 'var(--color-primary)',
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                color: '#C4B5FD',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -262,10 +245,10 @@ export default function Home() {
               }}>
                 <DollarSign size={20} />
               </div>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '8px' }}>
+              <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '8px' }}>
                 Funding Analysis
               </h3>
-              <p style={{ fontSize: '0.88rem', color: 'var(--color-text-muted)', lineHeight: '1.5' }}>
+              <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Understand real cost of attendance and compare net out-of-pocket expenses side by side.
               </p>
             </div>
@@ -273,67 +256,12 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 6. Dashboard Preview Card Section */}
-      <section style={{ backgroundColor: 'var(--color-bg)', padding: '60px 20px' }}>
-        <div style={{
-          maxWidth: '900px',
-          margin: '0 auto',
-          backgroundColor: '#FFFFFF',
-          borderRadius: '16px',
-          padding: '32px',
-          boxShadow: '0 8px 30px rgba(0,0,0,0.06)',
-          border: '1px solid var(--color-border)'
-        }}>
-          {/* Mock Dashboard Wireframe Visual */}
-          <div style={{
-            backgroundColor: 'var(--color-dark)',
-            borderRadius: '12px',
-            padding: '24px',
-            color: '#FFFFFF'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid #2D333F', paddingBottom: '12px' }}>
-              <span style={{ fontSize: '0.85rem', color: 'var(--color-secondary)', fontWeight: 'bold' }}>FitScholar AI Dashboard</span>
-              <span style={{ fontSize: '0.75rem', backgroundColor: '#2D333F', padding: '4px 10px', borderRadius: '12px', color: '#A0AEC0' }}>Live Analytics</span>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
-              <div style={{ backgroundColor: '#252A34', padding: '12px', borderRadius: '6px', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.7rem', color: '#A0AEC0' }}>Match Rate</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--color-secondary)', marginTop: '2px' }}>94%</div>
-              </div>
-              <div style={{ backgroundColor: '#252A34', padding: '12px', borderRadius: '6px', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.7rem', color: '#A0AEC0' }}>Eligible Programs</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginTop: '2px' }}>25</div>
-              </div>
-              <div style={{ backgroundColor: '#252A34', padding: '12px', borderRadius: '6px', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.7rem', color: '#A0AEC0' }}>Saved Funding</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'var(--color-success)', marginTop: '2px' }}>$15,000</div>
-              </div>
-              <div style={{ backgroundColor: '#252A34', padding: '12px', borderRadius: '6px', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.7rem', color: '#A0AEC0' }}>Deadlines</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 'bold', marginTop: '2px' }}>3 Active</div>
-              </div>
-            </div>
-
-            <div style={{ backgroundColor: '#252A34', padding: '16px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>Technical University of Munich</div>
-                <div style={{ fontSize: '0.78rem', color: '#A0AEC0' }}>M.Sc. Informatics • Germany</div>
-              </div>
-              <span style={{ fontSize: '0.8rem', backgroundColor: 'var(--color-primary)', color: '#FFFFFF', padding: '4px 10px', borderRadius: '4px' }}>
-                94% Match Score
-              </span>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* 7. Bottom Call to Action Section */}
       <section style={{ textAlign: 'center', padding: '80px 20px' }}>
-        <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--color-dark)', marginBottom: '12px' }}>
+        <h2 style={{ fontSize: '2rem', fontWeight: '800', color: '#F8FAFC', marginBottom: '12px' }}>
           Ready to find where you belong?
         </h2>
-        <p style={{ fontSize: '1rem', color: 'var(--color-text-muted)', marginBottom: '28px' }}>
+        <p style={{ fontSize: '1rem', color: '#CBD5E1', marginBottom: '28px' }}>
           Join thousands of students who used FitScholar AI to land their dream study abroad opportunity.
         </p>
         <button 
@@ -348,16 +276,16 @@ export default function Home() {
       {/* 8. Simple Footer */}
       <footer style={{
         marginTop: 'auto',
-        borderTop: '1px solid #E5E7EB',
+        borderTop: '1px solid rgba(255,255,255,0.14)',
         padding: '24px 48px',
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
         fontSize: '0.82rem',
-        color: 'var(--color-text-muted)'
+        color: '#94A3B8'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontWeight: 'bold', color: 'var(--color-dark)' }}>FitScholar</span> AI
+          <span style={{ fontWeight: 'bold', color: '#F8FAFC' }}>FitScholar</span> AI
         </div>
         <div>
           © {new Date().getFullYear()} FitScholar AI. All rights reserved.
@@ -365,5 +293,6 @@ export default function Home() {
       </footer>
 
     </div>
+    </AuroraHero>
   );
 }

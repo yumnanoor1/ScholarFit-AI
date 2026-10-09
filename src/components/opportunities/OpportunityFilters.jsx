@@ -1,5 +1,5 @@
-import React from 'react';
 import { Filter, Search } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function OpportunityFilters({
   searchTerm,
@@ -11,7 +11,7 @@ export default function OpportunityFilters({
   countries = ["All", "Germany", "United States", "Canada", "United Kingdom"]
 }) {
   return (
-    <div className="card" style={{ marginBottom: '20px', padding: '16px 20px' }}>
+    <GlowCard customSize className="card" style={{ marginBottom: '20px', padding: '16px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', fontSize: '0.9rem', fontWeight: '600' }}>
         <Filter size={18} color="var(--color-primary)" />
         <span>Filter & Search Opportunities</span>
@@ -83,6 +83,6 @@ export default function OpportunityFilters({
           </select>
         </div>
       </div>
-    </div>
+    </GlowCard>
   );
 }

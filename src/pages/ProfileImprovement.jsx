@@ -1,5 +1,5 @@
-import React from 'react';
-import { TrendingUp, AlertCircle } from 'lucide-react';
+import { TrendingUp } from 'lucide-react';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 export default function ProfileImprovement() {
   return (
@@ -7,7 +7,7 @@ export default function ProfileImprovement() {
       <h1 className="page-title">Profile Improvement Recommendations</h1>
       <p className="page-subtitle">Targeted actions to improve eligibility matching probability.</p>
 
-      <div className="card">
+      <GlowCard customSize className="card">
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
           <TrendingUp color="var(--color-primary)" />
           <h3>Academic Optimization Guidance</h3>
@@ -28,7 +28,7 @@ export default function ProfileImprovement() {
             </p>
           </div>
         </div>
-      </div>
+      </GlowCard>
     </div>
   );
 }

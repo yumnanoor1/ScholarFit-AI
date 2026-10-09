@@ -1,13 +1,13 @@
-import React from 'react';
-import { FileText, Trash2, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { FileText, Trash2, AlertTriangle, Clock } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function DocumentCard({ document, onDelete, onViewDetails }) {
   if (!document) return null;
 
-  const { id, name, type, uploadDate, status, extractedInfo, missingInfo } = document;
+  const { id, name, type, uploadDate, extractedInfo, missingInfo } = document;
 
   return (
-    <div className="card" style={{ borderLeft: '4px solid var(--color-primary)', marginBottom: '16px' }}>
+    <GlowCard customSize className="card" style={{ borderLeft: '4px solid var(--color-primary)', marginBottom: '16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <div style={{
@@ -27,9 +27,12 @@ export default function DocumentCard({ document, onDelete, onViewDetails }) {
         </div>
 
         <button 
+          type="button"
+          disabled={!onDelete}
+          aria-label={`Remove document ${name}`}
           onClick={() => onDelete && onDelete(id)} 
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', color: 'var(--color-text-muted)' }}
-          title="Remove document"
+          style={{ background: 'none', border: 'none', cursor: onDelete ? 'pointer' : 'not-allowed', padding: '6px', color: 'var(--color-text-muted)', opacity: onDelete ? 1 : 0.5 }}
+          title={onDelete ? 'Remove document' : 'Document removal is unavailable'}
         >
           <Trash2 size={18} />
         </button>
@@ -70,6 +73,6 @@ export default function DocumentCard({ document, onDelete, onViewDetails }) {
           </button>
         </div>
       )}
-    </div>
+    </GlowCard>
   );
 }

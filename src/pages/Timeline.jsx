@@ -1,5 +1,5 @@
-import React from 'react';
 import TimelineItem from '../components/timeline/TimelineItem';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 export default function Timeline() {
   return (
@@ -7,7 +7,7 @@ export default function Timeline() {
       <h1 className="page-title">Application Timeline & Roadmaps</h1>
       <p className="page-subtitle">Chronological milestone schedule for tests, applications, and scholarship deadlines.</p>
 
-      <div className="card">
+      <GlowCard customSize className="card">
         <TimelineItem 
           date="OCT 31, 2025" 
           title="DAAD EPOS Application Close" 
@@ -23,7 +23,7 @@ export default function Timeline() {
           title="Uni-Assist Document Verification" 
           description="Verification processing window closes for German Master's programs."
         />
-      </div>
+      </GlowCard>
     </div>
   );
 }

@@ -4,10 +4,12 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext';
 import { ProfileProvider } from '../context/ProfileContext';
 
+// Route Protection
+import ProtectedRoute from './ProtectedRoute';
+
 // Layout Components
 import Sidebar from '../components/layout/Sidebar';
 import Navbar from '../components/layout/Navbar';
-import Footer from '../components/layout/Footer';
 
 // Public & Authentication Pages
 import Home from '../pages/Home';
@@ -39,60 +41,164 @@ export default function AppRoutes() {
     <AuthProvider>
       <ProfileProvider>
         <Routes>
-          {/* Public Routes */}
+
+          {/* =========================
+              PUBLIC ROUTES
+          ========================= */}
+
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
-          {/* Protected Application Layout */}
-          <Route
-            path="/*"
-            element={
-              <div className="app-layout">
-                {/* Fixed Sidebar Navigation */}
-                <Sidebar />
 
-                {/* Main Content View Container */}
-                <div className="main-content">
-                  <Navbar />
-                  
-                  <main style={{ flex: 1, paddingBottom: '30px' }}>
-                    <Routes>
-                      <Route path="/profile-setup" element={<ProfileSetupChoice />} />
-                      <Route path="/profile-setup/cv" element={<CvUpload />} />
-                      <Route path="/profile/verify" element={<ProfileVerification />} />
-                      <Route path="/dashboard" element={<Dashboard />} />
-                      <Route path="/profile" element={<Profile />} />
-                      <Route path="/documents" element={<Documents />} />
-                      
-                      {/* University & Admission Matching */}
-                      <Route path="/universities" element={<Universities />} />
-                      <Route path="/universities/:id" element={<UniversityDetails />} />
-                      
-                      {/* Scholarship & Funding Matching */}
-                      <Route path="/scholarships" element={<Scholarships />} />
-                      <Route path="/scholarships/:id" element={<ScholarshipDetails />} />
-                      
-                      {/* Decision Support Tools */}
-                      <Route path="/saved" element={<SavedOpportunities />} />
-                      <Route path="/compare" element={<Compare />} />
-                      <Route path="/financial" element={<FinancialFeasibility />} />
-                      <Route path="/pathway" element={<ApplicationPathway />} />
-                      <Route path="/recommendations" element={<Recommendations />} />
-                      <Route path="/timeline" element={<Timeline />} />
-                      <Route path="/improvement" element={<ProfileImprovement />} />
-                      <Route path="/settings" element={<Settings />} />
-                      
-                      {/* Fallback Redirect */}
-                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                    </Routes>
-                  </main>
+          {/* =========================
+              PROTECTED APPLICATION
+          ========================= */}
 
-                  <Footer />
+          <Route element={<ProtectedRoute />}>
+            <Route
+              path="/*"
+              element={
+                <div className="app-layout">
+
+                  {/* Sidebar */}
+                  <Sidebar />
+
+                  {/* Main Content */}
+                  <div className="main-content">
+
+                    {/* Navbar */}
+                    <Navbar />
+
+                    <main
+                      style={{
+                        flex: 1,
+                        paddingBottom: '30px',
+                      }}
+                    >
+
+                      <Routes>
+
+                        {/* Profile Onboarding */}
+                        <Route
+                          path="/profile-setup"
+                          element={<ProfileSetupChoice />}
+                        />
+
+                        <Route
+                          path="/profile-setup/cv"
+                          element={<CvUpload />}
+                        />
+
+                        <Route
+                          path="/profile/verify"
+                          element={<ProfileVerification />}
+                        />
+
+
+                        {/* Dashboard */}
+                        <Route
+                          path="/dashboard"
+                          element={<Dashboard />}
+                        />
+
+
+                        {/* Profile */}
+                        <Route
+                          path="/profile"
+                          element={<Profile />}
+                        />
+
+
+                        {/* Documents */}
+                        <Route
+                          path="/documents"
+                          element={<Documents />}
+                        />
+
+
+                        {/* Universities */}
+                        <Route
+                          path="/universities"
+                          element={<Universities />}
+                        />
+
+                        <Route
+                          path="/universities/:id"
+                          element={<UniversityDetails />}
+                        />
+
+
+                        {/* Scholarships */}
+                        <Route
+                          path="/scholarships"
+                          element={<Scholarships />}
+                        />
+
+                        <Route
+                          path="/scholarships/:id"
+                          element={<ScholarshipDetails />}
+                        />
+
+
+                        {/* Decision Support */}
+                        <Route
+                          path="/saved"
+                          element={<SavedOpportunities />}
+                        />
+
+                        <Route
+                          path="/compare"
+                          element={<Compare />}
+                        />
+
+                        <Route
+                          path="/financial"
+                          element={<FinancialFeasibility />}
+                        />
+
+                        <Route
+                          path="/pathway"
+                          element={<ApplicationPathway />}
+                        />
+
+                        <Route
+                          path="/recommendations"
+                          element={<Recommendations />}
+                        />
+
+                        <Route
+                          path="/timeline"
+                          element={<Timeline />}
+                        />
+
+                        <Route
+                          path="/improvement"
+                          element={<ProfileImprovement />}
+                        />
+
+                        <Route
+                          path="/settings"
+                          element={<Settings />}
+                        />
+
+
+                        {/* Unknown protected route */}
+                        <Route
+                          path="*"
+                          element={<Navigate to="/dashboard" replace />}
+                        />
+
+                      </Routes>
+
+                    </main>
+
+                  </div>
                 </div>
-              </div>
-            }
-          />
+              }
+            />
+          </Route>
+
         </Routes>
       </ProfileProvider>
     </AuthProvider>

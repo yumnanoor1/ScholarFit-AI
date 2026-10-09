@@ -1,14 +1,15 @@
-import React from 'react';
 import FundingBadge from './FundingBadge';
 import RequirementStatus from '../matching/RequirementStatus';
 import MatchScoreCard from '../matching/MatchScoreCard';
+import SaveButton from '../opportunities/SaveButton';
 import { Calendar, DollarSign, Building2, MapPin } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function FundingCard({ item, onSaveToggle }) {
   if (!item) return null;
 
   return (
-    <div className="card" style={{ borderLeft: '4px solid var(--color-secondary)', position: 'relative' }}>
+    <GlowCard customSize className="card" style={{ borderLeft: '4px solid var(--color-secondary)', position: 'relative' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
         <div>
           <h4 style={{ fontSize: '1.05rem', color: 'var(--color-dark)', marginBottom: '4px' }}>
@@ -21,7 +22,12 @@ export default function FundingCard({ item, onSaveToggle }) {
           </p>
         </div>
 
-        {item.matchScore !== undefined && <MatchScore score={item.matchScore} />}
+        {item.matchScore !== undefined && <MatchScoreCard score={item.matchScore} />}
+        <SaveButton
+          isSaved={Boolean(item.saved)}
+          label={item.name}
+          onToggle={onSaveToggle ? () => onSaveToggle(item.id) : undefined}
+        />
       </div>
 
       <div style={{ display: 'flex', gap: '10px', alignItems: 'center', margin: '12px 0', flexWrap: 'wrap' }}>
@@ -49,6 +55,6 @@ export default function FundingCard({ item, onSaveToggle }) {
         <DollarSign size={16} />
         <span>Coverage: {item.coverage}</span>
       </div>
-    </div>
+    </GlowCard>
   );
 }

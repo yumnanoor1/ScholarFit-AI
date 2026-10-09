@@ -1,10 +1,10 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import RequirementStatus from '../matching/RequirementStatus';
 import MatchScoreCard from '../matching/MatchScoreCard';
-import DeadlineCard from '../timeline/DeadlineCard';
 import SaveButton from './SaveButton';
-import { ArrowRight, Calendar } from 'lucide-react';
+import { Calendar } from 'lucide-react';
+import { ChevronSmallRightIcon } from '../ui/ChevronSmallRightIcon';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function OpportunityCard({ data, onSaveToggle }) {
   const navigate = useNavigate();
@@ -12,7 +12,7 @@ export default function OpportunityCard({ data, onSaveToggle }) {
   if (!data) return null;
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px', position: 'relative' }}>
+    <GlowCard customSize className="card" style={{ display: 'flex', flexDirection: 'column', gap: '14px', position: 'relative' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h3 style={{ fontSize: '1.1rem', color: 'var(--color-dark)', marginBottom: '4px' }}>
@@ -24,7 +24,11 @@ export default function OpportunityCard({ data, onSaveToggle }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {data.matchScore !== undefined && <MatchScoreCard score={data.matchScore} />}
-          <SaveButton isSaved={data.saved} onToggle={() => onSaveToggle && onSaveToggle(data.id)} />
+          <SaveButton
+            isSaved={data.saved}
+            label={data.program || data.name || data.title}
+            onToggle={() => onSaveToggle && onSaveToggle(data.id)}
+          />
         </div>
       </div>
 
@@ -52,9 +56,9 @@ export default function OpportunityCard({ data, onSaveToggle }) {
           onClick={() => navigate(`/universities/${data.id}`)}
           style={{ fontSize: '0.82rem', padding: '6px 14px' }}
         >
-          View Details <ArrowRight size={14} />
+          View Details <ChevronSmallRightIcon size={14} aria-hidden="true" />
         </button>
       </div>
-    </div>
+    </GlowCard>
   );
 }

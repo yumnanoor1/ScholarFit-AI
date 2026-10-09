@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api';
 import RequirementStatus from '../components/matching/RequirementStatus';
 import CostBreakdown from '../components/financial/CostBreakdown';
 import MatchScoreCard from '../components/matching/MatchScoreCard';
+import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 export default function UniversityDetails() {
   const { id } = useParams();
@@ -22,10 +24,10 @@ export default function UniversityDetails() {
   return (
     <div className="page-container">
       <button className="btn btn-outline" onClick={() => navigate(-1)} style={{ marginBottom: '16px' }}>
-        ← Back to Universities
+        <ChevronSmallRightIcon size={16} className="rotate-180" aria-hidden="true" /> Back to Universities
       </button>
 
-      <div className="card">
+      <GlowCard customSize className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <h1 style={{ fontSize: '1.6rem', color: 'var(--color-dark)' }}>{data.program}</h1>
@@ -48,7 +50,7 @@ export default function UniversityDetails() {
             Language Proficiency: Required {data.englishReq} (Your Score: IELTS 7.5)
           </li>
         </ul>
-      </div>
+      </GlowCard>
 
       <CostBreakdown tuition={12000} living={10000} funding={15000} />
     </div>

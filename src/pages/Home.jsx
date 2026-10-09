@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, Award, DollarSign } from 'lucide-react';
 import { AuroraHero } from '@/components/ui/aurora-hero-bg';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -185,7 +186,7 @@ export default function Home() {
 
           <div className="grid-3" style={{ gap: '24px' }}>
             {/* Feature 1 */}
-            <div className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
+            <GlowCard customSize className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
               <div style={{
                 width: '36px',
                 height: '36px',
@@ -205,10 +206,10 @@ export default function Home() {
               <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Find programs ranked by fit—not just prestige. See acceptance probability based on your profile.
               </p>
-            </div>
+            </GlowCard>
 
             {/* Feature 2 */}
-            <div className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
+            <GlowCard customSize className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
               <div style={{
                 width: '36px',
                 height: '36px',
@@ -228,10 +229,10 @@ export default function Home() {
               <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Discover fully-funded and partial scholarships you didn't know existed. Filter by eligibility and amount.
               </p>
-            </div>
+            </GlowCard>
 
             {/* Feature 3 */}
-            <div className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
+            <GlowCard customSize className="card" style={{ textAlign: 'left', padding: '28px 24px', backgroundColor: 'rgba(15,23,42,0.68)', border: '1px solid rgba(255,255,255,0.14)', color: '#F8FAFC' }}>
               <div style={{
                 width: '36px',
                 height: '36px',
@@ -251,7 +252,7 @@ export default function Home() {
               <p style={{ fontSize: '0.88rem', color: '#CBD5E1', lineHeight: '1.5' }}>
                 Understand real cost of attendance and compare net out-of-pocket expenses side by side.
               </p>
-            </div>
+            </GlowCard>
           </div>
         </div>
       </section>
@@ -272,25 +273,6 @@ export default function Home() {
           Start Your Match
         </button>
       </section>
-
-      {/* 8. Simple Footer */}
-      <footer style={{
-        marginTop: 'auto',
-        borderTop: '1px solid rgba(255,255,255,0.14)',
-        padding: '24px 48px',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        fontSize: '0.82rem',
-        color: '#94A3B8'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontWeight: 'bold', color: '#F8FAFC' }}>FitScholar</span> AI
-        </div>
-        <div>
-          © {new Date().getFullYear()} FitScholar AI. All rights reserved.
-        </div>
-      </footer>
 
     </div>
     </AuroraHero>

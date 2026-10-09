@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import FormLayout01 from '@/components/ui/form-2';
+import FormLayout01 from '../components/profile/AcademicForm';
 import { useProfile } from '../context/ProfileContext';
 
 export default function ProfileVerification() {

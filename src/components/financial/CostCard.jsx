@@ -1,5 +1,5 @@
-import React from 'react';
-import { DollarSign, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function CostCard({ label, amount, type = "expense", note = null }) {
   let accentColor = "var(--color-dark)";
@@ -14,7 +14,7 @@ export default function CostCard({ label, amount, type = "expense", note = null 
   }
 
   return (
-    <div style={{
+    <GlowCard customSize style={{
       backgroundColor: bgColor,
       border: '1px solid var(--color-border)',
       borderRadius: '8px',
@@ -37,6 +37,6 @@ export default function CostCard({ label, amount, type = "expense", note = null 
           <AlertCircle size={12} /> {note}
         </p>
       )}
-    </div>
+    </GlowCard>
   );
 }

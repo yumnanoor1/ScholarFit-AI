@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ArrowLeft } from 'lucide-react';
+import Modal from '../components/common/Modal';
+import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -15,6 +16,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
+  const [policy, setPolicy] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -57,13 +59,8 @@ export default function Register() {
     setError('');
 
     try {
-      // Connect your Google authentication function here.
-      // Example:
-      // const res = await registerWithGoogle();
-      // if (res.success) navigate('/profile-setup');
-
-      // Temporary placeholder
-      alert('Google Sign-Up will be connected here.');
+      const result = await register('Google Demo User', 'google-demo@fitscholar.local', 'demo-google');
+      if (result.success) navigate('/profile-setup');
     } catch {
       setError('Failed to sign up with Google. Please try again.');
     } finally {
@@ -322,7 +319,7 @@ export default function Register() {
               I agree to the{' '}
               <a
                 href="#terms"
-                onClick={(e) => e.preventDefault()}
+                onClick={(event) => { event.preventDefault(); setPolicy('terms'); }}
                 style={{
                   color: 'var(--color-primary)',
                   textDecoration: 'none'
@@ -333,7 +330,7 @@ export default function Register() {
               and{' '}
               <a
                 href="#privacy"
-                onClick={(e) => e.preventDefault()}
+                onClick={(event) => { event.preventDefault(); setPolicy('privacy'); }}
                 style={{
                   color: 'var(--color-primary)',
                   textDecoration: 'none'
@@ -449,7 +446,7 @@ export default function Register() {
 
           {googleLoading
             ? 'Connecting to Google...'
-            : 'Continue with Google'}
+            : 'Continue with Google (Demo)'}
         </button>
 
         <hr
@@ -486,6 +483,18 @@ export default function Register() {
 
       </div>
 
+      <Modal
+        isOpen={Boolean(policy)}
+        onClose={() => setPolicy(null)}
+        title={policy === 'terms' ? 'Terms of Service' : 'Privacy Policy'}
+      >
+        <p style={{ color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+          {policy === 'terms'
+            ? 'This frontend demo creates a browser-only session. It does not submit account details to an account service.'
+            : 'This demo stores authentication and profile details in this browser. No server-side profile storage is configured.'}
+        </p>
+      </Modal>
+
       {/* Back to Home */}
       <Link
         to="/"
@@ -500,7 +509,7 @@ export default function Register() {
           fontWeight: '500'
         }}
       >
-        <ArrowLeft size={16} />
+        <ChevronSmallRightIcon size={16} className="rotate-180" aria-hidden="true" />
         Back to FitScholar Home
       </Link>
 

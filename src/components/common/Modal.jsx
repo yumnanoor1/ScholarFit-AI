@@ -1,5 +1,5 @@
-import React from 'react';
 import { X } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function Modal({ isOpen, onClose, title, children }) {
   if (!isOpen) return null;
@@ -18,7 +18,7 @@ export default function Modal({ isOpen, onClose, title, children }) {
       zIndex: 1000,
       padding: '16px'
     }}>
-      <div className="card" style={{
+      <GlowCard customSize className="card" style={{
         width: '100%',
         maxWidth: '550px',
         backgroundColor: '#FFFFFF',
@@ -26,7 +26,7 @@ export default function Modal({ isOpen, onClose, title, children }) {
         boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
         overflow: 'hidden',
         padding: '0'
-      }}>
+      }} role="dialog" aria-modal="true" aria-labelledby="modal-title">
         {/* Header de la Modal */}
         <div style={{
           padding: '16px 20px',
@@ -36,8 +36,10 @@ export default function Modal({ isOpen, onClose, title, children }) {
           alignItems: 'center',
           backgroundColor: 'var(--color-bg)'
         }}>
-          <h3 style={{ fontSize: '1.1rem', color: 'var(--color-dark)' }}>{title}</h3>
+          <h3 id="modal-title" style={{ fontSize: '1.1rem', color: 'var(--color-dark)' }}>{title}</h3>
           <button
+            type="button"
+            aria-label="Close dialog"
             onClick={onClose}
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
           >
@@ -49,7 +51,7 @@ export default function Modal({ isOpen, onClose, title, children }) {
         <div style={{ padding: '20px' }}>
           {children}
         </div>
-      </div>
+      </GlowCard>
     </div>
   );
 }

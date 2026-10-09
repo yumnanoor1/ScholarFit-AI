@@ -1,248 +1,273 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Edit3 } from 'lucide-react';
+import { Bookmark } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
+import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { profile, matchStatistics } = useProfile();
+  const { profile, matchStatistics, isOpportunitySaved, toggleSaveOpportunity } = useProfile();
   const firstName = profile.firstName || (profile.name || '').split(' ')[0] || 'there';
+  const profileCompletion = Number(profile.profileCompletionPercentage) || 0;
 
   const topOpportunities = [
     {
+      id: 'chevening',
       name: 'Chevening Scholarship',
       country: 'United Kingdom',
       feasibility: 92,
       eligibility: 'STRONG',
       netCost: '$0',
       deadline: 'Oct 15',
-      deadlineColor: '#D32F2F'
+      deadlineDate: '2026-10-15',
+      deadlineColor: 'text-red-600 font-bold',
+      badgeStyle: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800',
+      progressStyle: 'bg-emerald-600'
     },
     {
+      id: 'fulbright',
       name: 'Fulbright Student Program',
       country: 'United States',
       feasibility: 84,
       eligibility: 'STRONG',
       netCost: '$0',
       deadline: 'Nov 03',
-      deadlineColor: 'inherit'
+      deadlineDate: '2026-11-03',
+      badgeStyle: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800',
+      progressStyle: 'bg-emerald-600'
     },
     {
+      id: 'daad',
       name: 'DAAD Research Grant',
       country: 'Germany',
       feasibility: 71,
       eligibility: 'PARTIAL',
       netCost: '$4,200',
       deadline: 'Nov 20',
-      deadlineColor: 'inherit'
+      deadlineDate: '2026-11-20',
+      badgeStyle: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800',
+      progressStyle: 'bg-amber-500'
     },
     {
-      name: "Commonwealth Master's Scholarship",
+      id: 'commonwealth',
+      name: 'Commonwealth Master\'s Scholarship',
       country: 'Canada',
       feasibility: 68,
       eligibility: 'PARTIAL',
       netCost: '$6,800',
       deadline: 'Dec 07',
-      deadlineColor: 'inherit'
+      deadlineDate: '2026-12-07',
+      badgeStyle: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800',
+      progressStyle: 'bg-amber-500'
     }
   ];
 
-  const upcomingDeadlines = [
-    { name: 'Chevening', date: 'Oct 15, 2026', daysLeft: '12 days left', urgent: true },
-    { name: 'Fulbright', date: 'Nov 03, 2026', daysLeft: '31 days left', urgent: false },
-    { name: 'DAAD Master', date: 'Nov 20, 2026', daysLeft: '48 days left', urgent: false },
-    { name: 'Commonwealth', date: 'Dec 07, 2026', daysLeft: '65 days left', urgent: false }
-  ];
-
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const opportunitiesWithCountdown = topOpportunities.map((item) => ({
+    ...item,
+    daysLeft: Math.ceil((new Date(`${item.deadlineDate}T00:00:00`) - today) / 86400000),
+  }));
+  const nextDeadline = opportunitiesWithCountdown
+    .filter((item) => item.daysLeft >= 0)
+    .sort((first, second) => first.daysLeft - second.daysLeft)[0];
   return (
-    <div className="page-container" style={{ maxWidth: '1160px', margin: '0 auto', padding: '32px 24px', backgroundColor: 'var(--color-bg)' }}>
+    <div className="dashboard-page mx-auto min-h-screen w-full max-w-[1440px]">
       
-      {/* 1. Header Row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
-        <div>
-          <h1 style={{ fontSize: '2.2rem', fontFamily: 'serif', fontWeight: '600', color: 'var(--color-dark)', marginBottom: '8px' }}>
+      {/* 1. Top Header Row with Clear Breathing Room */}
+      <div className="dashboard-page-header flex flex-col md:flex-row md:items-center justify-between gap-5">
+        <div className="dashboard-greeting">
+          <h1 className="text-2xl sm:text-3xl font-semibold text-slate-900 dark:text-white tracking-normal">
             Good morning, {firstName}
           </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Profile completeness</span>
-            <div style={{ width: '120px', height: '4px', backgroundColor: '#E2E8F0', borderRadius: '2px', overflow: 'hidden' }}>
-              <div style={{ width: `${profile.profileCompletionPercentage || 0}%`, height: '100%', backgroundColor: 'var(--color-dark)' }} />
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium text-slate-600 dark:text-slate-300">Profile completeness</span>
+            <div className="w-40 h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+              <div role="progressbar" aria-label="Profile completeness" aria-valuemin={0} aria-valuemax={100} aria-valuenow={profileCompletion} className="h-full rounded-full bg-blue-600 transition-[width]" style={{ width: `${profileCompletion}%` }} />
             </div>
-            <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: 'var(--color-dark)' }}>{profile.profileCompletionPercentage || 0}%</span>
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{profileCompletion}%</span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            backgroundColor: '#FFFFFF',
-            border: '1px solid var(--color-border)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer'
-          }}>
-            <Bell size={18} color="var(--color-dark)" />
-          </button>
-          <button 
-            className="btn btn-primary"
+        <div className="flex flex-wrap items-center gap-3">
+          <button
             onClick={() => navigate('/scholarships')}
-            style={{ padding: '10px 20px', fontSize: '0.88rem', backgroundColor: '#1C2833', color: '#FFFFFF', borderRadius: '6px' }}
+            className="px-4 py-3 bg-sky-700 hover:bg-sky-800 dark:bg-sky-400 dark:hover:bg-sky-300 dark:text-slate-950 text-white font-semibold text-sm rounded-xl transition shadow-xs"
           >
             Find Scholarships
           </button>
         </div>
       </div>
 
-      <hr style={{ border: 'none', borderTop: '1px solid #E2E8F0', marginBottom: '32px' }} />
-
-      {/* 2. Key Metrics Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '40px' }}>
-        <div style={{ borderRight: '1px solid #E2E8F0', paddingRight: '16px' }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Eligible</span>
-          <div style={{ fontSize: '2.2rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '4px' }}>{matchStatistics.eligibleCount}</div>
-        </div>
-        <div style={{ borderRight: '1px solid #E2E8F0', paddingRight: '16px' }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Funded options</span>
-          <div style={{ fontSize: '2.2rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '4px' }}>{matchStatistics.fundedCount}</div>
-        </div>
-        <div style={{ borderRight: '1px solid #E2E8F0', paddingRight: '16px' }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Median listed tuition</span>
-          <div style={{ fontSize: '1.6rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '8px' }}>{matchStatistics.medianTuition}</div>
-        </div>
-        <div>
-          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Next deadline</span>
-          <div style={{ fontSize: '2.2rem', fontWeight: '600', color: 'var(--color-dark)', marginTop: '4px' }}>
-            12 <span style={{ fontSize: '1rem', fontWeight: 'normal', color: 'var(--color-text-muted)' }}>days</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 3. Main Dashboard Layout Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '32px', alignItems: 'start' }}>
-        
-        {/* Left Table Section */}
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)' }}>Top opportunities</h3>
-            <button 
-              onClick={() => navigate('/scholarships')} 
-              style={{ background: 'none', border: 'none', fontSize: '0.82rem', color: 'var(--color-text-muted)', cursor: 'pointer' }}
-            >
-              View all matching
-            </button>
-          </div>
-
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #E2E8F0', color: 'var(--color-text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                <th style={{ padding: '12px 0', fontWeight: '600' }}>NAME</th>
-                <th style={{ padding: '12px 0', fontWeight: '600' }}>COUNTRY</th>
-                <th style={{ padding: '12px 0', fontWeight: '600' }}>FEASIBILITY</th>
-                <th style={{ padding: '12px 0', fontWeight: '600' }}>ELIGIBILITY</th>
-                <th style={{ padding: '12px 0', fontWeight: '600', textAlign: 'right' }}>NET COST</th>
-                <th style={{ padding: '12px 0', fontWeight: '600', textAlign: 'right' }}>DEADLINE</th>
-              </tr>
-            </thead>
-            <tbody>
-              {topOpportunities.map((item, idx) => (
-                <tr key={idx} style={{ borderBottom: '1px solid #F1F5F9' }}>
-                  <td style={{ padding: '16px 0', fontWeight: '600', color: 'var(--color-dark)' }}>{item.name}</td>
-                  <td style={{ padding: '16px 0', color: 'var(--color-text-muted)' }}>{item.country}</td>
-                  <td style={{ padding: '16px 0' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '20px', fontWeight: '600', fontSize: '0.82rem' }}>{item.feasibility}</span>
-                      <div style={{ width: '60px', height: '4px', backgroundColor: '#E2E8F0', borderRadius: '2px', overflow: 'hidden' }}>
-                        <div style={{
-                          width: `${item.feasibility}%`,
-                          height: '100%',
-                          backgroundColor: item.feasibility >= 80 ? '#2E7D32' : '#D97706'
-                        }} />
-                      </div>
-                    </div>
-                  </td>
-                  <td style={{ padding: '16px 0' }}>
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '2px 10px',
-                      borderRadius: '12px',
-                      fontSize: '0.7rem',
-                      fontWeight: '700',
-                      border: item.eligibility === 'STRONG' ? '1px solid #A7F3D0' : '1px solid #FDE68A',
-                      color: item.eligibility === 'STRONG' ? '#047857' : '#B45309',
-                      backgroundColor: item.eligibility === 'STRONG' ? '#ECFDF5' : '#FFFBEB'
-                    }}>
-                      • {item.eligibility}
-                    </span>
-                  </td>
-                  <td style={{ padding: '16px 0', textAlign: 'right', fontWeight: '600', color: 'var(--color-dark)' }}>{item.netCost}</td>
-                  <td style={{ padding: '16px 0', textAlign: 'right', fontWeight: '600', color: item.deadlineColor }}>{item.deadline}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Right Sidebar */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-          
-          {/* Best Next Action Card */}
+      {/* 2. Metrics Summary */}
+      {profileCompletion === 0 ? (
+        <GlowCard as="section" customSize className="dashboard-profile-prompt flex flex-col gap-4 rounded-2xl border border-sky-200 bg-sky-50 shadow-sm dark:border-sky-900 dark:bg-slate-900 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '16px' }}>Best next action</h3>
-            <div style={{
-              backgroundColor: '#FFFFFF',
-              border: '1px solid #E2E8F0',
-              borderRadius: '8px',
-              padding: '20px'
-            }}>
-              <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                <Edit3 size={18} color="var(--color-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
-                <p style={{ fontSize: '0.85rem', color: 'var(--color-dark)', lineHeight: '1.5' }}>
-                  Finish your <strong>personal statement</strong> for the Chevening Scholarship to improve your feasibility score by 15%.
-                </p>
-              </div>
-              <button 
-                className="btn" 
-                onClick={() => navigate('/documents')}
-                style={{
-                  width: '100%',
-                  backgroundColor: '#1C2833',
-                  color: '#FFFFFF',
-                  padding: '10px',
-                  fontSize: '0.85rem',
-                  fontWeight: '600',
-                  borderRadius: '6px',
-                  border: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                Continue Application
-              </button>
-            </div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Complete your profile to improve matches</h2>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">Add your academic, English test, and study preference details to unlock match statistics.</p>
           </div>
+          <button
+            onClick={() => navigate('/profile-setup')}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-sky-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-800 dark:bg-sky-400 dark:text-slate-950 dark:hover:bg-sky-300"
+          >
+            Complete profile <ChevronSmallRightIcon size={16} className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </GlowCard>
+      ) : (
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Profile match statistics">
+          <GlowCard as="article" customSize className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Eligible opportunities</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{matchStatistics.eligibleCount}</p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Programs and scholarships matching your profile</p>
+          </GlowCard>
+          <GlowCard as="article" customSize className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Funded options</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{matchStatistics.fundedCount}</p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Eligible funded scholarships</p>
+          </GlowCard>
+          <GlowCard as="article" customSize className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Median listed tuition</p>
+            <p className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">{matchStatistics.medianTuition}</p>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Across matched programs</p>
+          </GlowCard>
+          <GlowCard as="article" customSize className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Next deadline</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{nextDeadline ? (nextDeadline.daysLeft === 0 ? 'Today' : `${nextDeadline.daysLeft} days`) : 'None upcoming'}</p>
+            {nextDeadline && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{nextDeadline.name} · {nextDeadline.deadline}</p>}
+          </GlowCard>
+        </section>
+      )}
 
-          {/* Upcoming Deadlines Widget */}
-          <div>
-            <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--color-dark)', marginBottom: '16px' }}>Upcoming deadlines</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {upcomingDeadlines.map((dl, idx) => (
-                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', paddingBottom: '10px', borderBottom: '1px solid #F1F5F9' }}>
-                  <div>
-                    <div style={{ fontWeight: '600', color: 'var(--color-dark)' }}>{dl.name}</div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>{dl.date}</div>
-                  </div>
-                  <span style={{ fontSize: '0.78rem', fontWeight: '600', color: dl.urgent ? '#D32F2F' : '#D97706' }}>
-                    {dl.daysLeft}
-                  </span>
+      {/* 3. Full-Width Opportunities Table */}
+      <div className="dashboard-opportunities mx-auto w-full max-w-6xl">
+        <div className="flex min-h-12 flex-wrap items-center justify-between gap-4 px-1">
+          <h2 className="text-2xl font-semibold text-slate-900 dark:text-white">Top opportunities</h2>
+          <button 
+            onClick={() => navigate('/scholarships')} 
+            className="inline-flex items-center gap-1 whitespace-nowrap text-sm font-semibold text-blue-600 transition-colors hover:text-blue-700 dark:text-blue-400"
+          >
+            View all matching <ChevronSmallRightIcon size={15} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 xl:hidden">
+          {opportunitiesWithCountdown.map((item) => (
+            <GlowCard as="article" key={item.id} customSize className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold leading-5 text-slate-900 dark:text-white">{item.name}</h3>
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{item.country}</p>
                 </div>
-              ))}
-            </div>
-          </div>
+                <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-bold ${item.badgeStyle}`}>
+                  {item.eligibility}
+                </span>
+              </div>
 
+              <div className="mt-5 grid grid-cols-2 gap-5">
+                <div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-600 dark:text-slate-400">Feasibility</span>
+                    <span className="font-semibold text-slate-900 dark:text-white">{item.feasibility}%</span>
+                  </div>
+                  <div role="progressbar" aria-label={`${item.name} feasibility`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={item.feasibility} className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    <div className={`h-full ${item.progressStyle}`} style={{ width: `${item.feasibility}%` }} />
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-slate-600 dark:text-slate-400">Net cost</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{item.netCost}</p>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+                <p className={`text-xs font-medium ${item.daysLeft <= 7 ? 'text-red-600 dark:text-red-400' : 'text-slate-600 dark:text-slate-400'}`}>
+                  {item.deadline} · {item.daysLeft === 0 ? 'Due today' : `${item.daysLeft} days left`}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    aria-pressed={isOpportunitySaved(item.id)}
+                    aria-label={`${isOpportunitySaved(item.id) ? 'Unsave' : 'Save'} ${item.name}`}
+                    onClick={() => toggleSaveOpportunity(item.id)}
+                    className="rounded-md border border-slate-200 p-2 text-slate-600 transition hover:border-sky-300 hover:text-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-sky-300"
+                  >
+                    <Bookmark size={15} fill={isOpportunitySaved(item.id) ? 'currentColor' : 'none'} aria-hidden="true" />
+                  </button>
+                  <button type="button" onClick={() => navigate('/pathway')} className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-2 text-xs font-semibold text-slate-700 hover:border-sky-300 hover:text-sky-700 dark:border-slate-700 dark:text-slate-200 dark:hover:text-sky-300">
+                    View <ChevronSmallRightIcon size={13} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            </GlowCard>
+          ))}
         </div>
 
+        <GlowCard customSize className="hidden overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 xl:block">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50/80 dark:bg-slate-950/50 text-slate-600 dark:text-slate-300 uppercase tracking-wider font-semibold border-b border-slate-100 dark:border-slate-800">
+                <tr>
+                  <th className="px-7 py-5">Name</th>
+                  <th className="px-7 py-5">Country</th>
+                  <th className="px-7 py-5">Feasibility</th>
+                  <th className="px-7 py-5">Eligibility</th>
+                  <th className="px-7 py-5">Net Cost</th>
+                  <th className="px-7 py-5 text-right">Deadline</th>
+                  <th className="px-7 py-5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-200 font-medium">
+                {opportunitiesWithCountdown.map((item) => (
+                  <tr
+                    key={item.id}
+                    className="transition-colors hover:bg-slate-50/70 dark:hover:bg-slate-800/40"
+                  >
+                    <td className="px-7 py-6 font-semibold text-slate-900 dark:text-white">{item.name}</td>
+                    <td className="px-7 py-6 text-slate-500 dark:text-slate-400">{item.country}</td>
+                    <td className="px-7 py-6">
+                      <div className="flex items-center gap-3">
+                        <span title="Estimated from academic, language, and program requirements" className="font-bold text-slate-900 dark:text-white" aria-label={`Feasibility score ${item.feasibility} percent; based on academic, language, and program requirements`}>{item.feasibility}</span>
+                        <div role="progressbar" aria-label={`${item.name} feasibility`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={item.feasibility} title="Estimated from academic, language, and program requirements" className="w-16 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div className={`h-full ${item.progressStyle}`} style={{ width: `${item.feasibility}%` }}></div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-7 py-6">
+                      <span className={`px-2.5 py-1 text-[10px] font-bold rounded-md border ${item.badgeStyle}`}>
+                        • {item.eligibility}
+                      </span>
+                    </td>
+                    <td className="px-7 py-6 font-semibold">{item.netCost}</td>
+                    <td className={`px-7 py-6 text-right ${item.daysLeft <= 7 ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                      <span className="font-semibold">{item.deadline}</span>
+                      <span className="mt-1 block text-xs font-medium">{item.daysLeft === 0 ? 'Due today' : `${item.daysLeft} days left`}</span>
+                    </td>
+                    <td className="px-7 py-6">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          aria-pressed={isOpportunitySaved(item.id)}
+                          aria-label={`${isOpportunitySaved(item.id) ? 'Unsave' : 'Save'} ${item.name}`}
+                          onClick={() => toggleSaveOpportunity(item.id)}
+                          className="rounded-md border border-slate-200 p-2 text-slate-600 transition hover:border-sky-300 hover:text-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-sky-300"
+                        >
+                          <Bookmark size={15} fill={isOpportunitySaved(item.id) ? 'currentColor' : 'none'} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate('/pathway')}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-2 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 dark:border-slate-700 dark:text-slate-200 dark:hover:text-sky-300"
+                        >
+                          View <ChevronSmallRightIcon size={13} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </GlowCard>
       </div>
 
     </div>

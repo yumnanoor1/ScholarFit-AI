@@ -1,9 +1,10 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import RecommendationReason from './RecommendationReason';
 import MatchScoreCard from '../matching/MatchScoreCard';
 import RequirementStatus from '../matching/RequirementStatus';
-import { ArrowRight, Building2, MapPin, Calendar } from 'lucide-react';
+import { Building2, MapPin, Calendar } from 'lucide-react';
+import { ChevronSmallRightIcon } from '../ui/ChevronSmallRightIcon';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function RecommendationCard({
   id,
@@ -20,7 +21,7 @@ export default function RecommendationCard({
   const navigate = useNavigate();
 
   return (
-    <div className="card" style={{ borderTop: '4px solid var(--color-primary)', marginBottom: '20px' }}>
+    <GlowCard customSize className="card" style={{ borderTop: '4px solid var(--color-primary)', marginBottom: '20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
         <div>
           <h3 style={{ fontSize: '1.15rem', color: 'var(--color-dark)', marginBottom: '4px' }}>
@@ -63,9 +64,9 @@ export default function RecommendationCard({
           onClick={() => navigate(`/universities/${id || 1}`)}
           style={{ fontSize: '0.82rem', padding: '6px 14px' }}
         >
-          View Full Breakdown <ArrowRight size={14} />
+          View Full Breakdown <ChevronSmallRightIcon size={14} aria-hidden="true" />
         </button>
       </div>
-    </div>
+    </GlowCard>
   );
 }

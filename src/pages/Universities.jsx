@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiService } from '../services/api';
 import OpportunityCard from '../components/opportunities/OpportunityCard';
+import { useProfile } from '../context/ProfileContext';
 
 export default function Universities() {
+  const { isOpportunitySaved, toggleSaveOpportunity } = useProfile();
   const [list, setList] = useState([]);
   const [filter, setFilter] = useState('All');
 
@@ -35,7 +37,11 @@ export default function Universities() {
 
       <div>
         {filtered.map(item => (
-          <OpportunityCard key={item.id} data={item} />
+          <OpportunityCard
+            key={item.id}
+            data={{ ...item, saved: isOpportunitySaved(item.id) }}
+            onSaveToggle={toggleSaveOpportunity}
+          />
         ))}
       </div>
     </div>

@@ -1,4 +1,3 @@
-import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
   LayoutDashboard, User, FileText, GraduationCap, Award, 
@@ -24,17 +23,9 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside style={{
-      width: '250px',
-      backgroundColor: 'var(--color-dark)',
-      color: '#FFFFFF',
-      display: 'flex',
-      flexDirection: 'column',
-      flexShrink: 0,
-      minHeight: '100vh'
-    }}>
+    <aside className="sidebar">
       {/* Brand Header */}
-      <div style={{ padding: '20px 24px', borderBottom: '1px solid #2D333F' }}>
+      <div className="sidebar-brand">
         <h2 style={{ fontSize: '1.2rem', color: '#FFFFFF', fontWeight: 'bold' }}>FitScholar AI</h2>
         <p style={{ fontSize: '0.75rem', color: 'var(--color-secondary)', marginTop: '2px' }}>
           Decision-Support System
@@ -42,26 +33,14 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation Links */}
-      <nav style={{ flex: 1, padding: '12px 0', overflowY: 'auto' }}>
+      <nav className="sidebar-nav" aria-label="Main navigation">
         {links.map((link) => {
           const Icon = link.icon;
           return (
             <NavLink
               key={link.to}
               to={link.to}
-              style={({ isActive }) => ({
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '11px 24px',
-                color: isActive ? '#FFFFFF' : '#A0AEC0',
-                backgroundColor: isActive ? 'var(--color-primary)' : 'transparent',
-                textDecoration: 'none',
-                fontSize: '0.88rem',
-                fontWeight: isActive ? '600' : '400',
-                borderLeft: isActive ? '4px solid var(--color-secondary)' : '4px solid transparent',
-                transition: 'background-color 0.2s ease, color 0.2s ease'
-              })}
+              className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}
             >
               <Icon size={18} />
               <span>{link.label}</span>

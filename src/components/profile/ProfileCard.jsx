@@ -1,12 +1,12 @@
-import React from 'react';
 import ProfileProgress from './ProfileProgress';
-import { User, GraduationCap, Award, MapPin } from 'lucide-react';
+import { User } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function ProfileCard({ profile }) {
   if (!profile) return null;
 
   return (
-    <div className="card">
+    <GlowCard customSize className="card">
       <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '16px' }}>
         <div style={{
           width: '56px',
@@ -52,6 +52,6 @@ export default function ProfileCard({ profile }) {
           <strong>{profile.fundingPreference}</strong>
         </div>
       </div>
-    </div>
+    </GlowCard>
   );
 }

@@ -27,6 +27,20 @@ const DEFAULT_PROFILE = {
 };
 
 const PROFILE_STORAGE_KEY = 'fitscholar.profile.v2';
+const SAVED_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.savedOpportunities.v1';
+const DEFAULT_SAVED_OPPORTUNITIES = ['univ-1', 'sch-1'];
+
+function readSavedOpportunities() {
+  if (typeof window === 'undefined') return DEFAULT_SAVED_OPPORTUNITIES;
+  try {
+    const saved = window.localStorage.getItem(SAVED_OPPORTUNITIES_STORAGE_KEY);
+    if (!saved) return DEFAULT_SAVED_OPPORTUNITIES;
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : DEFAULT_SAVED_OPPORTUNITIES;
+  } catch {
+    return DEFAULT_SAVED_OPPORTUNITIES;
+  }
+}
 
 function readSavedProfile() {
   if (typeof window === 'undefined') return DEFAULT_PROFILE;
@@ -112,7 +126,7 @@ function calculateMatchStatistics(profile) {
 
 export function ProfileProvider({ children }) {
   const [profile, setProfile] = useState(readSavedProfile);
-  const [savedOpportunities, setSavedOpportunities] = useState(["univ-1", "sch-1"]);
+  const [savedOpportunities, setSavedOpportunities] = useState(readSavedOpportunities);
   const [loading, setLoading] = useState(false);
 
   const saveCvUpload = (fileInfo) => {
@@ -191,6 +205,7 @@ export function ProfileProvider({ children }) {
           profileCompletionPercentage: progress.complete ? 100 : Math.round(((progress.step + 1) / 4) * 100),
           profileSetupStep: progress.complete ? 4 : progress.step + 1,
           profileComplete: Boolean(progress.complete),
+          profileStatus: progress.complete ? 'complete' : 'draft',
           profileMethod: isCvSource ? 'cv' : 'manual',
           cvUpload: isCvSource ? profile.cvUpload || null : null,
           extractedProfile: isCvSource ? profile.extractedProfile || null : null,
@@ -209,11 +224,15 @@ export function ProfileProvider({ children }) {
 
   const toggleSaveOpportunity = (id) => {
     setSavedOpportunities((prev) => {
-      if (prev.includes(id)) {
-        return prev.filter(savedId => savedId !== id);
-      } else {
-        return [...prev, id];
+      const next = prev.includes(id)
+        ? prev.filter((savedId) => savedId !== id)
+        : [...prev, id];
+      try {
+        window.localStorage.setItem(SAVED_OPPORTUNITIES_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        return next;
       }
+      return next;
     });
   };
 

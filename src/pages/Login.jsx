@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ArrowLeft } from 'lucide-react';
+import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -45,13 +45,8 @@ export default function Login() {
     setError('');
 
     try {
-      // Connect your Google authentication function here.
-      // Example:
-      // const res = await loginWithGoogle();
-      // if (res.success) navigate('/profile-setup');
-
-      // Temporary placeholder
-      alert('Google Sign-In will be connected here.');
+      const result = await login('google-demo@fitscholar.local', 'demo-google');
+      if (result.success) navigate('/profile-setup');
     } catch {
       setError('Failed to sign in with Google. Please try again.');
     } finally {
@@ -203,7 +198,7 @@ export default function Login() {
                 href="#forgot"
                 onClick={(e) => {
                   e.preventDefault();
-                  alert('Password reset link sent to your email.');
+                  alert('Password reset is unavailable in this demo account.');
                 }}
                 style={{
                   fontSize: '0.82rem',
@@ -372,7 +367,7 @@ export default function Login() {
             />
           </svg>
 
-          {googleLoading ? 'Connecting to Google...' : 'Continue with Google'}
+          {googleLoading ? 'Starting demo session...' : 'Continue with Google (Demo)'}
         </button>
 
         <hr
@@ -423,7 +418,7 @@ export default function Login() {
           fontWeight: '500'
         }}
       >
-        <ArrowLeft size={16} />
+        <ChevronSmallRightIcon size={16} className="rotate-180" aria-hidden="true" />
         Back to FitScholar Home
       </Link>
 

@@ -21,6 +21,7 @@ export interface AcademicBackground {
   cgpa: string;
   gradingScale: string;
   customGradingScale: string;
+  degreeStartDate: string;
   expectedGraduationDate: string;
   graduationDate: string;
   transcript: File | null;
@@ -29,6 +30,11 @@ export interface AcademicBackground {
   programmingLanguages: string;
   certifications: string;
   projects: string;
+  academicAchievements: string;
+  previousDegree: string;
+  previousDegreeTitle: string;
+  previousDegreeInstitution: string;
+  previousDegreeDate: string;
 }
 
 export type EnglishTestType = "" | "IELTS" | "TOEFL iBT" | "PTE" | "Duolingo English Test" | "Other" | "No Test / Not Taken";
@@ -42,7 +48,9 @@ export interface EnglishProficiency {
   writing: string;
   speaking: string;
   testDate: string;
-  mediumOfInstruction: "Yes" | "No" | "";
+  testStatus: string;
+  willingToTest: string;
+  mediumOfInstruction: "Yes" | "No" | "Not available" | "";
   moiCertificate: File | null;
 }
 
@@ -61,6 +69,11 @@ export interface StudyPreferences {
   currency: string;
   duration: string;
   additionalPreferences: string;
+  intendedDegree: string;
+  languageOfInstruction: string;
+  admissionYear: string;
+  preferredProgramDuration: string;
+  fundingPreference: string;
 }
 
 export interface StudentProfile {
@@ -68,6 +81,8 @@ export interface StudentProfile {
   academicBackground: AcademicBackground;
   englishProficiency: EnglishProficiency;
   studyPreferences: StudyPreferences;
+  documentAvailability: Record<string, string>;
+  profileStatus?: "draft" | "complete";
 }
 
 export type ProfileFieldStatus = "extracted" | "edited" | "missing" | "optional" | "account" | "not-applicable";
@@ -89,18 +104,29 @@ export const EMPTY_PROFILE: StudentProfile = {
     currentDegree: "", degreeTitle: "", major: "", institution: "",
     institutionCountry: "", academicStatus: "", currentYear: "", cgpa: "",
     gradingScale: "", customGradingScale: "", expectedGraduationDate: "", graduationDate: "", transcript: null,
+    degreeStartDate: "",
     relevantCoursework: "", technicalSkills: "", programmingLanguages: "", certifications: "", projects: "",
+    academicAchievements: "", previousDegree: "", previousDegreeTitle: "",
+    previousDegreeInstitution: "", previousDegreeDate: "",
   },
   englishProficiency: {
     testType: "", otherTestName: "", overallScore: "", listening: "", reading: "",
-    writing: "", speaking: "", testDate: "", mediumOfInstruction: "", moiCertificate: null,
+    writing: "", speaking: "", testDate: "", testStatus: "", willingToTest: "",
+    mediumOfInstruction: "", moiCertificate: null,
   },
   studyPreferences: {
     fields: [], customField: "", countries: [], regions: [], otherCountry: "", intake: "",
     studyMode: "", programPreference: "", fundingPreferences: [],
     maxTuitionBudget: "", maxLivingCostBudget: "", currency: "", duration: "",
-    additionalPreferences: "",
+    additionalPreferences: "", intendedDegree: "Master's", languageOfInstruction: "",
+    admissionYear: "", preferredProgramDuration: "",
+    fundingPreference: "",
   },
+  documentAvailability: {
+    cv: "", transcript: "", degreeCertificate: "", englishCertificate: "",
+    moiCertificate: "", statementOfPurpose: "", passport: "", recommendationLetters: "",
+  },
+  profileStatus: "draft",
 };
 
 export function mergeProfile(values: Partial<StudentProfile> = {}): StudentProfile {
@@ -109,5 +135,7 @@ export function mergeProfile(values: Partial<StudentProfile> = {}): StudentProfi
     academicBackground: { ...EMPTY_PROFILE.academicBackground, ...values.academicBackground },
     englishProficiency: { ...EMPTY_PROFILE.englishProficiency, ...values.englishProficiency },
     studyPreferences: { ...EMPTY_PROFILE.studyPreferences, ...values.studyPreferences },
+    documentAvailability: { ...EMPTY_PROFILE.documentAvailability, ...values.documentAvailability },
+    profileStatus: values.profileStatus || EMPTY_PROFILE.profileStatus,
   };
 }

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { UploadCloud, FileText, CheckCircle2 } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function FileUpload({ onUpload, isUploading = false }) {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -19,7 +20,7 @@ export default function FileUpload({ onUpload, isUploading = false }) {
   };
 
   return (
-    <div className="card" style={{ textAlign: 'center', borderStyle: 'dashed', borderWidth: '2px', padding: '36px 20px' }}>
+    <GlowCard customSize className="card" style={{ textAlign: 'center', borderStyle: 'dashed', borderWidth: '2px', padding: '36px 20px' }}>
       <UploadCloud size={44} color="var(--color-primary)" style={{ marginBottom: '12px' }} />
       <h3 style={{ fontSize: '1.1rem', color: 'var(--color-dark)', marginBottom: '6px' }}>Upload Academic Document</h3>
       <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '20px' }}>
@@ -64,6 +65,6 @@ export default function FileUpload({ onUpload, isUploading = false }) {
           Parsing document parameters for eligibility matching...
         </p>
       )}
-    </div>
+    </GlowCard>
   );
 }

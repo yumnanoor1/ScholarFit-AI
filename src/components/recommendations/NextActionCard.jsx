@@ -1,9 +1,10 @@
-import React from 'react';
-import { AlertCircle, ArrowRight } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
+import { ChevronSmallRightIcon } from '../ui/ChevronSmallRightIcon';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function NextActionCard({ actionText, onExecute, category = "Profile Improvement" }) {
   return (
-    <div style={{
+    <GlowCard customSize className="next-action-glow-card" style={{
       backgroundColor: 'var(--color-dark)',
       color: '#FFFFFF',
       padding: '20px',
@@ -41,9 +42,9 @@ export default function NextActionCard({ actionText, onExecute, category = "Prof
           onClick={onExecute}
           style={{ flexShrink: 0, padding: '10px 18px', fontSize: '0.88rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
         >
-          Execute Action <ArrowRight size={16} />
+          Execute Action <ChevronSmallRightIcon size={16} aria-hidden="true" />
         </button>
       )}
-    </div>
+    </GlowCard>
   );
 }

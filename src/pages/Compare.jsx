@@ -1,38 +1,91 @@
-import React from 'react';
+import { useNavigate } from 'react-router-dom';
+import { CalendarDays, ChartNoAxesColumnIncreasing, Check, Clock3, DollarSign, GraduationCap, Languages, MapPin, Star, X } from 'lucide-react';
+import { useProfile } from '../context/ProfileContext';
+import { mockUniversities } from '../data/mockData';
+import { GlowCard } from '../components/ui/spotlight-card';
+
+function getDeadlineStatus(deadline) {
+  const date = new Date(deadline);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysLeft = Math.ceil((date - today) / 86400000);
+
+  if (daysLeft < 0) return `${Math.abs(daysLeft)} days ago`;
+  if (daysLeft === 0) return 'Today';
+  return `In ${daysLeft} days`;
+}
 
 export default function Compare() {
-  return (
-    <div className="page-container">
-      <h1 className="page-title">Program Side-by-Side Comparison</h1>
-      <p className="page-subtitle">Comparative evaluation of options against key eligibility metrics.</p>
+  const navigate = useNavigate();
+  const { isOpportunitySaved, toggleSaveOpportunity } = useProfile();
 
-      <div className="card" style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', textAlign: 'left' }}>
-          <thead>
-            <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
-              <th style={{ padding: '12px' }}>Feature</th>
-              <th style={{ padding: '12px' }}>TU Munich (Germany)</th>
-              <th style={{ padding: '12px' }}>Univ of Toronto (Canada)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-              <td style={{ padding: '12px', fontWeight: 'bold' }}>Fit Score</td>
-              <td style={{ padding: '12px', color: 'var(--color-success)' }}>94% Fit</td>
-              <td style={{ padding: '12px', color: 'var(--color-warning)' }}>78% Fit</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-              <td style={{ padding: '12px', fontWeight: 'bold' }}>Estimated Tuition</td>
-              <td style={{ padding: '12px' }}>$600 / yr</td>
-              <td style={{ padding: '12px' }}>$28,000 / yr</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-              <td style={{ padding: '12px', fontWeight: 'bold' }}>Eligibility Status</td>
-              <td style={{ padding: '12px' }}>Eligible</td>
-              <td style={{ padding: '12px' }}>Requirements Missing</td>
-            </tr>
-          </tbody>
-        </table>
+  return (
+    <div className="page-container compare-page">
+      <header className="compare-page-header">
+        <div className="compare-page-title">
+          <ChartNoAxesColumnIncreasing size={32} aria-hidden="true" />
+          <div>
+            <h1>Program Comparison</h1>
+            <p>Compare tuition, admission requirements, and fit across programs.</p>
+          </div>
+        </div>
+        <button type="button" className="compare-close-button" onClick={() => navigate(-1)}>
+          <X size={16} aria-hidden="true" /> Close
+        </button>
+      </header>
+
+      <div className="program-comparison-grid">
+        {mockUniversities.map((program) => {
+          const saved = isOpportunitySaved(program.id);
+          const deadlineStatus = getDeadlineStatus(program.deadline);
+          const metrics = [
+            { label: 'Tuition', value: program.tuition, Icon: DollarSign },
+            { label: 'Match score', value: `${program.matchScore}%`, Icon: Star, highlight: true },
+            { label: 'Eligibility', value: program.eligibilityStatus, Icon: Check },
+            { label: 'CGPA requirement', value: program.cgpaReq, Icon: GraduationCap },
+            { label: 'English requirement', value: program.englishReq, Icon: Languages },
+            { label: 'Application deadline', value: program.deadline, Icon: CalendarDays, detail: deadlineStatus, urgent: deadlineStatus && !deadlineStatus.includes('ago') && Number.parseInt(deadlineStatus.replace(/\D/g, ''), 10) < 30 },
+          ];
+
+          return (
+            <GlowCard as="article" customSize key={program.id} className="program-comparison-card">
+              <header className="program-comparison-card-header">
+                <div>
+                  <h2>{program.university}</h2>
+                  <p className="program-comparison-location"><MapPin size={15} aria-hidden="true" /> {program.country}</p>
+                  <p className="program-comparison-program">{program.program}</p>
+                </div>
+                <div className="program-comparison-score" aria-label={`Match score ${program.matchScore} percent`}>
+                  <span>{program.matchScore}</span>
+                </div>
+              </header>
+
+              <dl className="program-comparison-metrics">
+                {metrics.map(({ label, value, Icon, highlight, detail, urgent }) => (
+                  <div key={label} className="program-comparison-metric">
+                    <dt><Icon size={16} aria-hidden="true" /> {label}</dt>
+                    <dd className={`${highlight ? 'is-highlight' : ''} ${urgent ? 'is-urgent' : ''}`}>
+                      <span>{value}</span>
+                      {detail && <small><Clock3 size={12} aria-hidden="true" /> {detail}</small>}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+
+              <button
+                type="button"
+                className={`program-comparison-save${saved ? ' is-saved' : ''}`}
+                aria-pressed={saved}
+                onClick={() => toggleSaveOpportunity(program.id)}
+              >
+                <Star size={17} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" />
+                {saved ? 'Added to My List' : 'Add to My List'}
+              </button>
+            </GlowCard>
+          );
+        })}
       </div>
     </div>
   );

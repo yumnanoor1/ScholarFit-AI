@@ -1,12 +1,12 @@
-import React from 'react';
-import { DollarSign, MinusCircle, PlusCircle, Calculator } from 'lucide-react';
+import { MinusCircle, PlusCircle, Calculator } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function CostBreakdown({ tuition = 12000, living = 10000, funding = 15000 }) {
   const totalCost = tuition + living;
   const remaining = totalCost - funding;
 
   return (
-    <div className="card">
+    <GlowCard customSize className="card">
       <h3 style={{ fontSize: '1rem', color: 'var(--color-dark)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
         <Calculator size={18} color="var(--color-primary)" />
         Financial Feasibility & Cost Breakdown
@@ -65,6 +65,6 @@ export default function CostBreakdown({ tuition = 12000, living = 10000, funding
       <div style={{ marginTop: '14px', fontSize: '0.78rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
         * Note: All cost metrics are estimates based on reported averages and official university tuition guidelines.
       </div>
-    </div>
+    </GlowCard>
   );
 }

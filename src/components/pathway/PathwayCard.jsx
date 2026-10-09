@@ -1,12 +1,12 @@
-import React from 'react';
 import PathwaySteps from './PathwaySteps';
 import { GitBranch, AlertTriangle } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function PathwayCard({ type = "University First", steps = [], note = null }) {
   const isUnclear = type === "Unclear";
 
   return (
-    <div className="card" style={{ borderTop: `4px solid ${isUnclear ? 'var(--color-warning)' : 'var(--color-primary)'}` }}>
+    <GlowCard customSize className="card" style={{ borderTop: `4px solid ${isUnclear ? 'var(--color-warning)' : 'var(--color-primary)'}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
         {isUnclear ? (
           <AlertTriangle color="var(--color-warning)" size={20} />
@@ -53,6 +53,6 @@ export default function PathwayCard({ type = "University First", steps = [], not
           * {note}
         </div>
       )}
-    </div>
+    </GlowCard>
   );
 }

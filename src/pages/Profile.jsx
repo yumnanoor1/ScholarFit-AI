@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import FormLayout01 from '@/components/ui/form-2';
+import FormLayout01 from '../components/profile/AcademicForm';
 import { Button } from '@/components/ui/button';
 import { EMPTY_PROFILE, mergeProfile } from '@/data/profileModel';
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 const sectionTitles = [
   'Personal Information',
@@ -22,7 +23,7 @@ function displayValue(value) {
 
 function ProfileSection({ title, items, onEdit }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+    <GlowCard as="section" customSize className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
       <div className="flex items-center justify-between gap-3">
         <h2 className="font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
         <Button type="button" variant="outline" size="sm" onClick={onEdit}>Edit</Button>
@@ -35,7 +36,7 @@ function ProfileSection({ title, items, onEdit }) {
           </div>
         ))}
       </dl>
-    </section>
+    </GlowCard>
   );
 }
 
@@ -138,7 +139,7 @@ export default function Profile() {
     : profile.profileSetupStep || 0;
 
   return (
-    <div style={{ backgroundColor: 'var(--color-bg)', minHeight: '100vh', padding: '20px 0' }}>
+    <div style={{ backgroundColor: 'var(--color-bg)', minHeight: '0', padding: '0' }}>
       {saveError && (
         <p role="alert" style={{ maxWidth: '640px', margin: '0 auto 0.5rem', padding: '0 1.5rem', color: '#b42318' }}>
           {saveError}

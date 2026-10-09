@@ -1,10 +1,12 @@
-import React from 'react';
 import { Bookmark } from 'lucide-react';
 
 export default function SaveButton({ isSaved = false, onToggle, label = null }) {
   return (
     <button
       type="button"
+      disabled={!onToggle}
+      aria-label={`${isSaved ? 'Remove' : 'Save'} opportunity${label ? `: ${label}` : ''}`}
+      aria-pressed={isSaved}
       onClick={(e) => {
         e.stopPropagation();
         if (onToggle) onToggle();
@@ -16,7 +18,8 @@ export default function SaveButton({ isSaved = false, onToggle, label = null }) 
         backgroundColor: isSaved ? '#EBF3FA' : 'transparent',
         color: isSaved ? 'var(--color-primary)' : 'var(--color-text-muted)',
         border: `1px solid ${isSaved ? 'var(--color-primary)' : 'var(--color-border)'}`,
-        cursor: 'pointer',
+        cursor: onToggle ? 'pointer' : 'not-allowed',
+        opacity: onToggle ? 1 : 0.5,
         display: 'inline-flex',
         alignItems: 'center',
         gap: '6px',
@@ -24,7 +27,7 @@ export default function SaveButton({ isSaved = false, onToggle, label = null }) 
         fontWeight: '600',
         transition: 'all 0.2s ease'
       }}
-      title={isSaved ? "Remove from saved opportunities" : "Save opportunity"}
+      title={!onToggle ? 'Saving is unavailable here' : isSaved ? 'Remove from saved opportunities' : 'Save opportunity'}
     >
       <Bookmark 
         size={16} 

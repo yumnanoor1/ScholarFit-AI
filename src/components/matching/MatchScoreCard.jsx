@@ -1,4 +1,4 @@
-import React from 'react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function MatchScoreCard({ score = 85, label = "Match Score" }) {
   let scoreColor = "var(--color-primary)";
@@ -6,7 +6,7 @@ export default function MatchScoreCard({ score = 85, label = "Match Score" }) {
   else if (score < 75) scoreColor = "var(--color-warning)";
 
   return (
-    <div style={{
+    <GlowCard customSize className="match-score-glow" style={{
       display: 'flex',
       alignItems: 'center',
       gap: '12px',
@@ -38,6 +38,6 @@ export default function MatchScoreCard({ score = 85, label = "Match Score" }) {
           Academic & Funding Fit
         </span>
       </div>
-    </div>
+    </GlowCard>
   );
 }

@@ -1,5 +1,5 @@
-import React from 'react';
 import { FolderOpen } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function EmptyState({
   title = "Aucune donnée trouvée",
@@ -8,7 +8,7 @@ export default function EmptyState({
   onAction = null
 }) {
   return (
-    <div className="card" style={{
+    <GlowCard customSize className="card" style={{
       textAlign: 'center',
       padding: '40px 20px',
       display: 'flex',
@@ -25,6 +25,6 @@ export default function EmptyState({
           {actionLabel}
         </button>
       )}
-    </div>
+    </GlowCard>
   );
 }

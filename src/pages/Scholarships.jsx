@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Bookmark, 
@@ -7,15 +7,21 @@ import {
   Briefcase, 
   Globe, 
   ChevronDown,
-  ArrowRight
 } from 'lucide-react';
+import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 export default function Scholarships() {
   const navigate = useNavigate();
 
   // Selected scholarships state for comparison bar
-  const [selectedIds, setSelectedIds] = useState(['1', '2']);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [savedIds, setSavedIds] = useState([]);
+  const [sortAscending, setSortAscending] = useState(false);
+  const [selectedCountries, setSelectedCountries] = useState([]);
+  const [selectedFundingTypes, setSelectedFundingTypes] = useState([]);
+  const [selectedDegreeLevels, setSelectedDegreeLevels] = useState([]);
+  const [expandedFilters, setExpandedFilters] = useState({ country: true, funding: true, degree: true });
 
   // Mock list of scholarships matching screenshot
   const scholarshipsList = [
@@ -24,6 +30,8 @@ export default function Scholarships() {
       title: 'Fulbright Student Program',
       provider: 'U.S. Department of State',
       country: 'United States',
+      fundingType: 'Full Funding',
+      degreeLevel: "Master's",
       coverage: 'Full tuition + stipend',
       notes: '+$1,500/mo allowance',
       deadlineBadge: 'Due in 12 days',
@@ -37,6 +45,8 @@ export default function Scholarships() {
       title: 'Chevening Scholarship',
       provider: 'UK Foreign & Commonwealth Office',
       country: 'United Kingdom',
+      fundingType: 'Full Funding',
+      degreeLevel: "Master's",
       coverage: 'Full tuition + housing',
       notes: 'Flight coverage included',
       deadlineBadge: 'Due in 31 days',
@@ -50,6 +60,8 @@ export default function Scholarships() {
       title: 'DAAD Research Grant',
       provider: 'German Academic Exchange Service',
       country: 'Germany',
+      fundingType: 'Stipend only',
+      degreeLevel: "Master's",
       coverage: '$1,200/mo Stipend',
       notes: 'Excludes tuition fees',
       deadlineBadge: 'Due in 48 days',
@@ -63,6 +75,8 @@ export default function Scholarships() {
       title: "Commonwealth Master's ...",
       provider: 'Commonwealth Scholarship Commi...',
       country: 'United Kingdom',
+      fundingType: 'Tuition only',
+      degreeLevel: "Master's",
       coverage: 'Tuition only',
       notes: 'Self-funded living costs',
       deadlineBadge: 'Due in 65 days',
@@ -76,6 +90,8 @@ export default function Scholarships() {
       title: 'Rotary Foundation Grant',
       provider: 'The Rotary Foundation',
       country: 'Global',
+      fundingType: 'Grant',
+      degreeLevel: "Master's",
       coverage: '$30,000 Flat Grant',
       notes: 'One-time payment',
       deadlineBadge: 'Next Cycle',
@@ -85,6 +101,22 @@ export default function Scholarships() {
       icon: <Globe size={20} color="var(--color-primary)" />
     }
   ];
+
+  const toggleFilter = (setter, value) => {
+    setter((current) => current.includes(value)
+      ? current.filter((selected) => selected !== value)
+      : [...current, value]);
+  };
+
+  const toggleFilterSection = (section) => {
+    setExpandedFilters((current) => ({ ...current, [section]: !current[section] }));
+  };
+
+  const visibleScholarships = scholarshipsList
+    .filter((item) => selectedCountries.length === 0 || selectedCountries.includes(item.country))
+    .filter((item) => selectedFundingTypes.length === 0 || selectedFundingTypes.includes(item.fundingType))
+    .filter((item) => selectedDegreeLevels.length === 0 || selectedDegreeLevels.includes(item.degreeLevel))
+    .sort((first, second) => sortAscending ? first.match - second.match : second.match - first.match);
 
   const toggleSelect = (id) => {
     setSelectedIds(prev => 
@@ -99,22 +131,22 @@ export default function Scholarships() {
   };
 
   return (
-    <div className="page-container" style={{ maxWidth: '1240px', margin: '0 auto', padding: '32px 24px', position: 'relative' }}>
+    <div className="page-container scholarship-page" style={{ maxWidth: '1240px', margin: '0 auto', position: 'relative' }}>
       
       {/* Page Header Row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
+      <div className="scholarships-header">
         <div>
           <h1 style={{ fontSize: '2.4rem', fontFamily: 'serif', fontWeight: '600', color: 'var(--color-dark)', marginBottom: '4px' }}>
             Scholarships
           </h1>
           <p style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
-            48 scholarships available for your profile
+            Showing {visibleScholarships.length} of {scholarshipsList.length} demo scholarships
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
           <span style={{ color: 'var(--color-text-muted)' }}>Sort by</span>
-          <button style={{
+          <button type="button" onClick={() => setSortAscending((current) => !current)} aria-label={`Sort by match percentage, ${sortAscending ? 'ascending' : 'descending'}`} style={{
             backgroundColor: '#FFFFFF',
             border: '1px solid var(--color-border)',
             borderRadius: '6px',
@@ -126,131 +158,129 @@ export default function Scholarships() {
             color: 'var(--color-dark)',
             cursor: 'pointer'
           }}>
-            Match % <ChevronDown size={16} />
+            Match % {sortAscending ? '↑' : '↓'} <ChevronDown size={16} />
           </button>
         </div>
       </div>
 
       {/* Main Two-Column Layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: '36px', alignItems: 'start' }}>
+      <div className="scholarships-layout">
         
         {/* Left Filter Sidebar */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', fontSize: '0.85rem' }}>
           
           {/* Country Filter */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700', color: 'var(--color-dark)', fontSize: '0.75rem', textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '0.5px' }}>
+            <button type="button" className="scholarship-filter-toggle" aria-expanded={expandedFilters.country} aria-controls="country-filter-options" onClick={() => toggleFilterSection('country')}>
               <span>COUNTRY</span>
-              <span>^</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', color: 'var(--color-dark)' }}>
+              <ChevronSmallRightIcon size={14} aria-hidden="true" style={{ transform: expandedFilters.country ? 'rotate(-90deg)' : 'rotate(90deg)', transition: 'transform 180ms ease' }} />
+            </button>
+            {expandedFilters.country && <div id="country-filter-options" style={{ display: 'flex', flexDirection: 'column', gap: '8px', color: 'var(--color-dark)' }}>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" /> United Kingdom
+                  <input type="checkbox" checked={selectedCountries.includes('United Kingdom')} onChange={() => toggleFilter(setSelectedCountries, 'United Kingdom')} /> United Kingdom
                 </span>
-                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>12</span>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>{scholarshipsList.filter((item) => item.country === 'United Kingdom').length}</span>
               </label>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: '600' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" defaultChecked /> United States
+                  <input type="checkbox" checked={selectedCountries.includes('United States')} onChange={() => toggleFilter(setSelectedCountries, 'United States')} /> United States
                 </span>
-                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>18</span>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>{scholarshipsList.filter((item) => item.country === 'United States').length}</span>
               </label>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" /> Germany
+                  <input type="checkbox" checked={selectedCountries.includes('Germany')} onChange={() => toggleFilter(setSelectedCountries, 'Germany')} /> Germany
                 </span>
-                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>8</span>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>{scholarshipsList.filter((item) => item.country === 'Germany').length}</span>
               </label>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" /> Canada
+                  <input type="checkbox" checked={selectedCountries.includes('Canada')} onChange={() => toggleFilter(setSelectedCountries, 'Canada')} /> Canada
                 </span>
-                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>10</span>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>{scholarshipsList.filter((item) => item.country === 'Canada').length}</span>
               </label>
-            </div>
+            </div>}
           </div>
 
           <hr style={{ border: 'none', borderTop: '1px solid #E2E8F0', margin: '4px 0' }} />
 
           {/* Funding Type Filter */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700', color: 'var(--color-dark)', fontSize: '0.75rem', textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '0.5px' }}>
+            <button type="button" className="scholarship-filter-toggle" aria-expanded={expandedFilters.funding} aria-controls="funding-filter-options" onClick={() => toggleFilterSection('funding')}>
               <span>FUNDING TYPE</span>
-              <span>^</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <ChevronSmallRightIcon size={14} aria-hidden="true" style={{ transform: expandedFilters.funding ? 'rotate(-90deg)' : 'rotate(90deg)', transition: 'transform 180ms ease' }} />
+            </button>
+            {expandedFilters.funding && <div id="funding-filter-options" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: '600' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" defaultChecked /> Full Funding
+                  <input type="checkbox" checked={selectedFundingTypes.includes('Full Funding')} onChange={() => toggleFilter(setSelectedFundingTypes, 'Full Funding')} /> Full Funding
                 </span>
                 <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>14</span>
               </label>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" /> Tuition only
+                  <input type="checkbox" checked={selectedFundingTypes.includes('Tuition only')} onChange={() => toggleFilter(setSelectedFundingTypes, 'Tuition only')} /> Tuition only
                 </span>
                 <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>22</span>
               </label>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" /> Stipend only
+                  <input type="checkbox" checked={selectedFundingTypes.includes('Stipend only')} onChange={() => toggleFilter(setSelectedFundingTypes, 'Stipend only')} /> Stipend only
                 </span>
                 <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>6</span>
               </label>
-            </div>
+            </div>}
           </div>
 
           <hr style={{ border: 'none', borderTop: '1px solid #E2E8F0', margin: '4px 0' }} />
 
           {/* Degree Level Filter */}
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '700', color: 'var(--color-dark)', fontSize: '0.75rem', textTransform: 'uppercase', marginBottom: '12px', letterSpacing: '0.5px' }}>
+            <button type="button" className="scholarship-filter-toggle" aria-expanded={expandedFilters.degree} aria-controls="degree-filter-options" onClick={() => toggleFilterSection('degree')}>
               <span>DEGREE LEVEL</span>
-              <span>^</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <ChevronSmallRightIcon size={14} aria-hidden="true" style={{ transform: expandedFilters.degree ? 'rotate(-90deg)' : 'rotate(90deg)', transition: 'transform 180ms ease' }} />
+            </button>
+            {expandedFilters.degree && <div id="degree-filter-options" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" /> Undergraduate
+                  <input type="checkbox" checked={selectedDegreeLevels.includes('Undergraduate')} onChange={() => toggleFilter(setSelectedDegreeLevels, 'Undergraduate')} /> Undergraduate
                 </span>
                 <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>12</span>
               </label>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', fontWeight: '600' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" defaultChecked /> Master's
+                  <input type="checkbox" checked={selectedDegreeLevels.includes("Master's")} onChange={() => toggleFilter(setSelectedDegreeLevels, "Master's")} /> Master's
                 </span>
                 <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>28</span>
               </label>
               <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                 <span style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="checkbox" /> PhD / Research
+                  <input type="checkbox" checked={selectedDegreeLevels.includes('PhD / Research')} onChange={() => toggleFilter(setSelectedDegreeLevels, 'PhD / Research')} /> PhD / Research
                 </span>
                 <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>8</span>
               </label>
-            </div>
+            </div>}
           </div>
 
         </div>
 
         {/* Right Scholarship List */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div className="scholarships-results">
           
-          {scholarshipsList.map(item => {
+          {visibleScholarships.map(item => {
             const isSelected = selectedIds.includes(item.id);
             const isSaved = savedIds.includes(item.id);
 
             return (
-              <div 
+              <GlowCard
                 key={item.id}
+                customSize
+                className="scholarship-result-card"
                 style={{
                   backgroundColor: '#FFFFFF',
                   border: '1px solid #E2E8F0',
                   borderRadius: '10px',
-                  padding: '20px 24px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '20px',
                   boxShadow: '0 2px 4px rgba(0,0,0,0.02)'
                 }}
               >
@@ -345,41 +375,32 @@ export default function Scholarships() {
                 </div>
 
                 {/* Bookmark Icon */}
-                <button 
+                <button
+                  type="button"
+                  aria-label={`${isSaved ? 'Unsave' : 'Save'} ${item.title}`}
+                  aria-pressed={isSaved}
                   onClick={() => toggleSave(item.id)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: isSaved ? 'var(--color-primary)' : '#94A3B8' }}
                 >
                   <Bookmark size={18} fill={isSaved ? 'var(--color-primary)' : 'none'} />
                 </button>
-              </div>
+              </GlowCard>
             );
           })}
 
-          {/* Load More Button */}
-          <div style={{ textAlign: 'center', marginTop: '20px' }}>
-            <button className="btn btn-outline" style={{ padding: '10px 24px', fontSize: '0.88rem', backgroundColor: '#FFFFFF' }}>
-              Load more scholarships
-            </button>
-          </div>
-
+          {visibleScholarships.length === 0 && <p role="status">No demo scholarships match these filters.</p>}
         </div>
 
       </div>
 
       {/* Floating Bottom Comparison Bar */}
       {selectedIds.length >= 2 && (
-        <div style={{
-          position: 'fixed',
-          bottom: '30px',
-          left: '50%',
-          transform: 'translateX(-50%)',
+        <div className="scholarship-compare-bar" style={{
           backgroundColor: '#1E293B',
           color: '#FFFFFF',
-          padding: '16px 24px',
           borderRadius: '12px',
           display: 'flex',
           alignItems: 'center',
-          gap: '32px',
           boxShadow: '0 10px 25px rgba(0,0,0,0.2)',
           zIndex: 1000
         }}>
@@ -420,7 +441,7 @@ export default function Scholarships() {
               gap: '8px'
             }}
           >
-            Compare Now <ArrowRight size={16} />
+            Compare Now <ChevronSmallRightIcon size={16} aria-hidden="true" />
           </button>
         </div>
       )}

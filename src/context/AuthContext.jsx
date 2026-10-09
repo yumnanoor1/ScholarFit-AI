@@ -7,77 +7,111 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Initialize Auth from localStorage (FastAPI JWT persistence pattern)
+  // Initialize authentication from localStorage.
+  // No automatic/demo user is created.
   useEffect(() => {
     const storedToken = localStorage.getItem('fitscholar_token');
     const storedUser = localStorage.getItem('fitscholar_user');
 
     if (storedToken && storedUser) {
       try {
+        const parsedUser = JSON.parse(storedUser);
+
         setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-      } catch (e) {
-        console.error('Failed to parse cached user data', e);
+        setUser(parsedUser);
+      } catch (error) {
+        console.error('Failed to parse cached user data:', error);
+
         localStorage.removeItem('fitscholar_token');
         localStorage.removeItem('fitscholar_user');
+
+        setToken(null);
+        setUser(null);
       }
     } else {
-      // Default initial mock session for demonstration / FYP testing
-      const mockUser = {
-        id: "usr_991823",
-        name: "Alexander Wright",
-        email: "alexander.wright@university.edu",
-        role: "student"
-      };
-      setUser(mockUser);
-      setToken("mock_jwt_token_fitscholar_2026");
+      // No stored session = logged out
+      setToken(null);
+      setUser(null);
     }
+
     setLoading(false);
   }, []);
 
+  // Temporary frontend mock login.
+  // This can later be replaced with the real FastAPI API call.
   const login = async (email, password) => {
     setLoading(true);
-    // Simulate FastAPI JWT Authentication Endpoint call
+
     return new Promise((resolve) => {
       setTimeout(() => {
         const mockAuthData = {
           user: {
-            id: "usr_991823",
-            name: email.split('@')[0] || "Alexander Wright",
+            id: `usr_${Date.now()}`,
+            name: email.split('@')[0] || 'User',
             email: email,
-            role: "student"
+            role: 'student',
           },
-          access_token: "mock_jwt_token_fitscholar_2026"
+          access_token: `mock_token_${Date.now()}`,
         };
 
         setUser(mockAuthData.user);
         setToken(mockAuthData.access_token);
-        localStorage.setItem('fitscholar_token', mockAuthData.access_token);
-        localStorage.setItem('fitscholar_user', JSON.stringify(mockAuthData.user));
+
+        localStorage.setItem(
+          'fitscholar_token',
+          mockAuthData.access_token
+        );
+
+        localStorage.setItem(
+          'fitscholar_user',
+          JSON.stringify(mockAuthData.user)
+        );
+
         setLoading(false);
-        resolve({ success: true, user: mockAuthData.user });
+
+        resolve({
+          success: true,
+          user: mockAuthData.user,
+        });
       }, 500);
     });
   };
 
+  // Temporary frontend mock registration.
+  // This can later be replaced with the real FastAPI API call.
   const register = async (name, email, password) => {
     setLoading(true);
-    // Simulate FastAPI User Registration Endpoint call
+
     return new Promise((resolve) => {
       setTimeout(() => {
         const newUser = {
           id: `usr_${Date.now()}`,
           name: name,
           email: email,
-          role: "student"
+          role: 'student',
         };
 
+        const mockToken = `mock_token_${Date.now()}`;
+
         setUser(newUser);
-        setToken("mock_jwt_token_fitscholar_2026");
-        localStorage.setItem('fitscholar_token', "mock_jwt_token_fitscholar_2026");
-        localStorage.setItem('fitscholar_user', JSON.stringify(newUser));
+        setToken(mockToken);
+
+        localStorage.setItem(
+          'fitscholar_token',
+          mockToken
+        );
+
+        localStorage.setItem(
+          'fitscholar_user',
+          JSON.stringify(newUser)
+        );
+
         setLoading(false);
-        resolve({ success: true, user: newUser });
+
+        resolve({
+          success: true,
+          user: newUser,
+        });
       }, 500);
     });
   };
@@ -85,12 +119,23 @@ export function AuthProvider({ children }) {
   const logout = () => {
     setUser(null);
     setToken(null);
+
     localStorage.removeItem('fitscholar_token');
     localStorage.removeItem('fitscholar_user');
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        isAuthenticated: !!user && !!token,
+        loading,
+        login,
+        register,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -98,8 +143,10 @@ export function AuthProvider({ children }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
+
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
+
   return context;
 }

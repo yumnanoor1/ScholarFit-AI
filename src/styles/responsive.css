@@ -19,8 +19,58 @@
     min-height: auto;
   }
 
+  .sidebar-nav {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px 8px;
+    scrollbar-width: thin;
+  }
+
+  .sidebar-link {
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border-left: 0;
+    border-bottom: 3px solid transparent;
+    font-size: 0.68rem;
+    white-space: nowrap;
+  }
+
+  .sidebar-link.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--color-secondary);
+  }
+
   .navbar-search {
-    width: 200px;
+    width: 100%;
+    max-width: none;
+  }
+
+  .main-content > .app-navbar {
+    height: auto;
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 16px;
+  }
+
+  .app-navbar .navbar-search {
+    flex: 1 1 100%;
+  }
+
+  .app-navbar .navbar-actions {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .app-navbar .navbar-user-copy {
+    display: none;
   }
 
   .grid-2, .grid-3 {

@@ -1,11 +1,11 @@
-import React from 'react';
-import { Calendar, Clock, AlertTriangle } from 'lucide-react';
+import { Calendar, AlertTriangle } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function DeadlineCard({ title, provider, deadline, daysRemaining, category = "Scholarship" }) {
   const isUrgent = daysRemaining !== undefined && daysRemaining <= 30;
 
   return (
-    <div className="card" style={{
+    <GlowCard customSize className="card" style={{
       borderLeft: `4px solid ${isUrgent ? 'var(--color-danger)' : 'var(--color-primary)'}`,
       padding: '16px',
       marginBottom: '12px'
@@ -53,6 +53,6 @@ export default function DeadlineCard({ title, provider, deadline, daysRemaining,
         <Calendar size={14} />
         <span>Official Deadline: {deadline}</span>
       </div>
-    </div>
+    </GlowCard>
   );
 }

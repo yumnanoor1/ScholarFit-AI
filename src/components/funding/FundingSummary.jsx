@@ -1,9 +1,9 @@
-import React from 'react';
-import { DollarSign, Award, CheckCircle } from 'lucide-react';
+import { Award } from 'lucide-react';
+import { GlowCard } from '../ui/spotlight-card';
 
 export default function FundingSummary({ totalMatched = 2, totalEstimatedFunding = 15000, fundingPreference = "Full Funding Required" }) {
   return (
-    <div className="card">
+    <GlowCard customSize className="card">
       <h3 style={{ fontSize: '1rem', color: 'var(--color-dark)', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
         <Award color="var(--color-primary)" size={20} />
         Funding Matching Summary
@@ -27,6 +27,6 @@ export default function FundingSummary({ totalMatched = 2, totalEstimatedFunding
           </strong>
         </div>
       </div>
-    </div>
+    </GlowCard>
   );
 }

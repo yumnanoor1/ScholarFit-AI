@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { apiService } from '../services/api';
 import { UploadCloud, FileCheck, AlertTriangle } from 'lucide-react';
+import { GlowCard } from '../components/ui/spotlight-card';
 
 export default function Documents() {
   const [extracted, setExtracted] = useState(null);
@@ -23,7 +24,7 @@ export default function Documents() {
         <strong>Information Accuracy Disclaimer:</strong> Automated extraction assists data entry. Users must verify parsed fields prior to submitting eligibility checks.
       </div>
 
-      <div className="card" style={{ textAlign: 'center', borderStyle: 'dashed', borderWidth: '2px', padding: '40px 20px' }}>
+      <GlowCard customSize className="card" style={{ textAlign: 'center', borderStyle: 'dashed', borderWidth: '2px', padding: '40px 20px' }}>
         <UploadCloud size={48} color="var(--color-primary)" style={{ marginBottom: '12px' }} />
         <h3>Upload Document for Analysis</h3>
         <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '16px' }}>
@@ -34,10 +35,10 @@ export default function Documents() {
           Select Document
         </label>
         {loading && <p style={{ fontSize: '0.85rem', marginTop: '12px' }}>Parsing document content...</p>}
-      </div>
+      </GlowCard>
 
       {extracted && (
-        <div className="card">
+        <GlowCard customSize className="card">
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
             <FileCheck color="var(--color-success)" /> Extracted Academic Credentials
           </h3>
@@ -55,7 +56,7 @@ export default function Documents() {
               <li key={idx} style={{ marginBottom: '4px' }}>{item}</li>
             ))}
           </ul>
-        </div>
+        </GlowCard>
       )}
     </div>
   );

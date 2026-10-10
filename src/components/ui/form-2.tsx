@@ -1,21 +1,27 @@
 import * as React from "react";
-import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown, GraduationCap, Globe2, Lightbulb, Save, AlertCircle, WalletCards, FileText, Info } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown, GraduationCap, Globe2, Lightbulb, Save, AlertCircle, WalletCards, FileText, Info, type LucideIcon } from "lucide-react";
 import { Button } from "./button";
-import { EMPTY_PROFILE, mergeProfile } from "../../data/profileModel";
+import { EMPTY_PROFILE, mergeProfile, type StudentProfile } from "../../data/profileModel";
 
 const STEPS = ["About You", "Academic Background", "Study Goals", "Funding & Documents"];
 const FIELDS = ["Computer Science", "Software Engineering", "Artificial Intelligence", "Data Science", "Cybersecurity", "Machine Learning", "Information Technology", "Other"];
 const COUNTRIES = ["Pakistan", "Germany", "Netherlands", "Sweden", "Canada", "United States", "United Kingdom", "Australia", "New Zealand", "Other"];
 const REGIONS = ["Europe", "North America", "Asia-Pacific", "Global"];
 const FUNDING_TYPES = ["Government scholarships", "University scholarships", "Tuition waivers", "Research assistantships", "Teaching assistantships", "Fully funded fellowships", "Other"];
-const DOCUMENTS = [
+const DOCUMENTS: [string, string, LucideIcon][] = [
   ["cv", "CV / Resume", GraduationCap], ["transcript", "Academic Transcript", FileText],
   ["degreeCertificate", "Degree Certificate", GraduationCap], ["englishCertificate", "English Proficiency Certificate", GraduationCap],
   ["moiCertificate", "Medium of Instruction Certificate", GraduationCap], ["statementOfPurpose", "Statement of Purpose (SOP)", FileText],
   ["passport", "Passport", FileText], ["recommendationLetters", "Recommendation Letters", GraduationCap],
 ];
 
-function Field({ label, required, error, className = "", children }) {
+function Field({ label, required = false, error = "", className = "", children }: {
+  label: React.ReactNode;
+  required?: boolean;
+  error?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className={`block text-sm ${className}`}>
       <span className="mb-1.5 block font-medium text-slate-700 dark:text-slate-200">{label}{required && <span className="ml-1 text-red-600">*</span>}</span>
@@ -25,7 +31,13 @@ function Field({ label, required, error, className = "", children }) {
   );
 }
 
-function GroupField({ label, required, error, className = "", children }) {
+function GroupField({ label, required = false, error = "", className = "", children }: {
+  label: string;
+  required?: boolean;
+  error?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className={`profile-choice-field ${className}`}>
       <div className="profile-choice-label">{label}{required && <span>*</span>}</div>
@@ -35,11 +47,32 @@ function GroupField({ label, required, error, className = "", children }) {
   );
 }
 
-function Control({ as: Component = "input", error, className = "", ...props }) {
-  return <Component className={`h-9 w-full rounded-md border ${error ? "border-red-400" : "border-slate-200"} bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-sky-950 ${Component === "textarea" ? "h-auto py-2" : ""} ${className}`} {...props} />;
+type ControlProps =
+  | (Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange"> & { as?: "input"; error?: string })
+  | (React.SelectHTMLAttributes<HTMLSelectElement> & { as: "select"; error?: string })
+  | (React.TextareaHTMLAttributes<HTMLTextAreaElement> & { as: "textarea"; error?: string });
+
+function Control(props: ControlProps) {
+  const controlClassName = `h-9 w-full rounded-md border ${props.error ? "border-red-400" : "border-slate-200"} bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-sky-950 ${props.as === "textarea" ? "h-auto py-2" : ""} ${props.className || ""}`;
+  if (props.as === "select") {
+    const { as, error, className, ...selectProps } = props;
+    return <select className={controlClassName} {...selectProps} />;
+  }
+  if (props.as === "textarea") {
+    const { as, error, className, ...textareaProps } = props;
+    return <textarea className={controlClassName} {...textareaProps} />;
+  }
+  const { as, error, className, ...inputProps } = props;
+  return <input className={controlClassName} {...inputProps} />;
 }
 
-function MultiSelect({ label, options, value, onChange, placeholder = "Search or select..." }) {
+function MultiSelect({ label, options, value, onChange, placeholder = "Search or select..." }: {
+  label: string;
+  options: string[];
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+}) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
   const filteredOptions = options.filter((option) => option.toLowerCase().includes(query.toLowerCase()));
@@ -80,15 +113,20 @@ function MultiSelect({ label, options, value, onChange, placeholder = "Search or
   );
 }
 
-function Section({ title, description, className = "", children }) {
+function Section({ title, description, className = "", children }: {
+  title: string;
+  description?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
   return <section className={`rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6 ${className}`}><h2 className="text-lg font-bold text-slate-900 dark:text-white">{title}</h2>{description && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{description}</p>}<div className="mt-5">{children}</div></section>;
 }
 
-function validateStep(step, values) {
+function validateStep(step: number, values: StudentProfile) {
   const personal = values.personalInfo;
   const academic = values.academicBackground;
   const goals = values.studyPreferences;
-  const errors = {};
+  const errors: Record<string, string> = {};
   if (step === 0) {
     if (!personal.fullName.trim()) errors.fullName = "Enter your full name.";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(personal.email)) errors.email = "Enter a valid email address.";
@@ -160,7 +198,7 @@ export default function FormLayout01({
 }) {
   const [values, setValues] = React.useState(() => mergeProfile(initialValues || EMPTY_PROFILE));
   const [step, setStep] = React.useState(Math.min(Math.max(initialStep, 0), 3));
-  const [errors, setErrors] = React.useState({});
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [feedback, setFeedback] = React.useState("");
 
   React.useEffect(() => {
@@ -278,7 +316,7 @@ export default function FormLayout01({
       {academic.gradingScale === "Other" && <Field label="Custom maximum grade" required error={errors.customGradingScale}>{input("academicBackground", "customGradingScale", { type: "number", min: "0", step: "0.01" })}</Field>}
       <Field label="Degree Start Date" required error={errors.degreeStartDate}>{monthInput("degreeStartDate")}</Field>
       {academic.academicStatus === "studying" ? <Field label="Expected Graduation Date" required error={errors.expectedGraduationDate}>{monthInput("expectedGraduationDate")}</Field> : <Field label="Actual Graduation Date" required error={errors.graduationDate}>{monthInput("graduationDate")}</Field>}
-    </div><div className="profile-previous-degree mt-3 rounded-md border border-sky-100 bg-sky-50/50 p-3 dark:border-sky-950 dark:bg-sky-950/20"><div className="mb-3 flex items-center gap-2"><ChevronDown size={12} className="text-sky-600" aria-hidden="true" /><div><h3 className="text-xs font-semibold text-slate-800 dark:text-slate-100">Previous Degree <span className="font-normal text-slate-500">(Optional)</span></h3><p className="text-[10px] text-slate-500">Add details if you have completed a previous degree.</p></div></div><div className="grid gap-3 sm:grid-cols-3"><Field label="Degree Title / Major">{input("academicBackground", "previousDegreeTitle", { placeholder: "e.g. Intermediate / A-Level / Associate Degree" })}</Field><Field label="University Name">{input("academicBackground", "previousDegreeInstitution", { placeholder: "e.g. Government College / University" })}</Field><Field label="Graduation Date">{monthInput("previousDegreeDate")}</Field></div></div><div className="profile-achievements mt-3"><Field label="Academic Achievements (Optional)"><Control as="textarea" rows="2" maxLength={500} value={academic.academicAchievements || ""} onChange={(event) => update("academicBackground", "academicAchievements", event.target.value)} placeholder="e.g. Dean's list, scholarships, awards, research projects..." /><span className="profile-character-count">{(academic.academicAchievements || "").length}/500</span></Field></div>{footerActions}</Section>}
+    </div><div className="profile-previous-degree mt-3 rounded-md border border-sky-100 bg-sky-50/50 p-3 dark:border-sky-950 dark:bg-sky-950/20"><div className="mb-3 flex items-center gap-2"><ChevronDown size={12} className="text-sky-600" aria-hidden="true" /><div><h3 className="text-xs font-semibold text-slate-800 dark:text-slate-100">Previous Degree <span className="font-normal text-slate-500">(Optional)</span></h3><p className="text-[10px] text-slate-500">Add details if you have completed a previous degree.</p></div></div><div className="grid gap-3 sm:grid-cols-3"><Field label="Degree Title / Major">{input("academicBackground", "previousDegreeTitle", { placeholder: "e.g. Intermediate / A-Level / Associate Degree" })}</Field><Field label="University Name">{input("academicBackground", "previousDegreeInstitution", { placeholder: "e.g. Government College / University" })}</Field><Field label="Graduation Date">{monthInput("previousDegreeDate")}</Field></div></div><div className="profile-achievements mt-3"><Field label="Academic Achievements (Optional)"><Control as="textarea" rows={2} maxLength={500} value={academic.academicAchievements || ""} onChange={(event) => update("academicBackground", "academicAchievements", event.target.value)} placeholder="e.g. Dean's list, scholarships, awards, research projects..." /><span className="profile-character-count">{(academic.academicAchievements || "").length}/500</span></Field></div>{footerActions}</Section>}
 
     {step === 2 && <Section title="Study Goals" description="Tell us about your preferred degree, field, destination and study preferences." className="profile-study-panel">
       <div className="profile-study-goals-grid">

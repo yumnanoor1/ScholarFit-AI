@@ -1,12 +1,14 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState } from 'react';
+import { useAuth } from './AuthContext';
 import { mockScholarships, mockUniversities } from '../data/mockData';
 import { getApplicationTaskStatuses, saveApplicationTaskStatuses } from '../services/applicationWorkflow';
 
 const ProfileContext = createContext(null);
 
 const DEFAULT_PROFILE = {
-  name: "Alexander Wright",
+  name: "",
+  email: "",
   degree: "BS Computer Science",
   degreeLevel: "Bachelor's",
   university: "National University of Sciences",
@@ -29,7 +31,7 @@ const DEFAULT_PROFILE = {
 
 const PROFILE_STORAGE_KEY = 'fitscholar.profile.v2';
 const SAVED_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.savedOpportunities.v1';
-const DEFAULT_SAVED_OPPORTUNITIES = ['univ-1', 'sch-1'];
+const DEFAULT_SAVED_OPPORTUNITIES = [];
 const COMPARISON_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.comparisonOpportunities.v1';
 const SELECTED_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.selectedOpportunities.v1';
 const ACTIVE_OPPORTUNITY_STORAGE_KEY = 'fitscholar.activeOpportunity.v1';
@@ -153,6 +155,7 @@ function calculateMatchStatistics(profile) {
 }
 
 export function ProfileProvider({ children }) {
+  const { user } = useAuth();
   const [profile, setProfile] = useState(readSavedProfile);
   const [savedOpportunities, setSavedOpportunities] = useState(readSavedOpportunities);
   const [comparisonOpportunityIds, setComparisonOpportunityIds] = useState(() => {
@@ -223,7 +226,7 @@ export function ProfileProvider({ children }) {
         const academic = updatedData.academicBackground || {};
         const english = updatedData.englishProficiency || {};
         const preferences = updatedData.studyPreferences || {};
-        const fullName = personal.fullName || profile.name || '';
+        const fullName = personal.fullName || profile.name || user?.name || '';
         const preferredCountries = [
           ...(preferences.countries || []).filter((country) => country !== 'Other'),
           ...(preferences.otherCountry ? [preferences.otherCountry] : [])
@@ -244,7 +247,7 @@ export function ProfileProvider({ children }) {
           name: fullName,
           firstName: fullName.split(' ')[0] || '',
           lastName: fullName.split(' ').slice(1).join(' '),
-          email: personal.email || profile.email || '',
+          email: personal.email || profile.email || user?.email || '',
           degree: academic.degreeTitle || academic.major || profile.degree,
           degreeLevel: academic.currentDegree || profile.degreeLevel,
           university: academic.institution || profile.university,
@@ -318,6 +321,12 @@ export function ProfileProvider({ children }) {
   };
 
   const activeOpportunity = selectedOpportunities.find((item) => item.id === activeOpportunityId) || null;
+  const profileWithAccount = profile.name ? profile : {
+    ...profile,
+    name: user?.name || '',
+    firstName: user?.name?.trim().split(/\s+/)[0] || '',
+    email: user?.email || '',
+  };
 
   const selectOpportunity = (opportunity) => {
     if (!opportunity || typeof opportunity.id !== 'string') {
@@ -414,12 +423,12 @@ export function ProfileProvider({ children }) {
       removeDocumentRecord,
       financialBudget,
       saveFinancialBudget,
-      profile,
+      profile: profileWithAccount,
       loading,
       updateProfile,
       saveCvUpload,
       saveExtractedProfile,
-      matchStatistics: calculateMatchStatistics(profile),
+      matchStatistics: calculateMatchStatistics(profileWithAccount),
       savedOpportunities,
       toggleSaveOpportunity,
       isOpportunitySaved,

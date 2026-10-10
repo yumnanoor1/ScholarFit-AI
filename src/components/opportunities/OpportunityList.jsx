@@ -1,4 +1,3 @@
-import React from 'react';
 import OpportunityCard from './OpportunityCard';
 import EmptyState from '../common/EmptyState';
 

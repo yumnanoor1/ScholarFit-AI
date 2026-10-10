@@ -1,4 +1,3 @@
-import React from 'react';
 
 export default function ProfileProgress({ percentage = 85 }) {
   return (

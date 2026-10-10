@@ -1,5 +1,4 @@
-import React from 'react';
-import { CheckCircle2, AlertTriangle, Lightbulb } from 'lucide-react';
+import { AlertTriangle, Lightbulb } from 'lucide-react';
 
 export default function RecommendationReason({ reasons = [], missingReq = null }) {
   return (

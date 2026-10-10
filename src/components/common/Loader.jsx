@@ -1,4 +1,3 @@
-import React from 'react';
 
 export default function Loader({ message = "Chargement des données d'éligibilité..." }) {
   return (

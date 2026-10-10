@@ -1,4 +1,3 @@
-import React from 'react';
 import SaveButton from './SaveButton';
 import { MapPin, Calendar, Building2 } from 'lucide-react';
 

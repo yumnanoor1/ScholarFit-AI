@@ -1,4 +1,3 @@
-import React from 'react';
 import StepItem from './StepItem';
 
 export default function PathwaySteps({ steps = [] }) {

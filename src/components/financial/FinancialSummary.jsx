@@ -1,4 +1,3 @@
-import React from 'react';
 import CostCard from './CostCard';
 
 export default function FinancialSummary({ tuition = 12000, living = 10000, funding = 15000 }) {

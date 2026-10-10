@@ -1,4 +1,3 @@
-import React from 'react';
 import { CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 
 export default function StepItem({ stepNumber, title, description, status = "pending", isLast = false }) {

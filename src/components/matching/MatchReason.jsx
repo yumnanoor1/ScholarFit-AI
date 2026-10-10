@@ -1,4 +1,3 @@
-import React from 'react';
 import { HelpCircle } from 'lucide-react';
 
 export default function MatchReason({ reason, title = "Why this match?" }) {

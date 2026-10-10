@@ -1,4 +1,3 @@
-import React from 'react';
 
 export default function PageHeader({ title, subtitle, action = null }) {
   return (

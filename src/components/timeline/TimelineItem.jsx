@@ -1,5 +1,4 @@
-import React from 'react';
-import { Calendar, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 
 export default function TimelineItem({ date, title, description, status = "upcoming", isLast = false }) {
   let badgeColor = "var(--color-primary)";

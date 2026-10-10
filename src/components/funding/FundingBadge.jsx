@@ -1,4 +1,3 @@
-import React from 'react';
 import { Award, GraduationCap, DollarSign, Briefcase } from 'lucide-react';
 
 export default function FundingBadge({ type }) {

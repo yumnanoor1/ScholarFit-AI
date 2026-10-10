@@ -1,4 +1,3 @@
-import React from 'react';
 
 export default function PreferencesForm({ data, onChange, onSubmit, onBack }) {
   const handleCountriesChange = (e) => {

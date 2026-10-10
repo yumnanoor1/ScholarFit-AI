@@ -1,4 +1,3 @@
-import React from 'react';
 
 export default function SkillsForm({ data, onChange, onNext, onBack }) {
   const handleSkillsChange = (e) => {

@@ -1,164 +1,162 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, CheckCircle2, Circle, GraduationCap, LockKeyhole } from 'lucide-react';
-import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
-import { GlowCard } from '../components/ui/spotlight-card';
-import { mockApplicationPathways, mockUniversities } from '../data/mockData';
-
-const CHECKLIST_STORAGE_KEY = 'fitscholar.pathwayDocuments.v1';
-
-const documentChecklists = {
-  university: {
-    title: 'University document checklist',
-    items: [
-      { id: 'transcript', label: 'Official academic transcript' },
-      { id: 'statement', label: 'Statement of purpose' },
-      { id: 'recommendations', label: 'Letters of recommendation' },
-      { id: 'english-test', label: 'English proficiency certificate (IELTS / TOEFL)' },
-    ],
-  },
-  scholarship: {
-    title: 'Scholarship document checklist',
-    items: [
-      { id: 'offer-letter', label: 'University offer letter' },
-      { id: 'scholarship-essay', label: 'Scholarship essay' },
-      { id: 'resume', label: 'CV / resume' },
-      { id: 'financial-need', label: 'Proof of financial need' },
-    ],
-  },
-};
-
-function readPreparedDocuments() {
-  try {
-    const stored = window.localStorage.getItem(CHECKLIST_STORAGE_KEY);
-    const parsed = stored ? JSON.parse(stored) : {};
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
+import { CheckCircle2, Circle, GraduationCap } from 'lucide-react';
+import { useProfile } from '../context/ProfileContext';
+import { apiService } from '../services/api';
+import { mockApplicationPathways } from '../data/mockData';
+import { getOpportunityTitle } from '../services/opportunityJourney';
+import {
+  DEFAULT_APPLICATION_STRATEGY,
+  getPathwayTaskId,
+  getSelectedApplicationStrategy,
+  saveSelectedApplicationStrategy,
+} from '../services/applicationWorkflow';
 
 export default function ApplicationPathway() {
   const navigate = useNavigate();
-  const [preparedDocuments, setPreparedDocuments] = useState(readPreparedDocuments);
-  const pathway = mockApplicationPathways.find((item) => item.type === 'University First') || mockApplicationPathways[0];
-  const university = mockUniversities.find((item) => item.id === pathway?.universityId);
-  const nextStepIndex = pathway?.steps.findIndex((step) => step.status !== 'completed') ?? -1;
+  const {
+    activeOpportunity,
+    opportunityTaskStatuses,
+    setOpportunityTaskStatus,
+  } = useProfile();
+  const activeOpportunityId = activeOpportunity?.id;
+  const activeOpportunityKind = activeOpportunity?.kind;
+  const [strategySelection, setStrategySelection] = useState(null);
+  const [pathwayResult, setPathwayResult] = useState(null);
+  const [error, setError] = useState('');
+  const strategy = activeOpportunityId
+    ? strategySelection?.opportunityId === activeOpportunityId
+      ? strategySelection.value
+      : getSelectedApplicationStrategy(activeOpportunityId)
+    : DEFAULT_APPLICATION_STRATEGY;
+  const strategies = activeOpportunityKind === 'program'
+    ? [...new Set(mockApplicationPathways
+      .filter((item) => item.universityId === activeOpportunityId)
+      .map((item) => item.type))]
+    : [];
+  const statuses = activeOpportunity ? opportunityTaskStatuses[activeOpportunity.id] || {} : {};
 
-  if (!pathway) return null;
+  useEffect(() => {
+    if (!activeOpportunityId || activeOpportunityKind !== 'program') return undefined;
+    let current = true;
+    apiService.getApplicationPathway(activeOpportunityId, strategy)
+      .then((result) => { if (current) setPathwayResult({ opportunityId: activeOpportunityId, strategy, value: result }); })
+      .catch((loadError) => {
+        console.error('Unable to load the selected opportunity pathway.', loadError);
+        if (current) setError('The application pathway could not be loaded.');
+      });
+    return () => { current = false; };
+  }, [activeOpportunityId, activeOpportunityKind, strategy]);
 
-  const headline = pathway.type === 'University First'
-    ? 'Apply to the university first. Scholarship second.'
-    : 'Apply to the university and funding together.';
-  const description = pathway.type === 'University First'
-    ? 'This route uses an admission offer as the starting point for your funding application.'
-    : 'Admission and funding are handled together through one application process.';
+  const pathway = pathwayResult &&
+    pathwayResult.opportunityId === activeOpportunity?.id &&
+    pathwayResult.strategy === strategy
+    ? pathwayResult.value
+    : null;
 
-  const togglePreparedDocument = (checklist, itemId) => {
-    const storageId = `${checklist}:${itemId}`;
-    setPreparedDocuments((current) => {
-      const next = { ...current, [storageId]: !current[storageId] };
-      try {
-        window.localStorage.setItem(CHECKLIST_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        return next;
-      }
-      return next;
-    });
+  if (!activeOpportunity) {
+    return (
+      <main className="page-container">
+        <h1 className="page-title">Application Pathway</h1>
+        <p>Select an opportunity first to view a supported application strategy.</p>
+        <button className="btn btn-primary" onClick={() => navigate('/recommendations')}>Browse recommendations</button>
+      </main>
+    );
+  }
+
+  const changeStrategy = (event) => {
+    const nextStrategy = event.target.value;
+    try {
+      saveSelectedApplicationStrategy(activeOpportunity.id, nextStrategy);
+      setStrategySelection({ opportunityId: activeOpportunity.id, value: nextStrategy });
+      setError('');
+    } catch (saveError) {
+      console.error('Unable to save the selected application strategy.', saveError);
+      setError('Your selected strategy could not be saved.');
+    }
+  };
+
+  const updateStep = (step, completed) => {
+    try {
+      setOpportunityTaskStatus(
+        activeOpportunity.id,
+        getPathwayTaskId(pathway, step),
+        completed ? 'done' : 'todo',
+      );
+      setError('');
+    } catch (saveError) {
+      console.error('Unable to save pathway task status.', saveError);
+      setError('Pathway progress could not be saved.');
+    }
   };
 
   return (
-    <div className="page-container application-pathway-page">
+    <main className="page-container application-pathway-page">
       <header className="application-pathway-header">
         <div>
-          <p className="application-pathway-eyebrow">APPLICATION PATHWAY · 2026–2027</p>
-          <h1>{headline}</h1>
-          <p className="application-pathway-description">{description}</p>
+          <p className="application-pathway-eyebrow">SELECTED OPPORTUNITY</p>
+          <h1>{getOpportunityTitle(activeOpportunity)}</h1>
+          <p className="application-pathway-description">
+            {activeOpportunity.university || activeOpportunity.provider || activeOpportunity.country}
+          </p>
         </div>
-        {university && (
-          <button type="button" className="application-pathway-view-button" onClick={() => navigate(`/universities/${university.id}`)}>
-            <GraduationCap size={17} aria-hidden="true" /> View program <ChevronSmallRightIcon size={15} aria-hidden="true" />
-          </button>
+        {strategies.length > 0 && (
+          <label className="application-pathway-strategy">
+            <span>Application strategy</span>
+            <select value={strategy} onChange={changeStrategy}>
+              {!strategies.includes(strategy) && <option value={strategy}>{strategy} (not available for this program)</option>}
+              {strategies.map((item) => <option key={item}>{item}</option>)}
+            </select>
+          </label>
         )}
       </header>
+      {error && <p role="alert">{error}</p>}
+      <p className="application-pathway-demo-note">Sample pathway steps only. Confirm process and document requirements with the opportunity provider. Document tracking is managed on the Documents page.</p>
 
-      {university && (
-        <div className="application-pathway-program">
-          <GraduationCap size={17} aria-hidden="true" />
-          <span>{university.program}</span>
-          <span aria-hidden="true">·</span>
-          <span>{university.university}</span>
-          <span aria-hidden="true">·</span>
-          <span>{university.country}</span>
-        </div>
-      )}
-
-      <div className="application-pathway-steps">
-        {pathway.steps.map((step, index) => {
-          const isComplete = step.status === 'completed';
-          const isNext = index === nextStepIndex;
-          const StatusIcon = isComplete ? CheckCircle2 : isNext ? Circle : LockKeyhole;
-          const statusLabel = isComplete ? 'Completed' : isNext ? 'Next step' : 'Upcoming';
-
-          return (
-            <div className="application-pathway-step" key={`${pathway.universityId}-${step.title}`}>
-              <div className={`application-pathway-step-number${isComplete ? ' is-complete' : isNext ? ' is-next' : ''}`} aria-hidden="true">
-                {isComplete ? <CheckCircle2 size={18} /> : String(index + 1)}
-              </div>
-              <GlowCard as="section" customSize className={`application-pathway-step-card${isNext ? ' is-next' : ''}`}>
-                <div className="application-pathway-step-heading">
-                  <div>
-                    <p className="application-pathway-step-label">STEP {String(index + 1).padStart(2, '0')}</p>
-                    <h2>{step.title}</h2>
-                    <p className="application-pathway-step-description">{step.description}</p>
+      {!pathway ? (
+        <section className="card">
+          <p>No application pathway is currently provided for this selected opportunity and strategy.</p>
+          <button className="btn btn-outline" onClick={() => navigate('/timeline')}>View available timeline tasks</button>
+        </section>
+      ) : (
+        <>
+          <div className="application-pathway-program">
+            <GraduationCap size={17} aria-hidden="true" />
+            <span>{getOpportunityTitle(activeOpportunity)}</span>
+            <span aria-hidden="true">·</span>
+            <span>{activeOpportunity.university || activeOpportunity.country}</span>
+          </div>
+          <div className="application-pathway-steps">
+            {pathway.steps.map((step, index) => {
+              const id = getPathwayTaskId(pathway, step);
+              const status = statuses[id] || 'todo';
+              const completed = status === 'done';
+              return (
+                <article className="application-pathway-step" key={id}>
+                  <div className={`application-pathway-step-number${completed ? ' is-complete' : ''}`} aria-hidden="true">
+                    {completed ? <CheckCircle2 size={18} /> : String(index + 1)}
                   </div>
-                  <span className={`application-pathway-status${isComplete ? ' is-complete' : isNext ? ' is-next' : ''}`}>
-                    <StatusIcon size={14} aria-hidden="true" /> {statusLabel}
-                  </span>
-                </div>
-                {index === 0 && university?.deadline && (
-                  <div className="application-pathway-deadline">
-                    <CalendarDays size={15} aria-hidden="true" /> Application deadline: {university.deadline}
-                  </div>
-                )}
-                {(index === 0 || index === 2) && (() => {
-                  const checklistKey = index === 0 ? 'university' : 'scholarship';
-                  const checklist = documentChecklists[checklistKey];
-                  const preparedCount = checklist.items.filter((item) => preparedDocuments[`${checklistKey}:${item.id}`]).length;
-
-                  return (
-                    <div className="pathway-document-checklist">
-                      <div className="pathway-checklist-heading">
-                        <h3>{checklist.title}</h3>
-                        <span>{preparedCount} of {checklist.items.length} prepared</span>
+                  <section className="application-pathway-step-card">
+                    <div className="application-pathway-step-heading">
+                      <div>
+                        <p className="application-pathway-step-label">STEP {String(index + 1).padStart(2, '0')}</p>
+                        <h2>{step.title}</h2>
+                        <p className="application-pathway-step-description">{step.description}</p>
                       </div>
-                      <div className="pathway-checklist-items">
-                        {checklist.items.map((item) => {
-                          const itemKey = `${checklistKey}:${item.id}`;
-                          const isPrepared = Boolean(preparedDocuments[itemKey]);
-
-                          return (
-                            <label className={`pathway-checklist-item${isPrepared ? ' is-prepared' : ''}`} key={item.id}>
-                              <input
-                                type="checkbox"
-                                checked={isPrepared}
-                                onChange={() => togglePreparedDocument(checklistKey, item.id)}
-                              />
-                              <span>{item.label}</span>
-                              <span className="pathway-checklist-status">{isPrepared ? 'Prepared' : 'To prepare'}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      <p className="pathway-checklist-note">Typical documents; confirm the exact requirements with the university or scholarship provider.</p>
+                      <span className={`application-pathway-status${completed ? ' is-complete' : ''}`}>
+                        {completed ? <CheckCircle2 size={14} /> : <Circle size={14} />} {completed ? 'Completed' : 'To Do'}
+                      </span>
                     </div>
-                  );
-                })()}
-              </GlowCard>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+                    <button className="btn btn-outline" onClick={() => updateStep(step, !completed)}>
+                      {completed ? 'Mark To Do' : 'Mark Completed'}
+                    </button>
+                  </section>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </main>
   );
 }

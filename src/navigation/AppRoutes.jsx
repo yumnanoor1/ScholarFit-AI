@@ -10,6 +10,8 @@ import ProtectedRoute from './ProtectedRoute';
 // Layout Components
 import Sidebar from '../components/layout/Sidebar';
 import Navbar from '../components/layout/Navbar';
+import ActiveOpportunityBar from '../components/opportunities/ActiveOpportunityBar';
+import RouteLoadingOverlay from '../components/common/RouteLoadingOverlay';
 
 // Public & Authentication Pages
 import Home from '../pages/Home';
@@ -40,7 +42,8 @@ export default function AppRoutes() {
   return (
     <AuthProvider>
       <ProfileProvider>
-        <Routes>
+        <>
+          <Routes>
 
           {/* =========================
               PUBLIC ROUTES
@@ -69,6 +72,7 @@ export default function AppRoutes() {
 
                     {/* Navbar */}
                     <Navbar />
+                    <ActiveOpportunityBar />
 
                     <main
                       style={{
@@ -199,7 +203,9 @@ export default function AppRoutes() {
             />
           </Route>
 
-        </Routes>
+          </Routes>
+          <RouteLoadingOverlay />
+        </>
       </ProfileProvider>
     </AuthProvider>
   );

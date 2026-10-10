@@ -3,12 +3,8 @@ import {
   mockUniversities, 
   mockScholarships, 
   mockApplicationPathways, 
-  mockRecommendations, 
-  mockTimelineEvents 
+  mockRecommendations
 } from '../data/mockData';
-
-// Base URL for future FastAPI integration
-const API_BASE_URL = 'http://localhost:8000/api/v1';
 
 /**
  * Service Layer for FitScholar AI
@@ -81,11 +77,11 @@ export const apiService = {
    * FastAPI Target Endpoint: GET /api/v1/universities/{id}
    */
   getUniversityById: async (id) => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       setTimeout(() => {
         const item = mockUniversities.find(u => u.id === id);
         if (item) resolve(item);
-        else resolve(mockUniversities[0]); // Fallback for testing
+        else resolve(null);
       }, 200);
     });
   },
@@ -105,6 +101,20 @@ export const apiService = {
   },
 
   /**
+   * Resolve a previously selected opportunity without substituting a different result.
+   */
+  getOpportunityById: async (id) => {
+    const [universities, scholarships] = await Promise.all([
+      apiService.getMatchedUniversities(),
+      apiService.getMatchedScholarships(),
+    ]);
+    const program = universities.find((item) => item.id === id);
+    if (program) return { ...program, kind: 'program' };
+    const scholarship = scholarships.find((item) => item.id === id);
+    return scholarship ? { ...scholarship, kind: 'scholarship' } : null;
+  },
+
+  /**
    * Fetch details for a specific scholarship
    * FastAPI Target Endpoint: GET /api/v1/scholarships/{id}
    */
@@ -112,7 +122,7 @@ export const apiService = {
     return new Promise((resolve) => {
       setTimeout(() => {
         const item = mockScholarships.find(s => s.id === id);
-        resolve(item || mockScholarships[0]);
+        resolve(item || null);
       }, 200);
     });
   },
@@ -125,11 +135,13 @@ export const apiService = {
    * Get sequential application pathway steps for a target university
    * FastAPI Target Endpoint: GET /api/v1/pathways/{universityId}
    */
-  getApplicationPathway: async (universityId) => {
+  getApplicationPathway: async (universityId, strategy = 'University First') => {
     return new Promise((resolve) => {
       setTimeout(() => {
-        const pathway = mockApplicationPathways.find(p => p.universityId === universityId);
-        resolve(pathway || mockApplicationPathways[0]);
+        const pathway = mockApplicationPathways.find(
+          (item) => item.universityId === universityId && item.type === strategy,
+        );
+        resolve(pathway ? { ...pathway, opportunityId: universityId } : null);
       }, 300);
     });
   },
@@ -141,16 +153,6 @@ export const apiService = {
   getRecommendations: async () => {
     return new Promise((resolve) => {
       setTimeout(() => resolve([...mockRecommendations]), 300);
-    });
-  },
-
-  /**
-   * Fetch upcoming timeline deadlines and milestone dates
-   * FastAPI Target Endpoint: GET /api/v1/timeline
-   */
-  getTimelineEvents: async () => {
-    return new Promise((resolve) => {
-      setTimeout(() => resolve([...mockTimelineEvents]), 300);
     });
   },
 

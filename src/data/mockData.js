@@ -22,7 +22,29 @@ export const mockProfile = {
   profileCompletionPercentage: 85
 };
 
-export const mockUniversities = [
+// Sample document requirements and application links. Replace with official data from the backend.
+// A null applicationUrl means no verified official link is known; the UI must not invent one.
+const SAMPLE_DOCUMENTS = [
+  { id: "transcript", name: "Academic transcript", sourceStatus: "unverified-sample", reason: "Sample requirement; confirm with the official provider." },
+  { id: "cv", name: "CV / Resume", sourceStatus: "unverified-sample", reason: "Sample requirement; confirm with the official provider." },
+  { id: "english-test", name: "English test certificate", sourceStatus: "unverified-sample", reason: "Sample requirement; confirm accepted tests with the official provider." },
+  { id: "statement-of-purpose", name: "Statement of purpose", sourceStatus: "unverified-sample", reason: "Sample requirement; confirm with the official provider." },
+];
+
+const withApplicationData = (opportunity) => ({
+  ...opportunity,
+  financialData: opportunity.financialData || {
+    sourceStatus: opportunity.sourceStatus || "unverified-sample",
+    studyDuration: null,
+    costs: {},
+    funding: [],
+  },
+  requiredDocuments: SAMPLE_DOCUMENTS,
+  applicationUrl: null,
+  applicationUrlStatus: "unavailable",
+});
+
+const baseUniversities = [
   {
     id: "univ-1",
     university: "Technical University of Munich",
@@ -38,6 +60,8 @@ export const mockUniversities = [
     tuition: "$600 / year",
     matchScore: 94,
     matchReason: "Your CGPA (3.65) exceeds requirement (3.2) and your background aligns with faculty AI research focus.",
+    sourceStatus: "unverified-sample",
+    deadlineStatus: "unverified-sample",
     saved: true
   },
   {
@@ -55,6 +79,8 @@ export const mockUniversities = [
     tuition: "$28,000 / year",
     matchScore: 78,
     matchReason: "Strong test scores and research paper, but CGPA is slightly under the recommended 3.7 threshold.",
+    sourceStatus: "unverified-sample",
+    deadlineStatus: "unverified-sample",
     saved: false
   },
   {
@@ -72,11 +98,15 @@ export const mockUniversities = [
     tuition: "$24,000 / year",
     matchScore: 88,
     matchReason: "Matches your research background in NLP and Machine Learning projects.",
+    sourceStatus: "unverified-sample",
+    deadlineStatus: "unverified-sample",
     saved: true
   }
 ];
 
-export const mockScholarships = [
+export const mockUniversities = baseUniversities.map(withApplicationData);
+
+const baseScholarships = [
   {
     id: "sch-1",
     name: "DAAD EPOS Scholarship",
@@ -89,6 +119,8 @@ export const mockScholarships = [
     deadline: "Oct 31, 2026",
     pathway: "University First",
     matchScore: 92,
+    sourceStatus: "unverified-sample",
+    deadlineStatus: "unverified-sample",
     saved: true
   },
   {
@@ -103,6 +135,8 @@ export const mockScholarships = [
     deadline: "Jan 15, 2027",
     pathway: "Combined Application",
     matchScore: 88,
+    sourceStatus: "unverified-sample",
+    deadlineStatus: "unverified-sample",
     saved: false
   },
   {
@@ -117,9 +151,13 @@ export const mockScholarships = [
     deadline: "Nov 15, 2026",
     pathway: "Scholarship First",
     matchScore: 75,
+    sourceStatus: "unverified-sample",
+    deadlineStatus: "unverified-sample",
     saved: false
   }
 ];
+
+export const mockScholarships = baseScholarships.map(withApplicationData);
 
 export const mockApplicationPathways = [
   {
@@ -127,16 +165,19 @@ export const mockApplicationPathways = [
     type: "University First",
     steps: [
       {
+        id: "uni-assist-submission",
         title: "Submit Uni-Assist / University Application",
         description: "Submit online application form with verified transcript copy.",
-        status: "completed"
+        status: "pending"
       },
       {
+        id: "admission-decision",
         title: "Receive Admission Offer Letter",
         description: "Await formal evaluation decision from faculty admission board.",
         status: "pending"
       },
       {
+        id: "daad-funding-application",
         title: "Apply for Institutional Funding / DAAD",
         description: "Submit admission offer letter along with scholarship funding packet.",
         status: "pending"
@@ -148,18 +189,45 @@ export const mockApplicationPathways = [
     type: "Combined Application",
     steps: [
       {
+        id: "advisor-outreach",
         title: "Contact Potential Research Advisors",
         description: "Reach out to faculty leads in NLP/AI labs with CV and project portfolio.",
-        status: "completed"
+        status: "pending"
       },
       {
+        id: "combined-graduate-application",
         title: "Submit Combined Graduate Application",
         description: "Select Teaching/Research Assistantship consideration during portal submission.",
         status: "pending"
       },
       {
+        id: "departmental-interview",
         title: "Departmental Interview & Offer",
         description: "Participate in technical research interview with lab directors.",
+        status: "pending"
+      }
+    ]
+  },
+  {
+    universityId: "univ-1",
+    type: "Scholarship First",
+    steps: [
+      {
+        id: "scholarship-eligibility-review",
+        title: "Review scholarship eligibility and coverage",
+        description: "Compare the scholarship's published eligibility criteria, funding coverage, and application instructions.",
+        status: "pending"
+      },
+      {
+        id: "scholarship-application",
+        title: "Prepare and submit the scholarship application",
+        description: "Follow the scholarship provider's application process and verify its official document requirements.",
+        status: "pending"
+      },
+      {
+        id: "university-application",
+        title: "Submit the university application",
+        description: "Apply to the selected university and follow the provider's instructions for linking admission and funding.",
         status: "pending"
       }
     ]
@@ -197,32 +265,5 @@ export const mockRecommendations = [
     ],
     missingReq: "CGPA is 0.05 points below the recommended 3.7 threshold.",
     nextAction: "Complete GRE General Test to supplement academic record."
-  }
-];
-
-export const mockTimelineEvents = [
-  {
-    date: "OCT 31, 2026",
-    title: "DAAD EPOS Scholarship Portal Submission",
-    description: "Final deadline to submit research proposal and certified degree records.",
-    status: "urgent"
-  },
-  {
-    date: "DEC 15, 2026",
-    title: "Canadian Graduate Portal Deadlines",
-    description: "Deadline for Fall term graduate applications at Toronto & UBC.",
-    status: "upcoming"
-  },
-  {
-    date: "JAN 15, 2027",
-    title: "US Fall Graduate Admission Deadlines",
-    description: "Submit GRE scores and recommendation letters for US assistantships.",
-    status: "upcoming"
-  },
-  {
-    date: "MAY 31, 2027",
-    title: "Uni-Assist Document Verification Closing",
-    description: "Final verification window for public German university Master's programs.",
-    status: "upcoming"
   }
 ];

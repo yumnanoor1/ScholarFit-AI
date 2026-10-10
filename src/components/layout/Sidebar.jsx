@@ -16,7 +16,7 @@ export default function Sidebar() {
     { to: "/compare", label: "Compare Programs", icon: GitCompare },
     { to: "/financial", label: "Financial Feasibility", icon: DollarSign },
     { to: "/pathway", label: "Application Pathway", icon: GitBranch },
-    { to: "/recommendations", label: "Recommendations", icon: Compass },
+    { to: "/recommendations", label: "Matched Opportunities", icon: Compass },
     { to: "/timeline", label: "Timeline", icon: Calendar },
     { to: "/improvement", label: "Profile Improvement", icon: TrendingUp },
     { to: "/settings", label: "Settings", icon: Settings },

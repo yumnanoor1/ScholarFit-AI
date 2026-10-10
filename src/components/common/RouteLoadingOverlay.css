@@ -1,0 +1,93 @@
+.route-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  background: rgba(242, 243, 245, 0.82);
+  backdrop-filter: blur(3px);
+  animation: route-overlay-cycle 420ms ease-out both;
+}
+
+.route-loading-card {
+  display: grid;
+  justify-items: center;
+  gap: 9px;
+  min-width: 190px;
+  padding: 22px 26px;
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-lg);
+  background: var(--color-white);
+  box-shadow: var(--shadow-md);
+}
+
+.route-loading-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--color-white);
+  background: var(--color-primary);
+}
+
+.route-loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--color-hover-bg);
+  border-top-color: var(--color-secondary);
+  border-right-color: var(--color-primary);
+  border-radius: 50%;
+  animation: route-spinner-turn 700ms linear infinite;
+}
+
+.route-loading-title {
+  color: var(--color-dark);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.route-loading-message {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+}
+
+@keyframes route-spinner-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes route-overlay-cycle {
+  0%,
+  72% {
+    visibility: visible;
+    opacity: 1;
+  }
+  100% {
+    visibility: hidden;
+    opacity: 0;
+  }
+}
+
+@keyframes route-overlay-reduced {
+  0%,
+  99% {
+    visibility: visible;
+    opacity: 1;
+  }
+  100% {
+    visibility: hidden;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-loading-overlay {
+    animation: route-overlay-reduced 420ms step-end both;
+  }
+
+  .route-loading-spinner {
+    animation: none;
+  }
+}

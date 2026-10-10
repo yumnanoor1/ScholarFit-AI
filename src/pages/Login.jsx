@@ -1,11 +1,18 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
+  const requestedPath = location.state?.from?.pathname;
+  const destination = typeof requestedPath === 'string' &&
+    requestedPath.startsWith('/') &&
+    !requestedPath.startsWith('//')
+    ? requestedPath
+    : '/profile-setup';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,7 +36,7 @@ export default function Login() {
       const res = await login(email, password);
 
       if (res.success) {
-        navigate('/profile-setup');
+        navigate(destination, { replace: true });
       } else {
         setError('Invalid credentials. Please check your email and password.');
       }
@@ -46,7 +53,7 @@ export default function Login() {
 
     try {
       const result = await login('google-demo@fitscholar.local', 'demo-google');
-      if (result.success) navigate('/profile-setup');
+      if (result.success) navigate(destination, { replace: true });
     } catch {
       setError('Failed to sign in with Google. Please try again.');
     } finally {

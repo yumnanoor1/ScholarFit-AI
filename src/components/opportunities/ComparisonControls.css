@@ -1,0 +1,121 @@
+.opportunity-compare-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.opportunity-compare-select input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.opportunity-compare-select input:disabled {
+  cursor: not-allowed;
+}
+
+.comparison-selection-bar {
+  position: fixed;
+  z-index: 1200;
+  right: 24px;
+  bottom: 24px;
+  left: 50%;
+  display: flex;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  transform: translateX(-50%);
+  border: 1px solid #344454;
+  border-radius: 14px;
+  color: #fff;
+  background: #1c1f26;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.25);
+}
+
+.comparison-selection-bar > svg {
+  flex: 0 0 auto;
+  color: #a8c2db;
+}
+
+.comparison-selection-status {
+  display: flex;
+  min-width: 180px;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.comparison-selection-status strong {
+  font-size: 0.88rem;
+}
+
+.comparison-selection-status span {
+  color: #cbd5e1;
+  font-size: 0.74rem;
+}
+
+.comparison-selection-submit,
+.comparison-selection-clear {
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.comparison-selection-submit {
+  color: #1c1f26;
+  background: #fff;
+}
+
+.comparison-selection-submit:disabled {
+  color: #94a3b8;
+  background: #334155;
+  cursor: not-allowed;
+}
+
+.comparison-selection-clear {
+  color: #e2e8f0;
+  background: transparent;
+}
+
+.comparison-selection-submit:focus-visible,
+.comparison-selection-clear:focus-visible,
+.opportunity-compare-select input:focus-visible {
+  outline: 3px solid #8bbce4;
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .comparison-selection-bar {
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    width: auto;
+    max-width: none;
+    flex-wrap: wrap;
+    gap: 10px;
+    transform: none;
+  }
+
+  .comparison-selection-status {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .comparison-selection-submit {
+    flex: 1;
+  }
+}

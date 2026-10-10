@@ -1,63 +1,89 @@
-import { useState } from 'react';
-import { apiService } from '../services/api';
-import { UploadCloud, FileCheck, AlertTriangle } from 'lucide-react';
+import { useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { GlowCard } from '../components/ui/spotlight-card';
+import { useProfile } from '../context/ProfileContext';
+import {
+  aggregateRequiredDocuments,
+  getDocumentStatus,
+  getOpportunityDocumentRequirements,
+  getOpportunityTitle,
+} from '../services/opportunityJourney';
+
+const STATUS_LABELS = {
+  missing: 'Missing',
+  'awaiting-verification': 'Awaiting verification',
+  uploaded: 'Uploaded & verified',
+};
 
 export default function Documents() {
-  const [extracted, setExtracted] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const {
+    activeOpportunity,
+    selectedOpportunities,
+    documentRecords,
+    saveDocumentRecord,
+    removeDocumentRecord,
+  } = useProfile();
+  const { hash } = useLocation();
 
-  const handleFileUpload = async (e) => {
-    if (!e.target.files[0]) return;
-    setLoading(true);
-    const data = await apiService.extractDocumentData(e.target.files[0]);
-    setExtracted(data);
-    setLoading(false);
+  const handleRequiredUpload = (documentId, event) => {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (file) saveDocumentRecord(documentId, file);
   };
+
+  const activeDocumentIds = new Set(
+    activeOpportunity ? getOpportunityDocumentRequirements(activeOpportunity).map((item) => item.id) : [],
+  );
+  const requiredDocuments = aggregateRequiredDocuments(selectedOpportunities)
+    .sort((a, b) => Number(activeDocumentIds.has(b.id)) - Number(activeDocumentIds.has(a.id)));
+
+  useEffect(() => {
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'center' });
+  }, [hash, requiredDocuments.length]);
 
   return (
     <div className="page-container">
-      <h1 className="page-title">Document Parsing & Analysis</h1>
-      <p className="page-subtitle">Extract verified academic parameters from CVs and Official Transcripts.</p>
+      <h1 className="page-title">Documents</h1>
+      <p className="page-subtitle">One place to prepare the documents your selected opportunities require. FitScholar AI does not submit applications; upload files on each official website yourself.</p>
 
-      <div className="disclaimer-box">
-        <strong>Information Accuracy Disclaimer:</strong> Automated extraction assists data entry. Users must verify parsed fields prior to submitting eligibility checks.
-      </div>
-
-      <GlowCard customSize className="card" style={{ textAlign: 'center', borderStyle: 'dashed', borderWidth: '2px', padding: '40px 20px' }}>
-        <UploadCloud size={48} color="var(--color-primary)" style={{ marginBottom: '12px' }} />
-        <h3>Upload Document for Analysis</h3>
-        <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '16px' }}>
-          Supports PDF CVs, Transcripts, and English score certificates
-        </p>
-        <input type="file" onChange={handleFileUpload} id="doc-upload" style={{ display: 'none' }} />
-        <label htmlFor="doc-upload" className="btn btn-primary" style={{ cursor: 'pointer' }}>
-          Select Document
-        </label>
-        {loading && <p style={{ fontSize: '0.85rem', marginTop: '12px' }}>Parsing document content...</p>}
+      <GlowCard customSize className="card">
+        <h2>Required documents</h2>
+        {!selectedOpportunities.length ? (
+          <p>Select an opportunity to see its documented requirements.</p>
+        ) : requiredDocuments.length ? (
+          <ul className="document-list">
+            {requiredDocuments.map((item) => {
+              const record = documentRecords[item.id];
+              const status = getDocumentStatus(record);
+              const inputId = `doc-input-${item.id}`;
+              return (
+                <li id={`doc-${item.id}`} key={item.id} className="document-item">
+                  <div>
+                    <strong>{item.name}</strong>
+                    {' · '}<span className={`document-status document-status-${status}`}>{STATUS_LABELS[status]}</span>
+                    {item.sourceStatus === 'unverified-sample' && <span> · sample requirement</span>}
+                    {record && <p>{record.fileName} · uploaded {new Date(record.uploadedAt).toLocaleDateString()} (file metadata only in this demo)</p>}
+                    <p>Required by: {item.requiredBy.map((opportunity) => (
+                      opportunity.id === activeOpportunity?.id ? `${opportunity.title} (active)` : opportunity.title
+                    )).join(', ')}</p>
+                  </div>
+                  <div>
+                    <input type="file" id={inputId} style={{ display: 'none' }} onChange={(event) => handleRequiredUpload(item.id, event)} />
+                    <label htmlFor={inputId} className="btn btn-outline" style={{ cursor: 'pointer' }}>
+                      {record ? 'Replace' : 'Upload'}
+                    </label>
+                    {record && <button type="button" className="btn btn-outline" onClick={() => removeDocumentRecord(item.id)}>Remove</button>}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p>No opportunity-specific document requirements are available for your selected opportunities. No generic checklist is being assumed.</p>
+        )}
+        {activeOpportunity && <p>Active opportunity: {getOpportunityTitle(activeOpportunity)}</p>}
       </GlowCard>
 
-      {extracted && (
-        <GlowCard customSize className="card">
-          <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-            <FileCheck color="var(--color-success)" /> Extracted Academic Credentials
-          </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.9rem' }}>
-            <div><strong>Degree Title:</strong> {extracted.extractedData.degreeFound}</div>
-            <div><strong>Detected CGPA:</strong> {extracted.extractedData.cgpaFound}</div>
-            <div><strong>Institution:</strong> {extracted.extractedData.institutionFound}</div>
-          </div>
-
-          <h4 style={{ marginTop: '20px', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <AlertTriangle size={18} /> Verification Gaps Identified
-          </h4>
-          <ul style={{ paddingLeft: '20px', fontSize: '0.85rem', marginTop: '8px' }}>
-            {extracted.missingData.map((item, idx) => (
-              <li key={idx} style={{ marginBottom: '4px' }}>{item}</li>
-            ))}
-          </ul>
-        </GlowCard>
-      )}
     </div>
   );
 }

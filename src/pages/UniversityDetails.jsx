@@ -1,58 +1,78 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { apiService } from '../services/api';
-import RequirementStatus from '../components/matching/RequirementStatus';
-import CostBreakdown from '../components/financial/CostBreakdown';
-import MatchScoreCard from '../components/matching/MatchScoreCard';
-import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
-import { GlowCard } from '../components/ui/spotlight-card';
+import { evaluateOpportunityEligibility, getOpportunityTitle } from '../services/opportunityJourney';
+import { useProfile } from '../context/ProfileContext';
+import OfficialApplicationLink from '../components/opportunities/OfficialApplicationLink';
 
 export default function UniversityDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [data, setData] = useState(null);
+  const { profile, activeOpportunityId, selectOpportunity, appliedOpportunityIds, markOpportunityApplied } = useProfile();
+  const [requestResult, setRequestResult] = useState(null);
 
   useEffect(() => {
-    apiService.getMatchedUniversities().then(list => {
-      const match = list.find(u => u.id === id) || list[0];
-      setData(match);
+    let cancelled = false;
+    apiService.getOpportunityById(id).then((opportunity) => {
+      if (!cancelled) setRequestResult({ id, data: opportunity?.kind === 'program' ? opportunity : null });
+    }).catch((error) => {
+      console.error('Unable to load university program details.', error);
+      if (!cancelled) setRequestResult({ id, error: 'Program details could not be loaded.' });
     });
+    return () => { cancelled = true; };
   }, [id]);
 
-  if (!data) return <div className="page-container">Loading program details...</div>;
+  const currentResult = requestResult?.id === id ? requestResult : null;
+  const data = currentResult?.data || null;
+  const loading = !currentResult;
+  const loadError = currentResult?.error || '';
+  if (loading) return <div className="page-container" role="status">Loading program details...</div>;
+  if (loadError) return <div className="page-container" role="alert">{loadError}</div>;
+  if (!data) {
+    return (
+      <div className="page-container">
+        <h1>Program not found</h1>
+        <p>This program ID is not available in the current opportunity data.</p>
+        <button className="btn btn-outline" onClick={() => navigate('/universities')}>Back to Universities</button>
+      </div>
+    );
+  }
+
+  const eligibility = evaluateOpportunityEligibility(profile, data);
+  const isActive = activeOpportunityId === data.id;
 
   return (
     <div className="page-container">
-      <button className="btn btn-outline" onClick={() => navigate(-1)} style={{ marginBottom: '16px' }}>
-        <ChevronSmallRightIcon size={16} className="rotate-180" aria-hidden="true" /> Back to Universities
+      <button className="btn btn-outline" onClick={() => navigate('/universities')} style={{ marginBottom: '16px' }}>
+        Back to Universities
       </button>
-
-      <GlowCard customSize className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <h1 style={{ fontSize: '1.6rem', color: 'var(--color-dark)' }}>{data.program}</h1>
-            <p style={{ color: 'var(--color-primary)', fontWeight: '600' }}>{data.university} • {data.country}</p>
-          </div>
-          <MatchScoreCard score={data.matchScore} />
-        </div>
-
-        <div style={{ display: 'flex', gap: '12px', margin: '16px 0' }}>
-          <RequirementStatus status={data.eligibilityStatus} />
-          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Verified Term: 2026 - 2027</span>
-        </div>
-
-        <h3 style={{ marginTop: '20px', fontSize: '1rem' }}>Requirements Evaluation</h3>
-        <ul style={{ paddingLeft: '20px', margin: '10px 0', fontSize: '0.9rem' }}>
-          <li style={{ color: data.cgpaReqSatisfied ? 'var(--color-success)' : 'var(--color-danger)', marginBottom: '6px' }}>
-            CGPA Threshold: Required {data.cgpaReq} (Your Score: 3.65)
-          </li>
-          <li style={{ color: data.englishReqSatisfied ? 'var(--color-success)' : 'var(--color-danger)' }}>
-            Language Proficiency: Required {data.englishReq} (Your Score: IELTS 7.5)
-          </li>
-        </ul>
-      </GlowCard>
-
-      <CostBreakdown tuition={12000} living={10000} funding={15000} />
+      <section className="card">
+        <h1 style={{ fontSize: '1.6rem', color: 'var(--color-dark)' }}>{getOpportunityTitle(data)}</h1>
+        <p style={{ color: 'var(--color-primary)', fontWeight: '600' }}>{data.university} · {data.country}</p>
+        <p>Profile fit: {data.matchScore ?? 'Unavailable'}% (mock match; confirm with the institution).</p>
+        <h2>Requirements check</h2>
+        {eligibility.requirements.length ? (
+          <ul>
+            {eligibility.requirements.map((requirement) => (
+              <li key={requirement.id}>
+                {requirement.label}: {requirement.status.replaceAll('-', ' ')}
+                {requirement.status === 'awaiting-verification' && ' — sample requirement or profile information needs verification.'}
+              </li>
+            ))}
+          </ul>
+        ) : <p>{eligibility.message}</p>}
+        <h2>Deadline and cost data</h2>
+        <p>Listed deadline: {data.deadline || 'Not available'} (unverified sample; confirm with the university).</p>
+        <p>Listed tuition: {data.tuition || 'Not available'} (unverified sample; no living-cost or confirmed-funding data is available here).</p>
+        <button type="button" className="btn btn-primary" onClick={() => selectOpportunity({ ...data, kind: 'program' })}>
+          {isActive ? 'Currently in your journey' : 'Select this program'}
+        </button>
+      </section>
+      <OfficialApplicationLink
+        opportunity={data}
+        applied={appliedOpportunityIds.includes(data.id)}
+        onToggleApplied={(value) => markOpportunityApplied(data.id, value)}
+      />
     </div>
   );
 }

@@ -17,7 +17,13 @@ const scholarshipImage = 'https://images.unsplash.com/photo-1523240795612-9a054b
 
 export default function SavedOpportunities() {
   const navigate = useNavigate();
-  const { savedOpportunities, toggleSaveOpportunity } = useProfile();
+  const {
+    savedOpportunities,
+    toggleSaveOpportunity,
+    selectedOpportunities,
+    activeOpportunityId,
+    selectOpportunity,
+  } = useProfile();
   const savedItems = [
     ...mockUniversities
       .filter((item) => savedOpportunities.includes(item.id))
@@ -26,7 +32,7 @@ export default function SavedOpportunities() {
         title: item.program,
         organization: item.university,
         kind: 'university',
-        tags: ["Master's Program", item.country, 'STEM'],
+        tags: [item.degree, item.country].filter(Boolean),
         image: universityImage,
         route: `/universities/${item.id}`,
       })),
@@ -37,7 +43,7 @@ export default function SavedOpportunities() {
         title: item.name,
         organization: item.provider,
         kind: 'scholarship',
-        tags: ['Scholarship', 'Fully Funded', "Master's"],
+        tags: [item.type, item.coverage].filter(Boolean),
         image: scholarshipImage,
         route: `/scholarships/${item.id}`,
       })),
@@ -61,6 +67,7 @@ export default function SavedOpportunities() {
         <div className="saved-opportunity-grid">
           {savedItems.map((item) => {
             const ItemIcon = item.kind === 'university' ? Building2 : GraduationCap;
+            const isSelected = selectedOpportunities.some((opportunity) => opportunity.id === item.id);
             return (
               <GlowCard as="article" customSize key={item.id} className="saved-opportunity-card">
                 <div className="saved-opportunity-card-heading">
@@ -101,8 +108,11 @@ export default function SavedOpportunities() {
                 </p>
 
                 <div className="saved-opportunity-actions">
-                  <button type="button" className="saved-opportunity-apply" onClick={() => navigate(item.route)}>
-                    Apply Now
+                  <button type="button" className="saved-opportunity-apply" onClick={() => selectOpportunity({ ...item, kind: item.kind === 'scholarship' ? 'scholarship' : 'program' })}>
+                    {activeOpportunityId === item.id ? 'Active journey' : isSelected ? 'Switch journey here' : 'Select for journey'}
+                  </button>
+                  <button type="button" className="saved-opportunity-remove" onClick={() => navigate(item.route)}>
+                    View details
                   </button>
                   <button
                     type="button"

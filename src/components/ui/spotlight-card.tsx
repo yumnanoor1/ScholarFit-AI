@@ -81,6 +81,9 @@ export function GlowCard({
   const { base, spread } = glowColorMap[glowColor];
   const sizingClasses = customSize ? '' : `${sizeMap[size]} aspect-[3/4] grid grid-rows-[1fr_auto] p-4 gap-4`;
   const hasExistingBackground = Boolean(style?.backgroundColor) || /(?:^|\s)card(?:\s|$)|\bbg-[^\s]+/.test(className);
+  const hasDarkSurface = style?.backgroundColor === 'var(--color-dark)'
+    || /rgba?\(\s*15\s*,\s*23\s*,\s*42\s*/i.test(String(style?.backgroundColor || ''));
+  const cardGradient = hasDarkSurface ? '' : ', var(--fitscholar-card-gradient)';
   const glowStyles = {
     '--base': base,
     '--spread': spread,
@@ -96,11 +99,11 @@ export function GlowCard({
     backgroundImage: `radial-gradient(
       var(--spotlight-size) var(--spotlight-size) at calc(var(--x, 0) * 1px) calc(var(--y, 0) * 1px),
       hsl(var(--hue, 210) calc(var(--saturation, 100) * 1%) calc(var(--lightness, 70) * 1%) / var(--bg-spot-opacity, 0.12)), transparent
-    )`,
+    )${cardGradient}`,
       ...(!hasExistingBackground ? { backgroundColor: 'var(--backdrop, transparent)' } : {}),
-    backgroundSize: 'calc(100% + (2 * var(--border-size))) calc(100% + (2 * var(--border-size)))',
-    backgroundPosition: '50% 50%',
-    backgroundAttachment: 'fixed',
+    backgroundSize: 'calc(100% + (2 * var(--border-size))) calc(100% + (2 * var(--border-size))), 100% 100%',
+    backgroundPosition: '50% 50%, 50% 50%',
+    backgroundAttachment: 'fixed, scroll',
     border: 'var(--border-size) solid var(--backup-border)',
     position: 'relative' as const,
     touchAction: 'auto' as const,

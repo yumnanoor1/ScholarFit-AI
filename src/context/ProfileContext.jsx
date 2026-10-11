@@ -1,32 +1,33 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState } from 'react';
 import { useAuth } from './AuthContext';
+import { EMPTY_PROFILE } from '../data/profileModel';
 import { mockScholarships, mockUniversities } from '../data/mockData';
 import { getApplicationTaskStatuses, saveApplicationTaskStatuses } from '../services/applicationWorkflow';
 
 const ProfileContext = createContext(null);
 
 const DEFAULT_PROFILE = {
+  ...EMPTY_PROFILE,
   name: "",
-  email: "",
-  degree: "BS Computer Science",
-  degreeLevel: "Bachelor's",
-  university: "National University of Sciences",
-  cgpa: "3.65",
-  graduationYear: "2024",
-  englishTest: "IELTS",
-  englishScore: "7.5",
-  skills: ["Python", "Machine Learning", "Data Structures", "FastAPI", "React.js"],
-  projects: ["AI Image Classifier", "Automated Grading System"],
-  researchExperience: "Co-authored 1 conference paper on NLP for healthcare domain.",
-  fieldOfInterest: "Computer Science & AI",
-  preferredCountries: ["Germany", "United States", "Canada"],
+  degree: "",
+  degreeLevel: "",
+  university: "",
+  cgpa: "",
+  graduationYear: "",
+  englishTest: "",
+  englishScore: "",
+  skills: [],
+  projects: [],
+  researchExperience: "",
+  fieldOfInterest: "",
+  preferredCountries: [],
   preferredDegree: "Master's",
-  fundingPreference: "Full Funding Required",
-  approximateBudget: "$5,000 / year",
+  fundingPreference: "",
+  approximateBudget: "",
   profileCompletionPercentage: 0,
   profileSetupStep: 0,
-  profileComplete: false
+  profileComplete: false,
 };
 
 const PROFILE_STORAGE_KEY = 'fitscholar.profile.v2';
@@ -101,6 +102,12 @@ function getPreferredCountries(value) {
 function calculateMatchStatistics(profile) {
   const preferredCountries = getPreferredCountries(profile.preferredCountries);
   const preferredRegions = profile.studyPreferences?.regions || [];
+  const hasProfileCriteria = profile.profileComplete ||
+    Boolean(profile.cgpa || profile.englishScore || profile.fieldOfInterest || preferredCountries.length || preferredRegions.length);
+  if (!hasProfileCriteria) {
+    return { eligibleCount: 0, fundedCount: 0, medianTuition: 'No matches' };
+  }
+
   const countriesByRegion = {
     Europe: ['germany', 'switzerland', 'netherlands', 'sweden', 'finland', 'austria', 'hungary', 'france', 'italy', 'united kingdom'],
     'North America': ['canada', 'united states', 'usa'],

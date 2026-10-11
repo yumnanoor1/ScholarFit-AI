@@ -17,7 +17,7 @@ export function BackgroundPaths({ onExplore, onVideoEnded }: SplashScreenProps) 
                 onEnded={onVideoEnded}
                 onError={onExplore}
             >
-                <source src="/videos/fitscholar-intro.mp4" type="video/mp4" />
+                <source src="/videos/fitscholar-intro.mp4.mp4" type="video/mp4" />
             </video>
             <button
                 type="button"

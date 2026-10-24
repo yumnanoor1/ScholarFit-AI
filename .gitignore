@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+backend/.venv/
+backend/.env
+__pycache__/
+
+backend/fitscholar.db
+*.db

@@ -1,0 +1,23 @@
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+# Docker Compose mein DATABASE_URL environment variable set hai
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://fitscholar_user:fitscholar_password@localhost:5432/fitscholar_db")
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

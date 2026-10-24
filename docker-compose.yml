@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: fitscholar_db
+    restart: always
+    environment:
+      POSTGRES_USER: fitscholar_user
+      POSTGRES_PASSWORD: fitscholar_password
+      POSTGRES_DB: fitscholar_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  backend:
+    build: ./backend
+    container_name: fitscholar_backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://fitscholar_user:fitscholar_password@db:5432/fitscholar_db
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    volumes:
+      - ./backend:/app
+
+volumes:
+  postgres_data:

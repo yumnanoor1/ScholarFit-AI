@@ -1,9 +1,16 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { EMPTY_PROFILE } from '../data/profileModel';
 import { mockScholarships, mockUniversities } from '../data/mockData';
 import { getApplicationTaskStatuses, saveApplicationTaskStatuses } from '../services/applicationWorkflow';
+import {
+  getProfileApi,
+  createProfileApi,
+  updateProfileApi,
+  mapFrontendToBackendProfile,
+  mapBackendToFrontendProfile,
+} from '../services/profileApi';
 
 const ProfileContext = createContext(null);
 
@@ -73,22 +80,30 @@ function readSavedOpportunities() {
   }
 }
 
-function readSavedProfile() {
+function getProfileStorageKey(userId) {
+  return userId ? `${PROFILE_STORAGE_KEY}.${userId}` : PROFILE_STORAGE_KEY;
+}
+
+function readSavedProfile(userId) {
   if (typeof window === 'undefined') return DEFAULT_PROFILE;
   try {
-    const savedProfile = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+    const key = getProfileStorageKey(userId);
+    const savedProfile = window.localStorage.getItem(key) || window.localStorage.getItem(PROFILE_STORAGE_KEY);
     return savedProfile ? { ...DEFAULT_PROFILE, ...JSON.parse(savedProfile) } : DEFAULT_PROFILE;
   } catch {
     return DEFAULT_PROFILE;
   }
 }
 
-function persistProfile(profile) {
+function persistProfile(profile, userId) {
   if (typeof window === 'undefined') return;
+  const key = getProfileStorageKey(userId);
   try {
-    window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile, (key, value) => (
-      ['profilePhoto', 'transcript', 'moiCertificate'].includes(key) ? null : value
-    )));
+    const serialized = JSON.stringify(profile, (k, value) => (
+      ['profilePhoto', 'transcript', 'moiCertificate'].includes(k) ? null : value
+    ));
+    window.localStorage.setItem(key, serialized);
+    window.localStorage.setItem(PROFILE_STORAGE_KEY, serialized);
   } catch {
     return;
   }
@@ -162,8 +177,9 @@ function calculateMatchStatistics(profile) {
 }
 
 export function ProfileProvider({ children }) {
-  const { user } = useAuth();
-  const [profile, setProfile] = useState(readSavedProfile);
+  const { user, token } = useAuth();
+  const [profile, setProfile] = useState(() => readSavedProfile(user?.id));
+  const [hasBackendProfile, setHasBackendProfile] = useState(false);
   const [savedOpportunities, setSavedOpportunities] = useState(readSavedOpportunities);
   const [comparisonOpportunityIds, setComparisonOpportunityIds] = useState(() => {
     const ids = readJsonStorage(COMPARISON_OPPORTUNITIES_STORAGE_KEY, []);
@@ -196,10 +212,62 @@ export function ProfileProvider({ children }) {
   });
   const [loading, setLoading] = useState(false);
 
+  // Fetch the authenticated student's profile from the backend on login / token availability
+  useEffect(() => {
+    let isCurrent = true;
+
+    if (!token || !user) {
+      setHasBackendProfile(false);
+      return;
+    }
+
+    const cachedDraft = readSavedProfile(user.id);
+
+    getProfileApi(token)
+      .then(({ exists, data }) => {
+        if (!isCurrent) return;
+
+        if (exists && data) {
+          setHasBackendProfile(true);
+          const mappedProfile = mapBackendToFrontendProfile(data, user, cachedDraft);
+          setProfile(mappedProfile);
+          persistProfile(mappedProfile, user.id);
+        } else {
+          // 404: Profile not yet created in PostgreSQL
+          setHasBackendProfile(false);
+
+          // Populate with user identity or existing in-progress local draft
+          if (cachedDraft && (cachedDraft.profileComplete || cachedDraft.profileSetupStep > 0 || cachedDraft.extractedProfile)) {
+            setProfile(cachedDraft);
+          } else {
+            const initial = {
+              ...DEFAULT_PROFILE,
+              name: user.name || user.full_name || '',
+              email: user.email || '',
+              personalInfo: {
+                ...DEFAULT_PROFILE.personalInfo,
+                fullName: user.name || user.full_name || '',
+                email: user.email || '',
+              },
+            };
+            setProfile(initial);
+            persistProfile(initial, user.id);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Unable to reach backend profile endpoint:', err?.message);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [user?.id, token]);
+
   const saveCvUpload = (fileInfo) => {
     setProfile((current) => {
       const nextProfile = { ...current, cvUpload: fileInfo };
-      persistProfile(nextProfile);
+      persistProfile(nextProfile, user?.id);
       return nextProfile;
     });
   };
@@ -220,73 +288,120 @@ export function ProfileProvider({ children }) {
         profileCompletionPercentage: 0,
         verifiedProfile: null,
       };
-      persistProfile(nextProfile);
+      persistProfile(nextProfile, user?.id);
       return nextProfile;
     });
   };
 
   const updateProfile = async (updatedData, progress = { step: 0, complete: false }) => {
     setLoading(true);
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const personal = updatedData.personalInfo || {};
-        const academic = updatedData.academicBackground || {};
-        const english = updatedData.englishProficiency || {};
-        const preferences = updatedData.studyPreferences || {};
-        const fullName = personal.fullName || profile.name || user?.name || '';
-        const preferredCountries = [
-          ...(preferences.countries || []).filter((country) => country !== 'Other'),
-          ...(preferences.otherCountry ? [preferences.otherCountry] : [])
-        ];
-        const chosenFunding = preferences.fundingPreferences || [];
-        const overallScore = english.overallScore || '';
-        const legacyEnglishTest = english.testType === 'TOEFL iBT' ? 'TOEFL' : english.testType || profile.englishTest;
-        const graduationDate = academic.academicStatus === 'graduated'
-          ? academic.graduationDate
-          : academic.expectedGraduationDate;
-        const approximateBudget = preferences.maxTuitionBudget
-          ? `${preferences.currency || 'USD'} ${preferences.maxTuitionBudget} / year`
-          : profile.approximateBudget;
-        const isCvSource = progress.source === 'cv';
-        const finalProfile = {
-          ...profile,
-          ...updatedData,
-          name: fullName,
-          firstName: fullName.split(' ')[0] || '',
-          lastName: fullName.split(' ').slice(1).join(' '),
-          email: personal.email || profile.email || user?.email || '',
-          degree: academic.degreeTitle || academic.major || profile.degree,
-          degreeLevel: academic.currentDegree || profile.degreeLevel,
-          university: academic.institution || profile.university,
-          cgpa: academic.cgpa || profile.cgpa,
-          graduationYear: graduationDate || academic.currentYear || profile.graduationYear,
-          englishTest: legacyEnglishTest,
-          englishScore: english.testType === 'No Test / Not Taken' ? '' : overallScore || profile.englishScore,
-          fieldOfInterest: preferences.fields?.filter((field) => field !== 'Other').join(', ') || preferences.customField || academic.major || profile.fieldOfInterest,
-          skills: [academic.technicalSkills, academic.programmingLanguages].filter(Boolean).join(', ').split(',').map((skill) => skill.trim()).filter(Boolean),
-          projects: academic.projects ? academic.projects.split(',').map((project) => project.trim()).filter(Boolean) : profile.projects,
-          preferredCountries: preferences.countries ? preferredCountries : getPreferredCountries(profile.preferredCountries),
-          preferredDegree: "Master's",
-          fundingPreference: chosenFunding.join(', ') || profile.fundingPreference,
-          approximateBudget,
-          profileCompletionPercentage: progress.complete ? 100 : Math.round(((progress.step + 1) / 4) * 100),
-          profileSetupStep: progress.complete ? 4 : progress.step + 1,
-          profileComplete: Boolean(progress.complete),
-          profileStatus: progress.complete ? 'complete' : 'draft',
-          profileMethod: isCvSource ? 'cv' : 'manual',
-          cvUpload: isCvSource ? profile.cvUpload || null : null,
-          extractedProfile: isCvSource ? profile.extractedProfile || null : null,
-          extractionFieldStatuses: isCvSource ? profile.extractionFieldStatuses || {} : {},
-          profileDraft: updatedData,
-          fieldStatuses: progress.fieldStatuses || (isCvSource ? profile.fieldStatuses || {} : {}),
-          verifiedProfile: progress.complete ? updatedData : null,
-        };
-        persistProfile(finalProfile);
-        setProfile(finalProfile);
-        setLoading(false);
-        resolve({ success: true, profile: finalProfile, matchStatistics: calculateMatchStatistics(finalProfile) });
-      }, 400);
-    });
+
+    try {
+      const personal = updatedData.personalInfo || {};
+      const academic = updatedData.academicBackground || {};
+      const english = updatedData.englishProficiency || {};
+      const preferences = updatedData.studyPreferences || {};
+      const fullName = personal.fullName || profile.name || user?.name || '';
+      const preferredCountries = [
+        ...(preferences.countries || []).filter((country) => country !== 'Other'),
+        ...(preferences.otherCountry ? [preferences.otherCountry] : [])
+      ];
+      const chosenFunding = preferences.fundingPreferences || [];
+      const overallScore = english.overallScore || '';
+      const legacyEnglishTest = english.testType === 'TOEFL iBT' ? 'TOEFL' : english.testType || profile.englishTest;
+      const graduationDate = academic.academicStatus === 'graduated'
+        ? academic.graduationDate
+        : academic.expectedGraduationDate;
+      const approximateBudget = preferences.maxTuitionBudget
+        ? `${preferences.currency || 'USD'} ${preferences.maxTuitionBudget} / year`
+        : profile.approximateBudget;
+      const isCvSource = progress.source === 'cv';
+
+      const finalProfile = {
+        ...profile,
+        ...updatedData,
+        name: fullName,
+        firstName: fullName.split(' ')[0] || '',
+        lastName: fullName.split(' ').slice(1).join(' '),
+        email: personal.email || profile.email || user?.email || '',
+        degree: academic.degreeTitle || academic.major || profile.degree,
+        degreeLevel: academic.currentDegree || profile.degreeLevel,
+        university: academic.institution || profile.university,
+        cgpa: academic.cgpa || profile.cgpa,
+        graduationYear: graduationDate || academic.currentYear || profile.graduationYear,
+        englishTest: legacyEnglishTest,
+        englishScore: english.testType === 'No Test / Not Taken' ? '' : overallScore || profile.englishScore,
+        fieldOfInterest: preferences.fields?.filter((field) => field !== 'Other').join(', ') || preferences.customField || academic.major || profile.fieldOfInterest,
+        skills: [academic.technicalSkills, academic.programmingLanguages].filter(Boolean).join(', ').split(',').map((skill) => skill.trim()).filter(Boolean),
+        projects: academic.projects ? academic.projects.split(',').map((project) => project.trim()).filter(Boolean) : profile.projects,
+        preferredCountries: preferences.countries ? preferredCountries : getPreferredCountries(profile.preferredCountries),
+        preferredDegree: "Master's",
+        fundingPreference: chosenFunding.join(', ') || profile.fundingPreference,
+        approximateBudget,
+        profileCompletionPercentage: progress.complete ? 100 : Math.round(((progress.step + 1) / 4) * 100),
+        profileSetupStep: progress.complete ? 4 : progress.step + 1,
+        profileComplete: Boolean(progress.complete),
+        profileStatus: progress.complete ? 'complete' : 'draft',
+        profileMethod: isCvSource ? 'cv' : 'manual',
+        cvUpload: isCvSource ? profile.cvUpload || null : null,
+        extractedProfile: isCvSource ? profile.extractedProfile || null : null,
+        extractionFieldStatuses: isCvSource ? profile.extractionFieldStatuses || {} : {},
+        profileDraft: updatedData,
+        fieldStatuses: progress.fieldStatuses || (isCvSource ? profile.fieldStatuses || {} : {}),
+        verifiedProfile: progress.complete ? updatedData : null,
+      };
+
+      // When the student submits their completed profile, persist to the real backend
+      if (progress.complete) {
+        if (token) {
+          const backendPayload = mapFrontendToBackendProfile(updatedData, profile);
+
+          if (hasBackendProfile) {
+            await updateProfileApi(token, backendPayload);
+          } else {
+            try {
+              await createProfileApi(token, backendPayload);
+              setHasBackendProfile(true);
+            } catch (createErr) {
+              // If it already exists on server, gracefully switch to PUT update
+              if (createErr.status === 400 && String(createErr.message).includes('already exists')) {
+                await updateProfileApi(token, backendPayload);
+                setHasBackendProfile(true);
+              } else {
+                throw createErr;
+              }
+            }
+          }
+
+          finalProfile.hasBackendProfile = true;
+        }
+      } else if (hasBackendProfile && token) {
+        // If profile was already created in database, perform a best-effort update for drafts
+        try {
+          const backendPayload = mapFrontendToBackendProfile(updatedData, profile);
+          await updateProfileApi(token, backendPayload);
+        } catch {
+          // Non-blocking for intermediate step drafts
+        }
+      }
+
+      persistProfile(finalProfile, user?.id);
+      setProfile(finalProfile);
+
+      return {
+        success: true,
+        profile: finalProfile,
+        matchStatistics: calculateMatchStatistics(finalProfile),
+      };
+    } catch (err) {
+      console.error('Failed to save profile:', err);
+      return {
+        success: false,
+        error: err?.message || 'Your profile could not be saved. Please try again.',
+      };
+    } finally {
+      setLoading(false);
+    }
   };
 
   const toggleSaveOpportunity = (id) => {
@@ -432,6 +547,7 @@ export function ProfileProvider({ children }) {
       saveFinancialBudget,
       profile: profileWithAccount,
       loading,
+      hasBackendProfile,
       updateProfile,
       saveCvUpload,
       saveExtractedProfile,

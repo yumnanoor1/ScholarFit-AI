@@ -1,5 +1,5 @@
 .financial-page {
-  max-width: 1120px;
+  overflow-x: clip;
 }
 
 .financial-opportunity {
@@ -33,7 +33,7 @@
 
 .financial-eyebrow {
   color: var(--color-text-muted);
-  font-size: 0.72rem;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -140,7 +140,7 @@
 .financial-metric-note,
 .financial-item-source {
   color: var(--color-text-muted);
-  font-size: 0.73rem;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -220,7 +220,7 @@
 
 .financial-award-confirmed,
 .financial-award-potential {
-  font-size: 0.74rem;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -439,7 +439,7 @@
 
 .financial-summary-card small {
   color: var(--color-text-muted);
-  font-size: 0.72rem;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -504,7 +504,7 @@
 .financial-cost-table thead {
   color: var(--color-text-muted);
   background: var(--color-hover-bg);
-  font-size: 0.67rem;
+  font-size: 12px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -534,7 +534,7 @@
 }
 
 .financial-cost-table .financial-item-source {
-  font-size: 0.69rem;
+  font-size: 12px;
 }
 
 .financial-budget-form {
@@ -588,7 +588,7 @@
 .financial-gap-formula {
   margin-top: 10px;
   color: var(--color-text-muted);
-  font-size: 0.71rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -598,7 +598,7 @@
 }
 
 .financial-affordability-card .financial-missing-note {
-  font-size: 0.74rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -639,5 +639,320 @@
 
   .financial-budget-form {
     grid-template-columns: minmax(0, 1fr) 100px;
+  }
+}
+
+.financial-dashboard-grid {
+  display: block;
+}
+
+.financial-dashboard-main {
+  gap: 20px;
+}
+
+.financial-budget-step {
+  margin-top: 16px;
+}
+
+.financial-step-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.financial-step-heading > span {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #164f91;
+  background: #eaf4ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.financial-step-heading h2 {
+  margin: 0;
+  color: var(--color-dark);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.financial-budget-step .financial-step-heading,
+.financial-cost-section .financial-step-heading,
+.financial-results-step .financial-step-heading,
+.financial-chart-step .financial-step-heading {
+  margin-bottom: 10px;
+}
+
+.financial-budget-step .financial-section-heading {
+  margin-bottom: 0;
+}
+
+.financial-budget-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 160px auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+}
+
+.financial-budget-form label {
+  min-width: 0;
+  font-size: 14px;
+}
+
+.financial-budget-form input,
+.financial-budget-form select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-dark);
+  background: var(--color-white);
+  font: inherit;
+}
+
+.financial-budget-form > button {
+  min-height: 40px;
+}
+
+.financial-budget-form .financial-form-success,
+.financial-budget-form .financial-form-error,
+.financial-currency-note {
+  grid-column: 1 / -1;
+}
+
+.financial-currency-note {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.financial-cost-table {
+  min-width: 720px;
+}
+
+.financial-cost-table th:nth-child(2) {
+  min-width: 175px;
+}
+
+.financial-cost-table th:nth-child(3) {
+  min-width: 125px;
+}
+
+.financial-cost-table th:nth-child(4) {
+  min-width: 190px;
+}
+
+.financial-cost-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.financial-cost-input-wrap input {
+  width: 120px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-dark);
+  background: #fff;
+  font: inherit;
+}
+
+.financial-cost-input-wrap small {
+  color: #8a6518;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.financial-period-select select {
+  min-height: 34px;
+  padding: 5px 24px 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-dark);
+  background: #fff;
+  font: inherit;
+}
+
+.financial-table-footnote {
+  margin-top: 8px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.financial-results-step,
+.financial-chart-step {
+  margin-top: 18px;
+}
+
+.financial-enter-budget {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #dce8f1;
+  border-radius: 8px;
+  color: #526b85;
+  background: #f6f9fc;
+  font-size: 14px;
+}
+
+.financial-result-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.financial-result-cards article {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.financial-result-cards article span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.financial-result-cards article strong {
+  overflow-wrap: anywhere;
+  color: var(--color-dark);
+  font-size: 1.1rem;
+}
+
+.financial-cost-chart {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 18px;
+}
+
+.financial-donut {
+  position: relative;
+  display: grid;
+  width: 170px;
+  height: 170px;
+  flex: 0 0 auto;
+  align-content: center;
+  justify-items: center;
+  border-radius: 50%;
+  background: conic-gradient(
+    #377fd0 0 var(--budget-share),
+    #36a77a var(--budget-share) calc(var(--budget-share) + var(--funding-share)),
+    #e8a33a calc(var(--budget-share) + var(--funding-share)) 100%
+  );
+}
+
+.financial-donut::before {
+  position: absolute;
+  width: 126px;
+  height: 126px;
+  border-radius: 50%;
+  background: #fff;
+  content: '';
+}
+
+.financial-donut strong,
+.financial-donut span {
+  position: relative;
+}
+
+.financial-donut strong {
+  color: #203955;
+  font-size: 1.1rem;
+}
+
+.financial-donut span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.financial-chart-legend {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.financial-chart-legend li {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #526b85;
+  font-size: 14px;
+}
+
+.financial-chart-legend li > span {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.financial-chart-legend .budget-key {
+  background: #377fd0;
+}
+
+.financial-chart-legend .funding-key {
+  background: #36a77a;
+}
+
+.financial-chart-legend .gap-key {
+  background: #e8a33a;
+}
+
+.financial-chart-legend strong {
+  color: #203955;
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .financial-budget-form {
+    grid-template-columns: minmax(0, 1fr) 130px;
+  }
+
+  .financial-budget-form > button {
+    grid-column: 1 / -1;
+  }
+
+  .financial-result-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .financial-cost-chart {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .financial-budget-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .financial-budget-form > button {
+    grid-column: auto;
+  }
+
+  .financial-step-heading {
+    align-items: flex-start;
+  }
+
+  .financial-donut {
+    width: 148px;
+    height: 148px;
+  }
+
+  .financial-donut::before {
+    width: 108px;
+    height: 108px;
   }
 }

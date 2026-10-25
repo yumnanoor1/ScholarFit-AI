@@ -45,10 +45,10 @@ export default function Register() {
       if (res.success) {
         navigate('/profile-setup');
       } else {
-        setError('Failed to create account. Please try again.');
+        setError(res?.error || 'Failed to create account. Please try again.');
       }
-    } catch {
-      setError('An error occurred during registration.');
+    } catch (err) {
+      setError(err?.message || 'An error occurred during registration.');
     } finally {
       setLoading(false);
     }
@@ -130,7 +130,7 @@ export default function Register() {
           backgroundColor: '#FFFFFF',
           borderRadius: '12px',
           width: '100%',
-          maxWidth: '440px',
+          maxWidth: 'var(--auth-card-width)',
           padding: '36px 32px',
           boxShadow: '0 4px 20px rgba(0, 0, 0, 0.04)',
           border: '1px solid var(--color-border-light)'
@@ -171,6 +171,7 @@ export default function Register() {
             </label>
 
             <input
+              className="auth-form-input"
               type="text"
               placeholder="John Doe"
               value={fullName}
@@ -181,7 +182,6 @@ export default function Register() {
                 borderRadius: '6px',
                 border: '1px solid var(--color-border)',
                 fontSize: '0.9rem',
-                outline: 'none',
                 backgroundColor: '#FFFFFF'
               }}
               required
@@ -203,6 +203,7 @@ export default function Register() {
             </label>
 
             <input
+              className="auth-form-input"
               type="email"
               placeholder="name@example.com"
               value={email}
@@ -213,7 +214,6 @@ export default function Register() {
                 borderRadius: '6px',
                 border: '1px solid var(--color-border)',
                 fontSize: '0.9rem',
-                outline: 'none',
                 backgroundColor: '#FFFFFF'
               }}
               required
@@ -235,6 +235,7 @@ export default function Register() {
             </label>
 
             <input
+              className="auth-form-input"
               type="password"
               placeholder="••••••••"
               value={password}
@@ -245,7 +246,6 @@ export default function Register() {
                 borderRadius: '6px',
                 border: '1px solid var(--color-border)',
                 fontSize: '0.9rem',
-                outline: 'none',
                 backgroundColor: '#FFFFFF'
               }}
               required
@@ -267,6 +267,7 @@ export default function Register() {
             </label>
 
             <input
+              className="auth-form-input"
               type="password"
               placeholder="••••••••"
               value={confirmPassword}
@@ -277,7 +278,6 @@ export default function Register() {
                 borderRadius: '6px',
                 border: '1px solid var(--color-border)',
                 fontSize: '0.9rem',
-                outline: 'none',
                 backgroundColor: '#FFFFFF'
               }}
               required
@@ -510,7 +510,7 @@ export default function Register() {
         }}
       >
         <ChevronSmallRightIcon size={16} className="rotate-180" aria-hidden="true" />
-        Back to FitScholar Home
+        Back to FitScholars Home
       </Link>
 
     </div>

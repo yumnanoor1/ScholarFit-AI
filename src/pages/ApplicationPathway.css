@@ -1,0 +1,662 @@
+.application-pathway-page {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  color: #18335f;
+}
+
+.application-pathway-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  align-items: start;
+  gap: 16px;
+}
+
+.application-pathway-main,
+.application-pathway-rail {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.application-pathway-hero {
+  position: relative;
+  display: flex;
+  min-height: 152px;
+  overflow: hidden;
+  align-items: center;
+  padding: 20px 24px;
+  border: 1px solid #d7eafb;
+  border-radius: 12px;
+  background: linear-gradient(106deg, #eff8ff 0%, #e6f4ff 54%, #d4edff 100%);
+}
+
+.application-pathway-hero-copy {
+  position: relative;
+  z-index: 1;
+  width: min(60%, 460px);
+}
+
+.application-pathway-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: #1769bf;
+  background: rgba(255, 255, 255, .8);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.application-pathway-hero h1 {
+  color: #102d62;
+  font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.application-pathway-hero-copy > p {
+  max-width: 380px;
+  margin-top: 8px;
+  color: #3f5f8c;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.application-pathway-illustration {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 58%;
+  height: 100%;
+}
+
+.application-pathway-controls {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.application-pathway-selected {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  color: #637d9e;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.application-pathway-selected svg {
+  flex: 0 0 auto;
+  color: #347ab9;
+}
+
+.application-pathway-selected select {
+  max-width: 100%;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.application-pathway-strategy {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  color: #6f85a0;
+  font-size: 12px;
+}
+
+.application-pathway-strategy select {
+  max-width: 200px;
+  min-height: 32px;
+  padding: 0 24px 0 8px;
+  border: 1px solid #dbe8f5;
+  border-radius: 8px;
+  color: #375779;
+  background: #fff;
+  font: inherit;
+}
+
+.application-pathway-strategy-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.application-pathway-strategy-help {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.application-pathway-strategy-help summary {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #dbe8f5;
+  border-radius: 50%;
+  color: #347ab9;
+  background: #fff;
+  cursor: pointer;
+  list-style: none;
+}
+
+.application-pathway-strategy-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.application-pathway-strategy-help p {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(300px, 80vw);
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #cfe0f1;
+  border-radius: 8px;
+  color: #365878;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(24, 57, 91, .14);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.application-pathway-error {
+  padding: 8px 12px;
+  border: 1px solid #f0d6d6;
+  border-radius: 8px;
+  color: #a13232;
+  background: #fff7f7;
+  font-size: 13px;
+}
+
+/* Roadmap */
+.application-pathway-roadmap {
+  padding: 8px 16px 12px;
+  overflow: hidden;
+  border: 1px solid #e3edf8;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f3f8fe 100%);
+}
+
+.application-pathway-journey {
+  position: relative;
+  display: grid;
+  width: 100%;
+  padding-top: 8px;
+}
+
+.application-pathway-journey-line {
+  position: absolute;
+  z-index: 0;
+  inset: 8px 0 0;
+  width: 100%;
+  height: calc(100% - 8px);
+  overflow: visible;
+  pointer-events: none;
+}
+
+.application-pathway-journey-line path {
+  fill: none;
+  stroke: #d3e5f8;
+  stroke-width: 9;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.application-pathway-journey-line path.is-complete {
+  stroke: #bcd9f7;
+}
+
+.application-journey-step {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.application-journey-node {
+  position: relative;
+  display: grid;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  color: #7b8fa8;
+  background: #f6f9fd;
+  box-shadow: 0 0 0 1px #d8e5f3, 0 6px 14px rgba(40, 90, 150, .14);
+}
+
+.application-journey-step.is-current .application-journey-node {
+  color: #1168c8;
+  box-shadow: 0 0 0 2px #1168c8, 0 6px 14px rgba(17, 104, 200, .22);
+}
+
+.application-journey-step.is-complete .application-journey-node {
+  color: #1168c8;
+  box-shadow: 0 0 0 2px #1f9d55, 0 6px 14px rgba(31, 157, 85, .2);
+}
+
+.application-journey-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  background: #6b7f99;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.application-journey-step.is-current .application-journey-badge {
+  background: #1168c8;
+}
+
+.application-journey-step.is-complete .application-journey-badge {
+  background: #1f9d55;
+}
+
+.application-journey-title {
+  margin: 8px 0 0;
+  color: #102d62;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.application-journey-desc {
+  max-width: 190px;
+  margin: 0;
+  color: #637d9e;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.application-journey-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 99px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.application-journey-chip.is-current {
+  color: #0f58a8;
+  background: #dcecff;
+  cursor: pointer;
+}
+
+.application-journey-chip.is-complete {
+  color: #17753f;
+  background: #def5e7;
+  cursor: pointer;
+}
+
+.application-journey-chip.is-locked {
+  color: #6b7f99;
+  background: #e8eef5;
+  cursor: default;
+}
+
+/* Rail */
+.application-pathway-card {
+  padding: 16px;
+  border: 1px solid #dce9f7;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.application-pathway-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #102d62;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.application-pathway-next-card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 8px 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #dce9f7;
+  border-radius: 10px;
+}
+
+.application-pathway-next-number {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #1168c8;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.application-pathway-next-copy h3 {
+  color: #102d62;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.application-pathway-next-copy p {
+  margin-top: 4px;
+  color: #637d9e;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.application-pathway-next-art {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  grid-column: 1 / -1;
+  justify-self: center;
+  place-items: center;
+  border-radius: 50%;
+  color: #1168c8;
+  background: #eaf3ff;
+}
+
+.application-pathway-next-card button {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #1168c8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.application-pathway-next-card button:hover {
+  background: #0f58a8;
+}
+
+.application-pathway-progress-ring {
+  display: grid;
+  width: 140px;
+  height: 140px;
+  margin: 12px auto;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(
+    #1f9d55 0deg var(--journey-completed-angle),
+    #1168c8 var(--journey-completed-angle) var(--journey-current-angle),
+    #dce8f5 var(--journey-current-angle) 360deg
+  );
+}
+
+.application-pathway-progress-ring > div {
+  display: grid;
+  width: 112px;
+  height: 112px;
+  align-content: center;
+  justify-items: center;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.application-pathway-progress-ring strong {
+  color: #102d62;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.application-pathway-progress-ring span {
+  color: #637d9e;
+  font-size: 12px;
+}
+
+.application-pathway-legend {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.application-pathway-legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #365878;
+  font-size: 13px;
+}
+
+.application-pathway-legend li strong {
+  margin-left: auto;
+  color: #102d62;
+}
+
+.application-pathway-legend li span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.application-pathway-legend .is-complete { background: #1f9d55; }
+.application-pathway-legend .is-current { background: #1168c8; }
+.application-pathway-legend .is-locked { background: #6b7f99; }
+
+.application-pathway-encouragement {
+  position: relative;
+  min-height: 130px;
+  overflow: hidden;
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f1f8ff, #dcedff);
+}
+
+.application-pathway-encouragement p {
+  position: relative;
+  z-index: 1;
+  color: #1168c8;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.application-pathway-encouragement small {
+  position: relative;
+  z-index: 1;
+  display: block;
+  margin-top: 8px;
+  color: #637d9e;
+  font-size: 12px;
+}
+
+.application-pathway-encouragement > svg {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  right: 14px;
+  color: #1168c8;
+}
+
+.application-pathway-encouragement-mountains {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 150px;
+  height: 70px;
+  background: linear-gradient(140deg, #8ec9fb, #4a9be8);
+  clip-path: polygon(0 100%, 22% 40%, 36% 68%, 58% 8%, 78% 58%, 88% 38%, 100% 100%);
+  opacity: .8;
+}
+
+.application-pathway-browse-button,
+.application-pathway-empty button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: #1168c8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.application-pathway-browse-button {
+  justify-self: start;
+}
+
+.application-pathway-note {
+  color: #6b7f99;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.application-pathway-empty {
+  display: grid;
+  justify-items: center;
+  padding: 44px 24px;
+  border: 1px solid #dce9f7;
+  border-radius: 12px;
+  background: #fff;
+  text-align: center;
+}
+
+.application-pathway-empty > svg {
+  color: #287bc4;
+}
+
+.application-pathway-empty h2 {
+  margin-top: 8px;
+  color: #183461;
+  font-size: 1rem;
+}
+
+.application-pathway-empty p {
+  max-width: 50ch;
+  margin-top: 6px;
+  color: #687f9c;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.application-pathway-empty button {
+  margin-top: 16px;
+}
+
+.application-pathway-page button:focus-visible,
+.application-pathway-page select:focus-visible,
+.application-pathway-strategy-help summary:focus-visible {
+  outline: 2px solid #1168c8;
+  outline-offset: 2px;
+}
+
+@media (max-width: 1000px) {
+  .application-pathway-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .application-pathway-rail {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .application-pathway-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .application-pathway-selected {
+    white-space: normal;
+  }
+
+  .application-pathway-journey {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-rows: none !important;
+    gap: 16px;
+  }
+
+  .application-pathway-journey-line {
+    display: none;
+  }
+
+  .application-journey-step {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .application-pathway-hero-copy {
+    width: 100%;
+  }
+
+  .application-pathway-illustration {
+    opacity: .3;
+  }
+
+  .application-pathway-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .application-pathway-selected {
+    white-space: normal;
+  }
+
+  .application-pathway-journey {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: none !important;
+    gap: 16px;
+  }
+
+  .application-pathway-journey-line {
+    display: none;
+  }
+
+  .application-journey-step {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+}

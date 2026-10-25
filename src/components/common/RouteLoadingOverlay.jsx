@@ -18,7 +18,7 @@ export default function RouteLoadingOverlay() {
           <GraduationCap size={22} />
         </span>
         <span className="route-loading-spinner" aria-hidden="true" />
-        <span className="route-loading-title">FitScholar AI</span>
+        <span className="route-loading-title">FitScholars</span>
         <span className="route-loading-message">Preparing your study journey…</span>
       </div>
     </div>

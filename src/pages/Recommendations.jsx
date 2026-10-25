@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowRight, Award, Bookmark, CalendarDays, Check, CircleHelp,
-  Compass, GraduationCap, MapPin, Search, SlidersHorizontal, Star, Wallet,
+  AlertTriangle, ArrowRight, Bookmark, Check, CircleHelp,
+  GraduationCap, Grid2X2, List, MapPin, Search, SlidersHorizontal, Wallet,
 } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
 import { apiService } from '../services/api';
@@ -28,6 +28,8 @@ export default function Recommendations() {
     savedOpportunities,
     toggleSaveOpportunity,
     selectOpportunity,
+    comparisonOpportunityIds,
+    toggleComparisonOpportunity,
   } = useProfile();
   const [opportunities, setOpportunities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +39,8 @@ export default function Recommendations() {
   const [funding, setFunding] = useState('all');
   const [sort, setSort] = useState('match-desc');
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState('list');
+  const [expandedReasons, setExpandedReasons] = useState({});
 
   useEffect(() => {
     let isCurrent = true;
@@ -65,10 +69,6 @@ export default function Recommendations() {
   );
   const programs = opportunities.filter((opportunity) => opportunity.kind === 'program');
   const scholarships = opportunities.filter((opportunity) => opportunity.kind === 'scholarship');
-  const averageMatch = opportunities.length
-    ? Math.round(opportunities.reduce((total, item) => total + (Number(item.matchScore) || 0), 0) / opportunities.length)
-    : 0;
-
   const visibleOpportunities = useMemo(() => {
     const query = search.trim().toLowerCase();
     return opportunities
@@ -95,6 +95,28 @@ export default function Recommendations() {
     navigate('/timeline');
   };
 
+  const toggleCompare = (opportunity) => {
+    if (!comparisonOpportunityIds.includes(opportunity.id) && comparisonOpportunityIds.length >= 2) {
+      navigate('/compare');
+      return;
+    }
+    toggleComparisonOpportunity(opportunity.id);
+    navigate('/compare');
+  };
+
+  const getCostLabel = (opportunity, key) => {
+    const cost = opportunity.financialData?.costs?.[key];
+    const amountValue = Number(cost?.amount);
+    if (!cost || cost.amount === '' || cost.amount == null || !Number.isFinite(amountValue)) return 'Not listed';
+    const currency = /^[A-Za-z]{3}$/.test(cost.currency || '') ? cost.currency.toUpperCase() : 'USD';
+    const amount = new Intl.NumberFormat('en', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amountValue);
+    return `${amount}${cost.period === 'monthly' ? ' / month' : cost.period === 'yearly' ? ' / year' : ''}`;
+  };
+
   const categories = [
     { id: 'all', label: 'All Matches', count: opportunities.length },
     { id: 'programs', label: "Master's Programs", count: programs.length },
@@ -103,30 +125,6 @@ export default function Recommendations() {
 
   return (
     <div className="page-container opportunity-recommendations-page">
-      <header className="matched-page-header">
-        <div className="matched-page-title">
-          <span className="matched-page-title-icon"><Compass size={24} aria-hidden="true" /></span>
-          <div>
-            <h1>Matched Opportunities</h1>
-            <p>Discover university programs and scholarship opportunities based on your profile.</p>
-          </div>
-        </div>
-        <div className="matched-summary" aria-label="Opportunity match summary">
-          <article>
-            <span className="matched-summary-icon programs"><GraduationCap size={18} /></span>
-            <div><strong>{programs.length}</strong><span>Matched Programs</span><small>Illustrative data</small></div>
-          </article>
-          <article>
-            <span className="matched-summary-icon scholarships"><Award size={18} /></span>
-            <div><strong>{scholarships.length}</strong><span>Matched Scholarships</span><small>Illustrative data</small></div>
-          </article>
-          <article>
-            <span className="matched-summary-icon average"><Star size={18} /></span>
-            <div><strong>{averageMatch}%</strong><span>Avg. Match Score</span><small>Illustrative data</small></div>
-          </article>
-        </div>
-      </header>
-
       <section className="matched-toolbar" aria-label="Filter matched opportunities">
         <div className="matched-category-tabs" role="group" aria-label="Opportunity category">
           {categories.map((item) => (
@@ -168,6 +166,14 @@ export default function Recommendations() {
             <option value="match-asc">Match Score (Low → High)</option>
           </select>
         </label>
+        <div className="matched-view-toggle" role="group" aria-label="Opportunity view">
+          <button type="button" aria-label="List view" aria-pressed={viewMode === 'list'} className={viewMode === 'list' ? 'is-active' : ''} onClick={() => setViewMode('list')}>
+            <List size={17} aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Grid view" aria-pressed={viewMode === 'grid'} className={viewMode === 'grid' ? 'is-active' : ''} onClick={() => setViewMode('grid')}>
+            <Grid2X2 size={16} aria-hidden="true" />
+          </button>
+        </div>
       </section>
 
       {selectedOpportunities.length > 0 && (
@@ -184,12 +190,13 @@ export default function Recommendations() {
         <div className="matched-empty-state"><CircleHelp size={22} /><p>No matched opportunities found. Try changing the filters or search term.</p></div>
       )}
 
-      <div className="opportunity-recommendations-grid">
+      <div className={`opportunity-recommendations-grid ${viewMode}-view`}>
         {visibleOpportunities.map((opportunity) => {
           const title = getOpportunityTitle(opportunity);
-          const isSelected = selectedOpportunities.some((item) => item.id === opportunity.id);
           const isActive = activeOpportunityId === opportunity.id;
           const isSaved = savedOpportunities.includes(opportunity.id);
+          const isCompared = comparisonOpportunityIds.includes(opportunity.id);
+          const compareLimitReached = comparisonOpportunityIds.length >= 2 && !isCompared;
           const eligibility = evaluateOpportunityEligibility(profile, opportunity);
           const isProgram = opportunity.kind === 'program';
           const organization = isProgram ? opportunity.university : opportunity.provider;
@@ -207,12 +214,16 @@ export default function Recommendations() {
                   <h2>{title}</h2>
                   <p><GraduationCap size={13} aria-hidden="true" /> {organization || 'Provider not listed'}</p>
                   <p><MapPin size={13} aria-hidden="true" /> {opportunity.country || 'Country not listed'}</p>
-                  <span className="matched-type-pill">{isProgram ? opportunity.degree || "Master's Program" : opportunity.type || 'Scholarship'}</span>
+                  <span className={`matched-requirement-status ${eligibility.status === 'satisfied' ? 'is-satisfied' : 'is-warning'}`}>
+                    {eligibility.status === 'satisfied'
+                      ? <Check size={13} aria-hidden="true" />
+                      : <AlertTriangle size={13} aria-hidden="true" />}
+                    Requirements: {eligibility.status.replaceAll('-', ' ')}
+                  </span>
                 </div>
                 <div className="matched-score">
                   <span className={`matched-score-ring ${isProgram ? '' : 'scholarship-score'}`}>{opportunity.matchScore ?? '—'}{opportunity.matchScore != null && '%'}</span>
                   <span>Match Score</span>
-                  <div className="matched-score-track"><span style={{ width: `${Math.min(Math.max(Number(opportunity.matchScore) || 0, 0), 100)}%` }} /></div>
                 </div>
                 <button
                   type="button"
@@ -226,43 +237,45 @@ export default function Recommendations() {
               </div>
 
               <div className="matched-card-content">
+                <div className="matched-cost-stats" aria-label="Opportunity cost and deadline information">
+                  <div><span>{isProgram ? 'Tuition' : 'Funding'}</span><strong>{isProgram ? opportunity.tuition || 'Not listed' : opportunity.coverage || 'Not listed'}</strong></div>
+                  <div><span>Living cost</span><strong>{isProgram ? getCostLabel(opportunity, 'accommodationFood') : 'Not listed'}</strong></div>
+                  <div><span>Deadline</span><strong>{opportunity.deadline || 'Not listed'}{opportunity.deadline && opportunity.deadlineStatus !== 'official-verified' ? ' · listed' : ''}</strong></div>
+                </div>
                 <section className="matched-reasons">
-                  <h3>Why it matches your profile:</h3>
-                  {reasons.map((reason, index) => (
-                    <p key={`${opportunity.id}-reason-${index}`}><Check size={14} aria-hidden="true" /> {reason}</p>
-                  ))}
-                  <span className={`matched-eligibility ${eligibility.status}`}>
-                    Profile requirements: {eligibility.status.replaceAll('-', ' ')}
-                  </span>
-                </section>
-                <aside className="matched-funding-box">
-                  <h3><Wallet size={14} aria-hidden="true" /> Funding Information <CircleHelp size={12} aria-label="Listing details are unverified" /></h3>
-                  <p>{isProgram
-                    ? `Listed tuition: ${opportunity.tuition || 'Not specified'}`
-                    : opportunity.coverage || 'Funding coverage not specified'}
-                  </p>
-                  {isProgram && <p>Living cost: Not available</p>}
-                  {!isProgram && <p>Funding listing is not a confirmed award.</p>}
-                  <h3><CalendarDays size={14} aria-hidden="true" /> Deadline (if available)</h3>
-                  <p>{opportunity.deadline || 'Not specified'}</p>
-                  {opportunity.deadline && opportunity.deadlineStatus !== 'official-verified' && (
-                    <small>Sample date · verify with provider</small>
+                  <button
+                    type="button"
+                    className="matched-reason-toggle"
+                    aria-expanded={Boolean(expandedReasons[opportunity.id])}
+                    aria-controls={`match-reason-${opportunity.id}`}
+                    onClick={() => setExpandedReasons((current) => ({ ...current, [opportunity.id]: !current[opportunity.id] }))}
+                  >
+                    <Check size={14} aria-hidden="true" /> Why this match? <span>{expandedReasons[opportunity.id] ? '−' : '+'}</span>
+                  </button>
+                  {expandedReasons[opportunity.id] && (
+                    <p id={`match-reason-${opportunity.id}`}>{reasons[0]}</p>
                   )}
-                </aside>
+                </section>
               </div>
 
               <footer className="matched-card-footer">
-                <span className="matched-data-note">
-                  {opportunity.sourceStatus === 'official-verified' ? 'Verified source data' : 'Sample data · verify with provider'}
-                </span>
                 <button
                   type="button"
                   className="matched-start-button"
                   aria-pressed={isActive}
                   onClick={() => selectForJourney(opportunity)}
                 >
-                  {isActive ? 'Selected · Open Timeline' : isSelected ? 'Select This Opportunity' : 'Select Opportunity'}
+                  {isActive ? 'Selected' : 'Select'}
                   <ArrowRight size={14} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="matched-compare-button"
+                  aria-pressed={isCompared}
+                  disabled={compareLimitReached}
+                  onClick={() => toggleCompare(opportunity)}
+                >
+                  Compare
                 </button>
               </footer>
             </article>

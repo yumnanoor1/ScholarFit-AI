@@ -28,7 +28,7 @@
 .timeline-eyebrow,
 .timeline-panel-eyebrow {
   color: var(--color-primary);
-  font-size: 0.67rem;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -114,7 +114,7 @@
 .timeline-progress-ring span {
   margin-top: 3px;
   color: var(--color-text-muted);
-  font-size: 0.74rem;
+  font-size: 12px;
 }
 
 .timeline-progress-count {
@@ -136,7 +136,7 @@
 
 .timeline-next-step span {
   color: var(--color-text-muted);
-  font-size: 0.68rem;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -160,12 +160,12 @@
   display: grid;
   gap: 3px;
   color: var(--color-text-muted);
-  font-size: 0.7rem;
+  font-size: 12px;
 }
 
 .timeline-deadline-summary strong {
   color: var(--color-dark);
-  font-size: 0.73rem;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
 }
@@ -187,7 +187,7 @@
   align-items: start;
   gap: 7px;
   color: var(--color-text-muted);
-  font-size: 0.72rem;
+  font-size: 12px;
   line-height: 1.4;
 }
 
@@ -259,7 +259,7 @@
 .timeline-column-heading p {
   margin-top: 2px;
   color: var(--color-text-muted);
-  font-size: 0.67rem;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -271,7 +271,7 @@
   border-radius: 999px;
   color: var(--color-primary);
   background: var(--color-white);
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -302,7 +302,7 @@
   border-radius: 999px;
   color: var(--color-text-muted);
   background: var(--color-hover-bg);
-  font-size: 0.65rem;
+  font-size: 12px;
   font-weight: 700;
   text-transform: capitalize;
 }
@@ -322,7 +322,7 @@
   align-items: center;
   gap: 4px;
   color: var(--color-text-muted);
-  font-size: 0.64rem;
+  font-size: 12px;
   text-align: right;
 }
 
@@ -340,7 +340,7 @@
 .timeline-task-document-status,
 .timeline-task-source {
   color: var(--color-text-muted);
-  font-size: 0.7rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -351,7 +351,7 @@
 }
 
 .timeline-task-source {
-  font-size: 0.65rem;
+  font-size: 12px;
 }
 
 .timeline-task-controls {
@@ -367,7 +367,7 @@
   min-height: 34px;
   border-radius: var(--radius-md);
   font: inherit;
-  font-size: 0.7rem;
+  font-size: 12px;
 }
 
 .timeline-task-related {
@@ -425,7 +425,7 @@
 
 .timeline-lane-empty p {
   color: var(--color-text-muted);
-  font-size: 0.74rem;
+  font-size: 12px;
 }
 
 .timeline-completed-summary {
@@ -435,7 +435,7 @@
   padding: 9px 2px 0;
   border-top: 1px solid var(--color-border-light);
   color: var(--color-success);
-  font-size: 0.72rem;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -455,7 +455,7 @@
   gap: 7px;
   margin-top: 13px;
   color: var(--color-text-muted);
-  font-size: 0.68rem;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -549,6 +549,18 @@
 
   .timeline-dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .timeline-task-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .timeline-task-controls select {
+    width: 100%;
+  }
+
+  .timeline-task-primary {
+    grid-column: auto;
   }
 
   .timeline-progress-panel {

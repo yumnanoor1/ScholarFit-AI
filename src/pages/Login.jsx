@@ -38,10 +38,10 @@ export default function Login() {
       if (res.success) {
         navigate(destination, { replace: true });
       } else {
-        setError('Invalid credentials. Please check your email and password.');
+        setError(res?.error || 'Invalid credentials. Please check your email and password.');
       }
-    } catch {
-      setError('Failed to log in. Please try again.');
+    } catch (err) {
+      setError(err?.message || 'Failed to log in. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -123,7 +123,7 @@ export default function Login() {
           backgroundColor: '#FFFFFF',
           borderRadius: '12px',
           width: '100%',
-          maxWidth: '420px',
+          maxWidth: 'var(--auth-card-width)',
           padding: '36px 32px',
           boxShadow: '0 4px 20px rgba(0, 0, 0, 0.04)',
           border: '1px solid var(--color-border-light)'
@@ -164,6 +164,7 @@ export default function Login() {
             </label>
 
             <input
+              className="auth-form-input"
               type="email"
               placeholder="name@university.com"
               value={email}
@@ -174,7 +175,6 @@ export default function Login() {
                 borderRadius: '6px',
                 border: '1px solid var(--color-border)',
                 fontSize: '0.9rem',
-                outline: 'none',
                 backgroundColor: '#FFFFFF'
               }}
               required
@@ -219,6 +219,7 @@ export default function Login() {
             </div>
 
             <input
+              className="auth-form-input"
               type="password"
               placeholder="••••••••"
               value={password}
@@ -229,7 +230,6 @@ export default function Login() {
                 borderRadius: '6px',
                 border: '1px solid var(--color-border)',
                 fontSize: '0.9rem',
-                outline: 'none',
                 backgroundColor: '#FFFFFF'
               }}
               required
@@ -287,7 +287,7 @@ export default function Login() {
               cursor: loading ? 'not-allowed' : 'pointer'
             }}
           >
-            {loading ? 'Signing in...' : 'Sign in to FitScholar'}
+            {loading ? 'Signing in...' : 'Sign in to FitScholars'}
           </button>
 
         </form>
@@ -426,7 +426,7 @@ export default function Login() {
         }}
       >
         <ChevronSmallRightIcon size={16} className="rotate-180" aria-hidden="true" />
-        Back to FitScholar Home
+        Back to FitScholars Home
       </Link>
 
     </div>

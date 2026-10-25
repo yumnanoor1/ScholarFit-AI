@@ -1,5 +1,11 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
+import {
+  loginUser,
+  registerUser,
+  getCurrentUser,
+  normalizeUser,
+} from '../services/authApi';
 
 const AuthContext = createContext(null);
 
@@ -7,10 +13,16 @@ function readStoredSession() {
   const storedToken = localStorage.getItem('fitscholar_token');
   const storedUser = localStorage.getItem('fitscholar_user');
 
-  if (!storedToken || !storedUser) return { user: null, token: null };
+  if (!storedToken || !storedUser || storedToken.startsWith('mock_')) {
+    if (storedToken && storedToken.startsWith('mock_')) {
+      localStorage.removeItem('fitscholar_token');
+      localStorage.removeItem('fitscholar_user');
+    }
+    return { user: null, token: null };
+  }
 
   try {
-    return { user: JSON.parse(storedUser), token: storedToken };
+    return { user: normalizeUser(JSON.parse(storedUser)), token: storedToken };
   } catch (error) {
     console.error('Failed to parse cached user data:', error);
     localStorage.removeItem('fitscholar_token');
@@ -21,86 +33,95 @@ function readStoredSession() {
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(readStoredSession);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(session.token));
   const { user, token } = session;
 
-  // Temporary frontend mock login.
-  // This can later be replaced with the real FastAPI API call.
+  useEffect(() => {
+    let isCurrent = true;
+
+    if (!session.token) {
+      setLoading(false);
+      return;
+    }
+
+    getCurrentUser(session.token)
+      .then((verifiedUser) => {
+        if (!isCurrent) return;
+        setSession({ user: verifiedUser, token: session.token });
+        localStorage.setItem('fitscholar_user', JSON.stringify(verifiedUser));
+      })
+      .catch((error) => {
+        console.warn('Stored session is invalid or expired:', error?.message);
+        if (!isCurrent) return;
+        localStorage.removeItem('fitscholar_token');
+        localStorage.removeItem('fitscholar_user');
+        setSession({ user: null, token: null });
+      })
+      .finally(() => {
+        if (isCurrent) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
+
   const login = async (email, password) => {
-    void password;
     setLoading(true);
 
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const mockAuthData = {
-          user: {
-            id: `usr_${Date.now()}`,
-            name: email.split('@')[0] || 'User',
-            email: email,
-            role: 'student',
-          },
-          access_token: `mock_token_${Date.now()}`,
-        };
+    try {
+      const tokenData = await loginUser(email, password);
+      const accessToken = tokenData.access_token;
+      const verifiedUser = await getCurrentUser(accessToken);
 
-        setSession({ user: mockAuthData.user, token: mockAuthData.access_token });
+      localStorage.setItem('fitscholar_token', accessToken);
+      localStorage.setItem('fitscholar_user', JSON.stringify(verifiedUser));
 
-        localStorage.setItem(
-          'fitscholar_token',
-          mockAuthData.access_token
-        );
+      setSession({ user: verifiedUser, token: accessToken });
 
-        localStorage.setItem(
-          'fitscholar_user',
-          JSON.stringify(mockAuthData.user)
-        );
-
-        setLoading(false);
-
-        resolve({
-          success: true,
-          user: mockAuthData.user,
-        });
-      }, 500);
-    });
+      return {
+        success: true,
+        user: verifiedUser,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err?.message || 'Incorrect email or password.',
+      };
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Temporary frontend mock registration.
-  // This can later be replaced with the real FastAPI API call.
   const register = async (name, email, password) => {
-    void password;
     setLoading(true);
 
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const newUser = {
-          id: `usr_${Date.now()}`,
-          name: name,
-          email: email,
-          role: 'student',
-        };
+    try {
+      await registerUser(name, email, password);
 
-        const mockToken = `mock_token_${Date.now()}`;
+      const tokenData = await loginUser(email, password);
+      const accessToken = tokenData.access_token;
+      const verifiedUser = await getCurrentUser(accessToken);
 
-        setSession({ user: newUser, token: mockToken });
+      localStorage.setItem('fitscholar_token', accessToken);
+      localStorage.setItem('fitscholar_user', JSON.stringify(verifiedUser));
 
-        localStorage.setItem(
-          'fitscholar_token',
-          mockToken
-        );
+      setSession({ user: verifiedUser, token: accessToken });
 
-        localStorage.setItem(
-          'fitscholar_user',
-          JSON.stringify(newUser)
-        );
-
-        setLoading(false);
-
-        resolve({
-          success: true,
-          user: newUser,
-        });
-      }, 500);
-    });
+      return {
+        success: true,
+        user: verifiedUser,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err?.message || 'Failed to create account. Please try again.',
+      };
+    } finally {
+      setLoading(false);
+    }
   };
 
   const logout = () => {

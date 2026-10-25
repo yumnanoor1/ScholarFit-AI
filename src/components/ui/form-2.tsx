@@ -53,17 +53,17 @@ type ControlProps =
   | (React.TextareaHTMLAttributes<HTMLTextAreaElement> & { as: "textarea"; error?: string });
 
 function Control(props: ControlProps) {
-  const controlClassName = `h-9 w-full rounded-md border ${props.error ? "border-red-400" : "border-slate-200"} bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-sky-950 ${props.as === "textarea" ? "h-auto py-2" : ""} ${props.className || ""}`;
+  const controlClassName = `h-9 w-full rounded-md border ${props.error ? "!border-red-500 bg-red-50/40" : "border-slate-200"} bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-sky-950 ${props.as === "textarea" ? "h-auto py-2" : ""} ${props.className || ""}`;
   if (props.as === "select") {
     const { as, error, className, ...selectProps } = props;
-    return <select className={controlClassName} {...selectProps} />;
+    return <select className={controlClassName} aria-invalid={Boolean(error)} {...selectProps} />;
   }
   if (props.as === "textarea") {
     const { as, error, className, ...textareaProps } = props;
-    return <textarea className={controlClassName} {...textareaProps} />;
+    return <textarea className={controlClassName} aria-invalid={Boolean(error)} {...textareaProps} />;
   }
   const { as, error, className, ...inputProps } = props;
-  return <input className={controlClassName} {...inputProps} />;
+  return <input className={controlClassName} aria-invalid={Boolean(error)} {...inputProps} />;
 }
 
 function MultiSelect({ label, options, value, onChange, placeholder = "Search or select..." }: {
@@ -139,7 +139,7 @@ function validateStep(step: number, values: StudentProfile) {
     if (!academic.institution.trim()) errors.institution = "Enter your university name.";
     if (!academic.institutionCountry) errors.institutionCountry = "Select the university country.";
     if (!academic.academicStatus) errors.academicStatus = "Select your study status.";
-    if (academic.academicStatus === "studying" && !academic.currentYear.trim()) errors.currentYear = "Enter your current semester or year.";
+    if (academic.academicStatus === "studying" && !academic.currentYear.trim()) errors.currentYear = "Select your current semester or year.";
     if (academic.academicStatus === "studying" && !academic.expectedGraduationDate) errors.expectedGraduationDate = "Enter your expected graduation date.";
     if (academic.academicStatus === "graduated" && !academic.graduationDate) errors.graduationDate = "Enter your graduation date.";
     if (!academic.degreeStartDate) errors.degreeStartDate = "Enter your degree start date.";
@@ -281,14 +281,13 @@ export default function FormLayout01({
     update("studyPreferences", "regions", destinations.filter((destination) => REGIONS.includes(destination)));
   };
 
-  const footerActions = <footer className="profile-wizard-actions mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800"><Button type="button" variant="outline" size="sm" onClick={() => save(false)} disabled={isSaving}><Save size={12} className="mr-1.5" />Save Draft</Button><div className="ml-auto flex gap-2">{step === 0 && <Button type="button" variant="outline" size="sm" onClick={() => window.history.back()} disabled={isSaving}>Cancel</Button>}{step > 0 && <Button type="button" variant="outline" size="sm" onClick={() => goTo(step - 1)} disabled={isSaving}><ArrowLeft size={12} className="mr-1" />Back</Button>}<Button type="button" size="sm" onClick={continueStep} disabled={isSaving}>{isSaving ? "Saving..." : step === 3 ? finalButtonLabel : "Continue"}{step === 3 ? <Check size={12} className="ml-1.5" /> : <ArrowRight size={12} className="ml-1.5" />}</Button></div></footer>;
+  const footerActions = <footer className={`profile-wizard-actions mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800${step === 1 ? " is-academic-sticky" : ""}`}><Button type="button" variant="outline" size="sm" onClick={() => save(false)} disabled={isSaving}><Save size={12} className="mr-1.5" />Save Draft</Button><div className="ml-auto flex gap-2">{step === 0 && <Button type="button" variant="outline" size="sm" onClick={() => window.history.back()} disabled={isSaving}>Cancel</Button>}{step > 0 && <Button type="button" variant="outline" size="sm" onClick={() => goTo(step - 1)} disabled={isSaving}><ArrowLeft size={12} className="mr-1" />Back</Button>}<Button type="button" size="sm" onClick={continueStep} disabled={isSaving}>{isSaving ? "Saving..." : step === 3 ? finalButtonLabel : "Continue"}{step === 3 ? <Check size={12} className="ml-1.5" /> : <ArrowRight size={12} className="ml-1.5" />}</Button></div></footer>;
 
   return <div className="profile-wizard-root min-h-[calc(100vh-48px)] w-full bg-slate-50 dark:bg-slate-950">
     <div className="profile-wizard-content mx-auto w-full max-w-5xl" style={{ maxWidth: "1260px" }}>
     <header className="profile-wizard-header mb-6">
       <div className="profile-wizard-heading flex flex-wrap items-end justify-between gap-3">
         <div className="flex items-start gap-2"><button type="button" onClick={() => window.history.back()} className="mt-0.5 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Go back"><ArrowLeft size={16} /></button><div><h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-[26px]">Build your Master's profile</h1><p className="mt-1 text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Complete your profile in 4 simple steps. You can save a draft and come back anytime.</p></div></div>
-        <span className="text-xs font-medium text-slate-500">Step {step + 1} of 4</span>
       </div>
       <div className="profile-wizard-stepper mt-5 flex items-center" aria-label="Profile progress">{STEPS.map((title, index) => <React.Fragment key={title}><button type="button" onClick={() => index <= step && goTo(index)} className="flex min-w-0 items-center gap-2 text-left" aria-label={`Go to ${title}`}><span className={`profile-wizard-step-number flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${index <= step ? "border-sky-600 bg-sky-600 text-white" : "border-slate-200 bg-slate-100 text-slate-500 dark:border-slate-700 dark:bg-slate-900"}`}>{index < step ? <Check size={12} strokeWidth={3} /> : index + 1}</span><span className={`profile-wizard-step-label hidden truncate text-[11px] sm:inline ${index === step ? "font-semibold text-sky-700 dark:text-sky-300" : "text-slate-500"}`}>{title}</span></button>{index < STEPS.length - 1 && <span className={`profile-wizard-step-line mx-2 h-px min-w-5 flex-1 ${index < step ? "bg-sky-300" : "bg-slate-200 dark:bg-slate-700"}`} />}</React.Fragment>)}</div>
     </header>
@@ -304,19 +303,68 @@ export default function FormLayout01({
       <Field label={<>Phone Number <span className="font-normal text-slate-500">(optional)</span></>} >{input("personalInfo", "phoneNumber", { type: "tel", autoComplete: "tel" })}</Field>
     </div>{footerActions}</Section>}
 
-    {step === 1 && <Section title="Academic Background" description="Tell us about your education history and current study status." className="profile-academic-panel"><div className="profile-academic-fields grid gap-x-4 gap-y-2 sm:grid-cols-2">
-      <Field label="Current or Highest Degree" required error={errors.currentDegree}>{select("academicBackground", "currentDegree", degreeOptions)}</Field>
-      <Field label="Degree Title / Major" required error={errors.degreeTitle}>{input("academicBackground", "degreeTitle")}</Field>
-      <Field label="University Name" required error={errors.institution}>{input("academicBackground", "institution")}</Field>
-      <Field label="Country of University" required error={errors.institutionCountry}>{select("academicBackground", "institutionCountry", COUNTRIES)}</Field>
-      <Field label="Current Study Status" required error={errors.academicStatus}><div className="profile-academic-status flex h-9 items-center gap-6">{[["studying", "Currently studying"], ["graduated", "Graduated"]].map(([value, label]) => <label key={value} className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200"><input type="radio" name="academicStatus" value={value} checked={academic.academicStatus === value} onChange={(event) => update("academicBackground", "academicStatus", event.target.value)} className="accent-sky-600" />{label}</label>)}</div></Field>
-      <Field label="Current Semester / Year" required={academic.academicStatus === "studying"} error={errors.currentYear}>{select("academicBackground", "currentYear", ["1st Semester", "2nd Semester", "3rd Semester", "4th Semester", "5th Semester", "6th Semester", "7th Semester", "8th Semester", "Graduated"])}</Field>
-      <Field label="CGPA / Percentage" required error={errors.cgpa}>{input("academicBackground", "cgpa", { type: "number", min: "0", step: "0.01" })}</Field>
-      <Field label="Grading Scale / Maximum CGPA" required error={errors.gradingScale}>{select("academicBackground", "gradingScale", gradingScaleOptions)}</Field>
-      {academic.gradingScale === "Other" && <Field label="Custom maximum grade" required error={errors.customGradingScale}>{input("academicBackground", "customGradingScale", { type: "number", min: "0", step: "0.01" })}</Field>}
-      <Field label="Degree Start Date" required error={errors.degreeStartDate}>{monthInput("degreeStartDate")}</Field>
-      {academic.academicStatus === "studying" ? <Field label="Expected Graduation Date" required error={errors.expectedGraduationDate}>{monthInput("expectedGraduationDate")}</Field> : <Field label="Actual Graduation Date" required error={errors.graduationDate}>{monthInput("graduationDate")}</Field>}
-    </div><div className="profile-previous-degree mt-3 rounded-md border border-sky-100 bg-sky-50/50 p-3 dark:border-sky-950 dark:bg-sky-950/20"><div className="mb-3 flex items-center gap-2"><ChevronDown size={12} className="text-sky-600" aria-hidden="true" /><div><h3 className="text-xs font-semibold text-slate-800 dark:text-slate-100">Previous Degree <span className="font-normal text-slate-500">(Optional)</span></h3><p className="text-[10px] text-slate-500">Add details if you have completed a previous degree.</p></div></div><div className="grid gap-3 sm:grid-cols-3"><Field label="Degree Title / Major">{input("academicBackground", "previousDegreeTitle", { placeholder: "e.g. Intermediate / A-Level / Associate Degree" })}</Field><Field label="University Name">{input("academicBackground", "previousDegreeInstitution", { placeholder: "e.g. Government College / University" })}</Field><Field label="Graduation Date">{monthInput("previousDegreeDate")}</Field></div></div><div className="profile-achievements mt-3"><Field label="Academic Achievements (Optional)"><Control as="textarea" rows={2} maxLength={500} value={academic.academicAchievements || ""} onChange={(event) => update("academicBackground", "academicAchievements", event.target.value)} placeholder="e.g. Dean's list, scholarships, awards, research projects..." /><span className="profile-character-count">{(academic.academicAchievements || "").length}/500</span></Field></div>{footerActions}</Section>}
+    {step === 1 && <Section title="Academic Background" description="Tell us about your education history and current study status." className="profile-academic-panel">
+      <section className="profile-academic-group">
+        <h3>Current degree</h3>
+        <div className="profile-academic-fields grid gap-x-4 gap-y-2 sm:grid-cols-2">
+          <Field label="Current or Highest Degree" required error={errors.currentDegree}>{select("academicBackground", "currentDegree", degreeOptions)}</Field>
+          <Field label="Degree Title / Major" required error={errors.degreeTitle}>{input("academicBackground", "degreeTitle")}</Field>
+          <Field label="University Name" required error={errors.institution}>{input("academicBackground", "institution")}</Field>
+          <Field label="Country of University" required error={errors.institutionCountry}>{select("academicBackground", "institutionCountry", COUNTRIES)}</Field>
+          <Field label="Degree Start Date" required error={errors.degreeStartDate}>{monthInput("degreeStartDate")}</Field>
+        </div>
+      </section>
+
+      <section className="profile-academic-group">
+        <h3>Status</h3>
+        <GroupField label="Current Study Status" required error={errors.academicStatus}>
+          <div className={`profile-academic-status${errors.academicStatus ? " has-error" : ""}`}>
+            {([["studying", "Currently studying"], ["graduated", "Graduated"]] as const).map(([value, label]) => (
+              <label key={value} className={errors.academicStatus ? "has-error" : ""}>
+                <input type="radio" name="academicStatus" value={value} aria-invalid={Boolean(errors.academicStatus)} checked={academic.academicStatus === value} onChange={(event) => update("academicBackground", "academicStatus", event.target.value)} />
+                {label}
+              </label>
+            ))}
+          </div>
+        </GroupField>
+        {academic.academicStatus === "studying" ? (
+          <div className="profile-academic-fields grid gap-x-4 gap-y-2 sm:grid-cols-2">
+            <Field label="Current Semester / Year" required error={errors.currentYear}>{select("academicBackground", "currentYear", ["1st Semester", "2nd Semester", "3rd Semester", "4th Semester", "5th Semester", "6th Semester", "7th Semester", "8th Semester"])}</Field>
+            <Field label="Expected Graduation Date" required error={errors.expectedGraduationDate}>{monthInput("expectedGraduationDate")}</Field>
+          </div>
+        ) : academic.academicStatus === "graduated" ? (
+          <div className="profile-academic-fields grid gap-x-4 gap-y-2 sm:grid-cols-2">
+            <Field label="Graduation Date" required error={errors.graduationDate}>{monthInput("graduationDate")}</Field>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="profile-academic-group">
+        <h3>Performance</h3>
+        <div className="profile-academic-fields grid gap-x-4 gap-y-2 sm:grid-cols-2">
+          <Field label="CGPA / Percentage" required error={errors.cgpa}>{input("academicBackground", "cgpa", { type: "number", min: "0", step: "0.01", placeholder: "e.g. 3.65" })}</Field>
+          <Field label="Grading Scale / Maximum CGPA" required error={errors.gradingScale}>
+            {select("academicBackground", "gradingScale", gradingScaleOptions)}
+            <span className="profile-academic-hint">Example: 3.65 / 4.0</span>
+          </Field>
+          {academic.gradingScale === "Other" && <Field label="Custom maximum grade" required error={errors.customGradingScale}>{input("academicBackground", "customGradingScale", { type: "number", min: "0", step: "0.01" })}</Field>}
+          <Field label="Academic Achievements (Optional)">
+            <Control as="textarea" rows={2} maxLength={500} value={academic.academicAchievements || ""} onChange={(event) => update("academicBackground", "academicAchievements", event.target.value)} placeholder="e.g. Dean's list, scholarships, awards, research projects..." />
+          </Field>
+        </div>
+      </section>
+
+      <details className="profile-previous-degree">
+        <summary>Previous Degree <span>(Optional)</span></summary>
+        <p>Add details if you have completed a previous degree.</p>
+        <div className="profile-academic-fields grid gap-x-4 gap-y-2 sm:grid-cols-2">
+          <Field label="Degree Title / Major">{input("academicBackground", "previousDegreeTitle", { placeholder: "e.g. Associate Degree" })}</Field>
+          <Field label="University Name">{input("academicBackground", "previousDegreeInstitution", { placeholder: "e.g. Government College" })}</Field>
+          <Field label="Graduation Date">{monthInput("previousDegreeDate")}</Field>
+        </div>
+      </details>
+      {footerActions}
+    </Section>}
 
     {step === 2 && <Section title="Study Goals" description="Tell us about your preferred degree, field, destination and study preferences." className="profile-study-panel">
       <div className="profile-study-goals-grid">

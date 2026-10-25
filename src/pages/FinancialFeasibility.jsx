@@ -1,14 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertCircle, BadgeCheck, CircleDollarSign, GraduationCap, Info, MapPin,
+  BadgeCheck, CircleDollarSign, GraduationCap, Info, MapPin,
 } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
 import { getOpportunityTitle } from '../services/opportunityJourney';
 import {
   calculateFinancialFeasibility,
   FINANCIAL_COSTS,
-  getFinancialItemStudyTotal,
 } from '../services/financialFeasibility';
 import './FinancialFeasibility.css';
 
@@ -66,7 +65,40 @@ function displayAmount(item) {
     : 'Amount or currency not provided';
 }
 
+function getEstimateDefaults(country, currency) {
+  const isGermany = country === 'Germany' && currency === 'EUR';
+  const values = isGermany
+    ? [3000, 12000, 1200, 100, 600, 1000]
+    : currency === 'EUR'
+      ? [18000, 14000, 1600, 250, 1000, 1500]
+      : [25000, 18000, 2500, 500, 1500, 2000];
+  return Object.fromEntries(FINANCIAL_COSTS.map(({ key }, index) => [
+    key,
+    { amount: String(values[index]), period: index === 3 || index === 4 ? 'total' : 'yearly' },
+  ]));
+}
+
+function getInitialCostDraft(financialData, country, currency) {
+  const estimates = getEstimateDefaults(country, currency);
+  return Object.fromEntries(FINANCIAL_COSTS.map(({ key }) => {
+    const provided = financialData?.costs?.[key];
+    return [key, provided?.amount !== undefined && provided?.amount !== null
+      ? { amount: String(provided.amount), period: provided.period || 'yearly' }
+      : estimates[key]];
+  }));
+}
+
 export default function FinancialFeasibility() {
+  const { activeOpportunity, selectedOpportunities } = useProfile();
+  const stateKey = JSON.stringify([
+    activeOpportunity?.id || null,
+    ...selectedOpportunities.map((item) => item.id).sort(),
+  ]);
+
+  return <FinancialFeasibilityContent key={stateKey} />;
+}
+
+function FinancialFeasibilityContent() {
   const navigate = useNavigate();
   const {
     activeOpportunity,
@@ -74,7 +106,11 @@ export default function FinancialFeasibility() {
     financialBudget,
     saveFinancialBudget,
   } = useProfile();
-  const [budgetDraft, setBudgetDraft] = useState(financialBudget);
+  const defaultCurrency = activeOpportunity?.country === 'Germany' ? 'EUR' : 'USD';
+  const [budgetDraft, setBudgetDraft] = useState(() => ({
+    amount: financialBudget.amount,
+    currency: financialBudget.currency || defaultCurrency,
+  }));
   const [budgetError, setBudgetError] = useState('');
   const [budgetSaved, setBudgetSaved] = useState(false);
 
@@ -91,6 +127,8 @@ export default function FinancialFeasibility() {
   const scholarshipFunding = Array.isArray(linkedScholarship?.financialData?.funding)
     ? linkedScholarship.financialData.funding
     : [];
+  const [costDraft, setCostDraft] = useState(() => getInitialCostDraft(financialData, activeOpportunity?.country, defaultCurrency));
+  const [costCurrency, setCostCurrency] = useState(defaultCurrency);
   const calculation = calculateFinancialFeasibility({
     financialData,
     budget: financialBudget,
@@ -100,18 +138,12 @@ export default function FinancialFeasibility() {
   const durationLabel = duration?.value && duration?.unit
     ? `${duration.value} ${duration.unit}`
     : linkedProgram?.studyDuration || activeOpportunity?.studyDuration || 'Not provided';
-  const affordabilityLabel = calculation.status === 'affordable'
-    ? 'Affordable based on verified costs, awarded funding, and your budget'
-    : calculation.status === 'funding-gap'
-      ? 'Funding gap'
-      : calculation.status === 'unverified'
-        ? 'Cannot confirm affordability: financial data or funding is unverified'
-        : 'Insufficient information to calculate affordability.';
-
   const costItems = FINANCIAL_COSTS.map(({ key, label }) => ({
     key,
     label,
     ...financialData.costs?.[key],
+    ...costDraft[key],
+    currency: costCurrency,
   }));
   const verifiedDurationSource = financialData.studyDuration?.sourceStatus === 'official-verified' ||
     (!duration && costItems.every((item) => item.period === 'total'));
@@ -129,7 +161,7 @@ export default function FinancialFeasibility() {
     try {
       saveFinancialBudget({
         amount: budgetDraft.amount,
-        currency: budgetDraft.currency.trim().toUpperCase(),
+        currency: costCurrency,
       });
       setBudgetSaved(true);
     } catch (error) {
@@ -137,6 +169,34 @@ export default function FinancialFeasibility() {
       setBudgetError('Your budget could not be saved. Please check the amount and try again.');
     }
   };
+
+  const estimatedTotals = useMemo(() => {
+    const durationMonths = duration?.value && duration?.unit
+      ? Number(duration.value) * (duration.unit === 'years' ? 12 : 1)
+      : 24;
+    const totals = costItems.map((item) => {
+      const amount = Number(item.amount);
+      if (item.amount === '' || !Number.isFinite(amount) || amount < 0) return null;
+      if (item.period === 'total') return amount;
+      if (item.period === 'monthly') return amount * durationMonths;
+      return amount * durationMonths / 12;
+    });
+    return totals.every((amount) => amount !== null)
+      ? { total: totals.reduce((sum, amount) => sum + amount, 0), items: totals }
+      : null;
+  }, [costItems, duration]);
+
+  const budgetAmount = Number(budgetDraft.amount);
+  const hasBudget = budgetDraft.amount !== '' && Number.isFinite(budgetAmount) && budgetAmount >= 0;
+  const estimatedFunding = calculation.complete && calculation.currency === costCurrency
+    ? calculation.applicableFunding
+    : 0;
+  const budgetContribution = estimatedTotals && hasBudget
+    ? Math.min(budgetAmount, Math.max(0, estimatedTotals.total - estimatedFunding))
+    : 0;
+  const estimatedGap = estimatedTotals && hasBudget
+    ? Math.max(0, estimatedTotals.total - estimatedFunding - budgetContribution)
+    : null;
 
   if (!activeOpportunity) {
     return (
@@ -179,77 +239,148 @@ export default function FinancialFeasibility() {
         </span>
       </section>
 
-      <section className="financial-metrics-grid" aria-label="Financial overview">
-        <article className="card financial-summary-card financial-summary-cost">
-          <span>Total estimated study costs</span>
-          <strong>{calculation.complete ? `${calculation.currency} ${calculation.totalCost.toLocaleString()}` : '—'}</strong>
-          <small>
-            {calculation.complete
-              ? `For ${durationLabel === 'Not provided' ? 'the full study period' : durationLabel}`
-              : 'Complete cost details to calculate'}
-          </small>
-        </article>
-        <article className="card financial-summary-card financial-summary-funding">
-          <span>Applicable awarded funding</span>
-          <strong>{calculation.complete ? `${calculation.currency} ${calculation.applicableFunding.toLocaleString()}` : '—'}</strong>
-          <small>Potential funding is not included</small>
-        </article>
-        <article className="card financial-summary-card financial-summary-gap">
-          <span>Remaining funding gap</span>
-          <strong>{calculation.complete ? `${calculation.currency} ${calculation.fundingGap.toLocaleString()}` : '—'}</strong>
-          <small>After awarded funding and your budget</small>
-        </article>
+      <section className="financial-section financial-budget-step" aria-labelledby="financial-budget-title">
+        <div className="financial-step-heading"><span>Step 1</span><h2 id="financial-budget-title">Your budget and currency</h2></div>
+        <form className="card financial-budget-form" onSubmit={saveBudget}>
+          <label>
+            <span>Total available budget ({costCurrency})</span>
+            <input
+              type="number"
+              min="0"
+              step="any"
+              required
+              value={budgetDraft.amount}
+              onChange={(event) => {
+                setBudgetDraft((current) => ({ ...current, amount: event.target.value }));
+                setBudgetSaved(false);
+              }}
+              placeholder="Enter your budget"
+            />
+          </label>
+          <label className="financial-currency-field">
+            <span>Currency</span>
+            <select
+              value={costCurrency}
+              onChange={(event) => {
+                setCostCurrency(event.target.value);
+                setBudgetDraft((current) => ({ ...current, currency: event.target.value }));
+                setCostDraft(getInitialCostDraft(financialData, linkedProgram?.country || activeOpportunity.country, event.target.value));
+                setBudgetSaved(false);
+              }}
+            >
+              <option value="EUR">EUR (€)</option>
+              <option value="USD">USD ($)</option>
+            </select>
+          </label>
+          <button type="submit" className="btn btn-primary">Save budget</button>
+          {budgetSaved && <span className="financial-form-success" role="status">Budget saved.</span>}
+          {budgetError && <span className="financial-form-error" role="alert">{budgetError}</span>}
+          <p className="financial-currency-note">All budget and cost figures below use {costCurrency}. Switching currency resets the cost rows to estimates in that currency; review your budget after switching.</p>
+        </form>
       </section>
 
       <div className="financial-dashboard-grid">
         <div className="financial-dashboard-main">
           <section className="financial-section financial-cost-section">
             <div className="financial-section-heading">
-              <div>
-                <span className="financial-eyebrow">Expense breakdown</span>
-                <h2>Estimated study costs</h2>
-              </div>
-              <p>Amounts include their listed period and source. No currency conversions are applied.</p>
+              <div className="financial-step-heading"><span>Step 2</span><h2>Study cost estimates</h2></div>
             </div>
             <div className="financial-cost-table-wrap">
               <table className="financial-cost-table">
                 <thead>
                   <tr>
                     <th scope="col">Expense item</th>
-                    <th scope="col">Estimated amount</th>
-                    <th scope="col">Study-period total</th>
-                    <th scope="col">Source</th>
+                    <th scope="col">Amount ({costCurrency})</th>
+                    <th scope="col">Period</th>
+                    <th scope="col">Study-period estimate ({costCurrency})</th>
                   </tr>
                 </thead>
                 <tbody>
                   {costItems.map((item) => {
-                    const total = getFinancialItemStudyTotal(item, calculation.durationMonths);
-                    const isLegacyTuition = item.key === 'tuition' && !item.amount && linkedProgram?.tuition;
+                    const total = estimatedTotals?.items[FINANCIAL_COSTS.findIndex(({ key }) => key === item.key)];
+                    const isEstimate = !financialData.costs?.[item.key]?.amount;
                     return (
                       <tr key={item.key}>
                         <th scope="row">{item.label}</th>
                         <td>
-                          {item.amount !== undefined
-                            ? displayAmount(item)
-                            : isLegacyTuition
-                              ? `${linkedProgram.tuition} · unverified listing`
-                              : 'Not provided'}
+                          <label className="financial-cost-input-wrap">
+                            <input
+                              type="number"
+                              aria-label={`${item.label} amount in ${costCurrency}`}
+                              min="0"
+                              step="any"
+                              value={costDraft[item.key]?.amount ?? ''}
+                              onChange={(event) => setCostDraft((current) => ({
+                                ...current,
+                                [item.key]: { ...current[item.key], amount: event.target.value },
+                              }))}
+                            />
+                            {isEstimate && <small>Estimate</small>}
+                          </label>
                         </td>
-                        <td>{total !== null && item.currency ? `${item.currency} ${total.toLocaleString()}` : '—'}</td>
                         <td>
-                          {item.amount !== undefined
-                            ? <FinancialSource item={item} />
-                            : isLegacyTuition
-                              ? <FinancialSource item={{ sourceStatus: linkedProgram.sourceStatus }} />
-                              : <span className="financial-item-source">Source not provided</span>}
+                          <label className="financial-period-select">
+                            <select
+                              aria-label={`${item.label} cost period`}
+                              value={costDraft[item.key]?.period || 'yearly'}
+                              onChange={(event) => setCostDraft((current) => ({
+                                ...current,
+                                [item.key]: { ...current[item.key], period: event.target.value },
+                              }))}
+                            >
+                              <option value="total">Study total</option>
+                              <option value="yearly">Yearly</option>
+                              <option value="monthly">Monthly</option>
+                            </select>
+                          </label>
                         </td>
+                        <td>{total != null ? `${costCurrency} ${total.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
+            <p className="financial-table-footnote">Estimates are planning values, not provider quotes. Confirm tuition and living costs with the university. Currency: {costCurrency}. Study duration used: {durationLabel === 'Not provided' ? '24 months (estimate)' : durationLabel}.</p>
           </section>
+
+          <section className="financial-results-step" aria-labelledby="financial-result-title">
+            <div className="financial-step-heading"><span>Step 3</span><h2 id="financial-result-title">Estimated result</h2></div>
+            {!hasBudget ? (
+              <p className="financial-enter-budget">Enter your budget to see results.</p>
+            ) : estimatedTotals ? (
+              <div className="financial-result-cards">
+                <article className="card"><span>Estimated total costs ({costCurrency})</span><strong>{estimatedTotals.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></article>
+                <article className="card"><span>Verified awarded funding ({costCurrency})</span><strong>{estimatedFunding.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></article>
+                <article className="card"><span>Estimated remaining gap ({costCurrency})</span><strong>{estimatedGap.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></article>
+              </div>
+            ) : <p className="financial-enter-budget">Enter valid non-negative amounts for each cost to calculate an estimate.</p>}
+          </section>
+
+          {hasBudget && estimatedTotals && (
+            <section className="financial-chart-step" aria-labelledby="financial-chart-title">
+              <div className="financial-step-heading"><span>Step 4</span><h2 id="financial-chart-title">Costs vs budget and funding</h2></div>
+              <div className="card financial-cost-chart">
+                <div
+                  className="financial-donut"
+                  role="img"
+                  aria-label={`Estimated costs ${costCurrency} ${estimatedTotals.total.toLocaleString()}, budget ${costCurrency} ${budgetContribution.toLocaleString()}, verified funding ${costCurrency} ${estimatedFunding.toLocaleString()}, remaining gap ${costCurrency} ${estimatedGap.toLocaleString()}`}
+                  style={{
+                    '--budget-share': `${estimatedTotals.total ? budgetContribution / estimatedTotals.total * 100 : 0}%`,
+                    '--funding-share': `${estimatedTotals.total ? estimatedFunding / estimatedTotals.total * 100 : 0}%`,
+                  }}
+                >
+                  <strong>{costCurrency}</strong>
+                  <span>Estimated costs</span>
+                </div>
+                <ul className="financial-chart-legend">
+                  <li><span className="budget-key" />Budget used <strong>{costCurrency} {budgetContribution.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></li>
+                  <li><span className="funding-key" />Verified funding <strong>{costCurrency} {estimatedFunding.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></li>
+                  <li><span className="gap-key" />Remaining gap <strong>{costCurrency} {estimatedGap.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></li>
+                </ul>
+              </div>
+            </section>
+          )}
 
           {linkedScholarship && (
             <section className="financial-section">
@@ -296,78 +427,6 @@ export default function FinancialFeasibility() {
           )}
         </div>
 
-        <aside className="financial-dashboard-aside">
-          <section className="financial-section">
-            <div className="financial-section-heading">
-              <div>
-                <span className="financial-eyebrow">Personal contribution</span>
-                <h2>Student budget</h2>
-              </div>
-              <p>Your budget stays separate from scholarship funding.</p>
-            </div>
-            <form className="card financial-budget-form" onSubmit={saveBudget}>
-              <label>
-                <span>Total available budget</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  required
-                  value={budgetDraft.amount}
-                  onChange={(event) => {
-                    setBudgetDraft((current) => ({ ...current, amount: event.target.value }));
-                    setBudgetSaved(false);
-                  }}
-                  placeholder="Enter amount"
-                />
-              </label>
-              <label className="financial-currency-field">
-                <span>Currency code</span>
-                <input
-                  type="text"
-                  required
-                  maxLength={3}
-                  pattern="[A-Za-z]{3}"
-                  value={budgetDraft.currency}
-                  onChange={(event) => {
-                    setBudgetDraft((current) => ({ ...current, currency: event.target.value.toUpperCase() }));
-                    setBudgetSaved(false);
-                  }}
-                  placeholder="USD"
-                />
-              </label>
-              <button type="submit" className="btn btn-primary">Save budget</button>
-              {budgetSaved && <span className="financial-form-success" role="status">Budget saved.</span>}
-              {budgetError && <span className="financial-form-error" role="alert">{budgetError}</span>}
-            </form>
-          </section>
-
-          <section className="card financial-affordability-card">
-            <span className="financial-eyebrow">Affordability summary</span>
-            <h2>Personal affordability</h2>
-            <div className="financial-budget-overview">
-              <span>Available personal budget</span>
-              <strong>
-                {financialBudget.amount !== '' && Number.isFinite(Number(financialBudget.amount))
-                  ? `${financialBudget.currency} ${Number(financialBudget.amount).toLocaleString()}`
-                  : 'Not provided'}
-              </strong>
-            </div>
-            <p className="financial-gap-formula">Funding gap = max(0, total study cost − awarded funding − available budget).</p>
-            <div className={`financial-status ${calculation.status}`} role="status">
-              {calculation.status === 'insufficient-information' ? <AlertCircle size={18} /> : <Info size={18} />}
-              <strong>{affordabilityLabel}</strong>
-            </div>
-            {!calculation.complete && (
-              <p className="financial-missing-note">
-                {calculation.budgetCurrencyMismatch
-                  ? `Your budget currency (${financialBudget.currency}) does not match the opportunity cost currency (${calculation.currency}).`
-                  : 'Verified costs for the full study duration and a budget in the same currency are required.'}
-              </p>
-            )}
-          </section>
-
-        </aside>
       </div>
     </main>
   );

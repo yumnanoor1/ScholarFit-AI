@@ -1,53 +1,71 @@
-import { NavLink } from 'react-router-dom';
-import { 
-  LayoutDashboard, User, FileText, GraduationCap, Award, 
-  Bookmark, GitCompare, DollarSign, GitBranch, Compass, 
-  Calendar, TrendingUp, Settings 
+import { NavLink, useLocation } from 'react-router-dom';
+import {
+  Bookmark, Calculator, FileText, GitCompare,
+  GraduationCap, Home, Map, Plane,
+  Settings, UserRound,
 } from 'lucide-react';
 
-export default function Sidebar() {
-  const links = [
-    { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/profile", label: "My Profile", icon: User },
-    { to: "/documents", label: "Documents", icon: FileText },
-    { to: "/universities", label: "Universities", icon: GraduationCap },
-    { to: "/scholarships", label: "Scholarships", icon: Award },
-    { to: "/saved", label: "Saved Items", icon: Bookmark },
-    { to: "/compare", label: "Compare Programs", icon: GitCompare },
-    { to: "/financial", label: "Financial Feasibility", icon: DollarSign },
-    { to: "/pathway", label: "Application Pathway", icon: GitBranch },
-    { to: "/recommendations", label: "Matched Opportunities", icon: Compass },
-    { to: "/timeline", label: "Timeline", icon: Calendar },
-    { to: "/improvement", label: "Profile Improvement", icon: TrendingUp },
-    { to: "/settings", label: "Settings", icon: Settings },
-  ];
+const navigationGroups = [
+  {
+    label: 'Discover',
+    links: [
+      { to: '/universities', label: 'Explore', icon: GraduationCap, match: ['/universities', '/scholarships', '/recommendations'] },
+      { to: '/saved', label: 'Saved', icon: Bookmark },
+    ],
+  },
+  {
+    label: 'Plan',
+    links: [
+      { to: '/compare', label: 'Compare Programs', icon: GitCompare },
+      { to: '/financial', label: 'Financial Planner', icon: Calculator },
+      { to: '/pathway', label: 'Application Pathway', icon: Map, match: ['/pathway', '/timeline'] },
+      { to: '/documents', label: 'Documents', icon: FileText },
+    ],
+  },
+];
+
+function SidebarLink({ to, label, icon: Icon, match }) {
+  const { pathname } = useLocation();
+  const grouped = match?.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 
   return (
-    <aside className="sidebar">
-      {/* Brand Header */}
-      <div className="sidebar-brand">
-        <h2 style={{ fontSize: '1.2rem', color: '#FFFFFF', fontWeight: 'bold' }}>FitScholar AI</h2>
-        <p style={{ fontSize: '0.75rem', color: 'var(--color-secondary)', marginTop: '2px' }}>
-          Decision-Support System
-        </p>
-      </div>
+    <NavLink
+      to={to}
+      className={({ isActive }) => `sidebar-link${(match ? grouped : isActive) ? ' active' : ''}`}
+    >
+      <Icon size={18} aria-hidden="true" />
+      <span>{label}</span>
+    </NavLink>
+  );
+}
 
-      {/* Navigation Links */}
+export default function Sidebar() {
+  return (
+    <aside className="sidebar">
+      <NavLink to="/dashboard" className="sidebar-brand" aria-label="FitScholars dashboard">
+        <span className="sidebar-brand-mark"><Plane size={23} aria-hidden="true" /></span>
+        <span className="sidebar-brand-copy">
+          <strong>FitScholars</strong>
+          <small>Study Abroad &amp; Scholarship<br />Decision Support System</small>
+        </span>
+      </NavLink>
+
       <nav className="sidebar-nav" aria-label="Main navigation">
-        {links.map((link) => {
-          const Icon = link.icon;
-          return (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}
-            >
-              <Icon size={18} />
-              <span>{link.label}</span>
-            </NavLink>
-          );
-        })}
+        <div className="sidebar-primary-links">
+          <SidebarLink to="/dashboard" label="Dashboard" icon={Home} />
+          <SidebarLink to="/profile" label="My Profile" icon={UserRound} />
+        </div>
+        {navigationGroups.map((group) => (
+          <div className="sidebar-section" key={group.label}>
+            <h2 className="sidebar-section-title">{group.label}</h2>
+            {group.links.map((link) => <SidebarLink key={link.to} {...link} />)}
+          </div>
+        ))}
       </nav>
+
+      <div className="sidebar-bottom">
+        <SidebarLink to="/settings" label="Settings" icon={Settings} />
+      </div>
     </aside>
   );
 }

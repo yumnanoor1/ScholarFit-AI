@@ -36,7 +36,7 @@ export default function Home() {
             F
           </div>
           <span style={{ fontWeight: '700', fontSize: '1.1rem', color: '#F8FAFC' }}>
-            FitScholar <span style={{ color: '#C4B5FD', fontWeight: '400' }}>AI</span>
+            FitScholars
           </span>
         </div>
 
@@ -84,7 +84,7 @@ export default function Home() {
           Studying abroad is complex. We make it simple.
         </h2>
         <p style={{ fontSize: '1rem', color: '#CBD5E1', lineHeight: '1.6' }}>
-          Thousands of universities, countless scholarships, and endless application forms. Most students miss opportunities because they can't find them. FitScholar AI scans everything and surfaces only what fits you.
+          Thousands of universities, countless scholarships, and endless application forms. Most students miss opportunities because they can't find them. FitScholars scans everything and surfaces only what fits you.
         </p>
       </section>
 
@@ -95,7 +95,7 @@ export default function Home() {
       }}>
         <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
           <h2 style={{ fontSize: '1.8rem', fontWeight: '700', color: '#F8FAFC', marginBottom: '48px' }}>
-            How FitScholar AI works
+            How FitScholars works
           </h2>
 
           <div className="grid-3" style={{ gap: '30px' }}>
@@ -263,7 +263,7 @@ export default function Home() {
           Ready to find where you belong?
         </h2>
         <p style={{ fontSize: '1rem', color: '#CBD5E1', marginBottom: '28px' }}>
-          Join thousands of students who used FitScholar AI to land their dream study abroad opportunity.
+          Join thousands of students who used FitScholars to land their dream study abroad opportunity.
         </p>
         <button 
           className="btn btn-primary" 

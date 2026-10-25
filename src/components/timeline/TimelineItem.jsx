@@ -22,7 +22,7 @@ export default function TimelineItem({ date, title, description, status = "upcom
         <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--color-primary)', display: 'block' }}>
           {date}
         </span>
-        <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>
+        <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>
           {status}
         </span>
       </div>

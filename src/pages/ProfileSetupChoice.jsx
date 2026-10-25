@@ -19,7 +19,7 @@ export default function ProfileSetupChoice() {
       <main className="mx-auto w-full max-w-3xl">
         <header className="profile-method-choice-heading text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-            Build your FitScholar profile
+            Build your FitScholars profile
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-400">
             Choose how you want to get started.

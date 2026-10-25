@@ -204,7 +204,7 @@ export default function Timeline() {
         <header className="timeline-page-heading">
           <div>
             <span className="timeline-eyebrow">STUDY OPPORTUNITY PLANNING</span>
-            <h1>Application Timeline</h1>
+            <h1>Application Tasks</h1>
             <p>Organize preparation tasks and review listed dates for a Master's program or scholarship.</p>
           </div>
         </header>
@@ -240,7 +240,7 @@ export default function Timeline() {
       <header className="timeline-page-heading">
         <div>
           <span className="timeline-eyebrow">STUDY OPPORTUNITY PLANNING</span>
-          <h1>Application Timeline</h1>
+          <h1>Application Tasks</h1>
           <p>
             {getOpportunityTitle(activeOpportunity)}
             {opportunityLocation && <> · {opportunityLocation}</>}

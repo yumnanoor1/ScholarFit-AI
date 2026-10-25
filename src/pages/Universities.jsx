@@ -5,11 +5,12 @@ import {
   Bookmark,
   CalendarDays,
   CheckCircle2,
-  CircleHelp,
   GraduationCap,
+  Info,
   Landmark,
   Search,
   Wallet,
+  X,
 } from 'lucide-react';
 import { apiService } from '../services/api';
 import { useProfile } from '../context/ProfileContext';
@@ -32,6 +33,7 @@ export default function Universities() {
   const navigate = useNavigate();
   const {
     profile,
+    documentRecords,
     isOpportunitySaved,
     toggleSaveOpportunity,
     selectedOpportunities,
@@ -49,6 +51,7 @@ export default function Universities() {
   const [sortBy, setSortBy] = useState('match');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [showSampleBanner, setShowSampleBanner] = useState(false);
 
   useEffect(() => {
     let isCurrent = true;
@@ -60,6 +63,9 @@ export default function Universities() {
         if (!isCurrent) return;
         setPrograms(matchedPrograms);
         setScholarships(matchedScholarships);
+        // Show sample-data banner only when mock fallback data is present
+        const hasSampleData = matchedPrograms.some((p) => p.sourceStatus === 'unverified-sample');
+        setShowSampleBanner(hasSampleData);
       })
       .catch((error) => {
         console.error('Unable to load university matches.', error);
@@ -114,89 +120,77 @@ export default function Universities() {
       });
   }, [programs, profile, searchTerm, statusFilter, countryFilter, tuitionFilter, fundingFilter, sortBy, scholarshipsByCountry]);
 
-  const eligibleCount = programs.filter((program) => evaluateOpportunityEligibility(profile, program).status === 'satisfied').length;
-  const savedCount = programs.filter((program) => isOpportunitySaved(program.id)).length;
+  const statusCounts = programs.reduce((counts, program) => {
+    const status = evaluateOpportunityEligibility(profile, program).status;
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
   const filterTabs = [
-    { value: 'All', label: 'All Matches' },
-    { value: 'satisfied', label: 'Verified satisfied' },
-    { value: 'missing-information', label: 'Missing profile information' },
-    { value: 'not-satisfied', label: 'Not satisfied' },
-    { value: 'awaiting-verification', label: 'Awaiting verification' },
+    { value: 'All', label: 'All matches', count: programs.length },
+    { value: 'satisfied', label: 'Verified', count: statusCounts.satisfied || 0 },
+    { value: 'missing-information', label: 'Profile info missing', count: statusCounts['missing-information'] || 0 },
+    { value: 'not-satisfied', label: 'Not satisfied', count: statusCounts['not-satisfied'] || 0 },
+    { value: 'awaiting-verification', label: 'Awaiting verification', count: statusCounts['awaiting-verification'] || 0 },
   ];
 
   return (
     <div className="universities-page">
-      <header className="universities-header">
-        <div>
-          <p className="universities-breadcrumb">FITSCHOLAR AI <span>/</span> OPPORTUNITIES</p>
-          <h1>University &amp; Admission Matching</h1>
-          <p className="universities-subtitle">Sample program matches. Requirement statuses use the shared profile check and may need official verification.</p>
-        </div>
-        <span className="universities-info" title="Match scores are based on your academic profile and preferences, not a guarantee of admission.">
-          <CircleHelp size={18} aria-hidden="true" />
-          <span className="universities-info-tooltip">Match scores are based on your academic profile and preferences, not a guarantee of admission.</span>
-        </span>
-      </header>
-
-      <section className="university-stats" aria-label="University match summary">
-        <article className="university-stat">
-          <span className="university-stat-icon programs"><GraduationCap size={20} aria-hidden="true" /></span>
-          <div><p>Programs Found</p><strong>{programs.length}</strong></div>
-        </article>
-        <article className="university-stat">
-          <span className="university-stat-icon eligible"><CheckCircle2 size={20} aria-hidden="true" /></span>
-          <div><p>Verified Satisfied</p><strong>{eligibleCount}</strong></div>
-        </article>
-        <article className="university-stat">
-          <span className="university-stat-icon saved"><Bookmark size={20} aria-hidden="true" /></span>
-          <div><p>Saved Programs</p><strong>{savedCount}</strong></div>
-        </article>
-      </section>
-
       <section className="university-filters" aria-label="Filter university matches">
+        <div className="university-filter-controls">
+          <label className="university-search">
+            <Search size={16} aria-hidden="true" />
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search universities or programs..."
+              aria-label="Search universities or programs"
+            />
+          </label>
+
+          <select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)} aria-label="Filter by country">
+            <option value="All">Country</option>
+            {countries.map((country) => <option key={country} value={country}>{country}</option>)}
+          </select>
+          <select value={tuitionFilter} onChange={(event) => setTuitionFilter(event.target.value)} aria-label="Filter by tuition range">
+            {tuitionRanges.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}
+          </select>
+          <select value={fundingFilter} onChange={(event) => setFundingFilter(event.target.value)} aria-label="Filter by country scholarship options">
+            <option value="all">Funding</option>
+            <option value="available">Country options listed</option>
+            <option value="none">No country options listed</option>
+          </select>
+          <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} aria-label="Sort university matches">
+            <option value="match">Sort by: Best Match</option>
+            <option value="tuition-asc">Sort by: Lowest Tuition</option>
+            <option value="tuition-desc">Sort by: Highest Tuition</option>
+          </select>
+        </div>
         <div className="university-filter-tabs" role="group" aria-label="Requirement status filter">
           {filterTabs.map((tab) => (
             <button
               key={tab.value}
               type="button"
               className={statusFilter === tab.value ? 'active' : ''}
+              aria-label={`${tab.label} (${tab.count})`}
               aria-pressed={statusFilter === tab.value}
               onClick={() => setStatusFilter(tab.value)}
             >
-              {tab.label}
+              {tab.label}<span className="university-filter-count">{tab.count}</span>
             </button>
           ))}
         </div>
-
-        <label className="university-search">
-          <Search size={16} aria-hidden="true" />
-          <input
-            type="search"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search universities or programs..."
-            aria-label="Search universities or programs"
-          />
-        </label>
-
-        <select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)} aria-label="Filter by country">
-          <option value="All">Country</option>
-          {countries.map((country) => <option key={country} value={country}>{country}</option>)}
-        </select>
-        <select value={tuitionFilter} onChange={(event) => setTuitionFilter(event.target.value)} aria-label="Filter by tuition range">
-          {tuitionRanges.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}
-        </select>
-        <select value={fundingFilter} onChange={(event) => setFundingFilter(event.target.value)} aria-label="Filter by country scholarship options">
-          <option value="all">Funding</option>
-          <option value="available">Country options listed</option>
-          <option value="none">No country options listed</option>
-        </select>
-        <select value={sortBy} onChange={(event) => setSortBy(event.target.value)} aria-label="Sort university matches">
-          <option value="match">Sort by: Best Match</option>
-          <option value="tuition-asc">Sort by: Lowest Tuition</option>
-          <option value="tuition-desc">Sort by: Highest Tuition</option>
-        </select>
       </section>
+
+      {showSampleBanner && (
+        <aside className="university-sample-banner" role="note">
+          <Info size={15} aria-hidden="true" />
+          <span>Sample data. Requirements need official verification.</span>
+          <button type="button" aria-label="Dismiss sample data notice" onClick={() => setShowSampleBanner(false)}>
+            <X size={15} aria-hidden="true" />
+          </button>
+        </aside>
+      )}
 
       <section className="university-results" aria-label="Matched university programs" aria-live="polite">
         {loading && <p className="university-message">Loading university matches...</p>}
@@ -210,6 +204,11 @@ export default function Universities() {
           const statusLabel = evaluation.status.replaceAll('-', ' ');
           const countryScholarships = scholarshipsByCountry[program.country] || [];
           const score = program.matchScore ?? 0;
+          const cgpaStatus = evaluation.requirements.find((requirement) => requirement.field === 'cgpa')?.status;
+          const englishStatus = evaluation.requirements.find((requirement) => requirement.field === 'englishScore')?.status;
+          const requiredDocuments = program.requiredDocuments || [];
+          const documentsPrepared = requiredDocuments.length > 0
+            && requiredDocuments.every((document) => documentRecords[document.id]?.status === 'uploaded');
           return (
             <article className="university-program-card" key={program.id}>
               <div className="university-program-main">
@@ -219,32 +218,25 @@ export default function Universities() {
                     <h2>{program.program}</h2>
                     <p><GraduationCap size={14} aria-hidden="true" /> {program.university} <span>·</span> {program.country}</p>
                     <span className="university-degree-tag">{program.degree}</span>
+                    <span className={`university-status ${isEligible ? 'is-eligible' : 'is-missing'}`}>
+                      {isEligible ? <CheckCircle2 size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
+                      {statusLabel}
+                    </span>
                   </div>
                 </div>
 
                 <div className="university-match">
-                  <div><strong>{score}%</strong><span>Sample Match Score</span></div>
-                  <div className="university-match-track" role="progressbar" aria-label={`${program.program} match score`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={score}>
-                    <span style={{ width: `${Math.min(Math.max(score, 0), 100)}%` }} />
-                  </div>
-                </div>
-
-                <div className="university-program-actions">
-                  <span className={`university-status ${isEligible ? 'is-eligible' : 'is-missing'}`}>
-                    {isEligible ? <CheckCircle2 size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
-                    {statusLabel}
-                  </span>
-                  <OpportunityCompareCheckbox opportunity={{ ...program, title: program.program }} />
-                  <button
-                    type="button"
-                    className={`university-save ${isOpportunitySaved(program.id) ? 'is-saved' : ''}`}
-                    aria-label={`${isOpportunitySaved(program.id) ? 'Remove saved' : 'Save'} ${program.program}`}
-                    aria-pressed={isOpportunitySaved(program.id)}
-                    onClick={() => toggleSaveOpportunity(program.id)}
+                  <div
+                    className="university-score-ring"
+                    role="progressbar"
+                    aria-label={`${program.program} sample match score`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={score}
+                    style={{ '--match-score': `${Math.min(Math.max(score, 0), 100)}%` }}
                   >
-                    <Bookmark size={15} fill={isOpportunitySaved(program.id) ? 'currentColor' : 'none'} aria-hidden="true" />
-                    {isOpportunitySaved(program.id) ? 'Saved' : 'Save'}
-                  </button>
+                    <strong>{score}%</strong>
+                  </div>
                 </div>
               </div>
 
@@ -256,29 +248,28 @@ export default function Universities() {
                   </div>
                   <div className="university-detail-metric">
                     <GraduationCap size={16} aria-hidden="true" />
-                    <div>
-                      <span>Same-country scholarship listings</span>
-                      <strong className={countryScholarships.length ? 'funding-listed' : ''}>
-                        {countryScholarships.length ? `${countryScholarships.length} listed; not confirmed for this program` : 'None listed'}
-                      </strong>
-                    </div>
+                    <div><span>Study duration</span><strong>{program.duration || 'Not listed'}</strong></div>
                   </div>
                   <div className="university-detail-metric">
                     <CalendarDays size={16} aria-hidden="true" />
                     <div><span>Listed deadline</span><strong>{program.deadline || 'Not listed'} · unverified sample</strong></div>
                   </div>
                 </div>
-                <aside className={`university-match-reason ${isEligible ? 'reason-eligible' : 'reason-missing'}`}>
-                  {isEligible ? <CheckCircle2 size={16} aria-hidden="true" /> : <AlertTriangle size={16} aria-hidden="true" />}
-                  <div>
-                    <strong>{isEligible ? 'Requirement status' : 'Requirement status'}</strong>
-                    <p>{evaluation.message || `Shared profile check: ${statusLabel}. Sample criteria and dates require official confirmation.`}</p>
-                  </div>
-                </aside>
+                <div className="university-requirement-chips" aria-label="Profile requirement checklist">
+                  <span className={cgpaStatus === 'satisfied' ? 'is-satisfied' : ''} title="CGPA status depends on official requirement verification">
+                    {cgpaStatus === 'satisfied' ? '✓' : '?'} CGPA
+                  </span>
+                  <span className={englishStatus === 'satisfied' ? 'is-satisfied' : ''} title="English status depends on official requirement verification">
+                    {englishStatus === 'satisfied' ? '✓' : '?'} English
+                  </span>
+                  <span className={documentsPrepared ? 'is-satisfied' : ''} title="Uploaded documents are not automatically verified">
+                    {documentsPrepared ? '✓' : '?'} Documents
+                  </span>
+                </div>
               </div>
 
               <div className="university-card-footer">
-                <button type="button" onClick={() => navigate(`/universities/${program.id}`)}>
+                <button type="button" className="university-view-details" onClick={() => navigate(`/universities/${program.id}`)}>
                   View Details <span aria-hidden="true">→</span>
                 </button>
                 {countryScholarships.length > 0 && (
@@ -295,12 +286,24 @@ export default function Universities() {
                     ? 'Viewing this opportunity'
                     : selectedOpportunities.some((item) => item.id === program.id) ? 'Switch journey here' : 'Start this journey'}
                 </button>
+                <div className="university-card-footer-tools">
+                  <OpportunityCompareCheckbox opportunity={{ ...program, title: program.program }} />
+                  <button
+                    type="button"
+                    className={`university-save ${isOpportunitySaved(program.id) ? 'is-saved' : ''}`}
+                    aria-label={`${isOpportunitySaved(program.id) ? 'Remove saved' : 'Save'} ${program.program}`}
+                    aria-pressed={isOpportunitySaved(program.id)}
+                    onClick={() => toggleSaveOpportunity(program.id)}
+                  >
+                    <Bookmark size={15} fill={isOpportunitySaved(program.id) ? 'currentColor' : 'none'} aria-hidden="true" />
+                    {isOpportunitySaved(program.id) ? 'Saved' : 'Save'}
+                  </button>
+                </div>
               </div>
             </article>
           );
         })}
       </section>
-      <p className="university-disclaimer">* Match scores and opportunity data are sample data, not verified admissions decisions. Confirm requirements, deadlines, tuition, and funding with the university and scholarship provider.</p>
       {comparisonOpportunityIds.length > 0 && <ComparisonSelectionBar />}
     </div>
   );

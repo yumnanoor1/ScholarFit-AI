@@ -21,10 +21,10 @@ export default function ProfileVerification() {
     try {
       const result = await updateProfile(draft, { ...progress, source: 'cv' });
       if (result?.success) return true;
-      setSaveError('Your progress could not be saved. Please try again.');
+      setSaveError(result?.error || 'Your progress could not be saved. Please try again.');
       return false;
     } catch {
-      setSaveError('Your progress could not be saved. Please try again.');
+      setSaveError(result?.error || 'Your progress could not be saved. Please try again.');
       return false;
     }
   };

@@ -12,6 +12,73 @@
   gap: 28px;
 }
 
+.scholarship-page .scholarships-layout {
+  display: block;
+}
+
+.scholarships-filter-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid #e1e8ef;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.scholarships-filter-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.scholarships-filter-group legend {
+  margin-bottom: 8px;
+  color: #526b85;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scholarships-filter-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scholarships-filter-chip {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #dbe4ed;
+  border-radius: 999px;
+  color: #415b74;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.scholarships-filter-chip:has(input:checked) {
+  border-color: #1261c2;
+  color: #164f91;
+  background: #edf5ff;
+}
+
+.scholarships-filter-chip input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #1261c2;
+}
+
+.scholarships-filter-chip small {
+  color: #73879b;
+  font-size: 12px;
+}
+
 .scholarship-page .scholarships-results {
   gap: 14px;
 }
@@ -78,7 +145,7 @@
   border-radius: 999px;
   color: #475569;
   background: #f8fafc;
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 650;
   line-height: 1.25;
   text-align: center;
@@ -120,7 +187,7 @@
 
 .scholarship-match-score span {
   color: var(--color-text-muted);
-  font-size: 0.67rem;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -143,7 +210,7 @@
 .scholarship-result-details dt {
   margin: 0 0 5px;
   color: var(--color-text-muted);
-  font-size: 0.68rem;
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.035em;
   text-transform: uppercase;
@@ -261,6 +328,12 @@
 
   .scholarship-page .scholarships-layout {
     gap: 18px;
+  }
+
+  .scholarships-filter-bar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
   }
 
   .glow-card.scholarship-result-card {

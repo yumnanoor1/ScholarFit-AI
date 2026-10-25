@@ -54,10 +54,10 @@ export default function Profile() {
     try {
       const result = await updateProfile(formData, progress);
       if (result?.success) return true;
-      setSaveError('Your profile could not be saved. Please try again.');
+      setSaveError(result?.error || 'Your profile could not be saved. Please try again.');
       return false;
     } catch {
-      setSaveError('Your profile could not be saved. Please try again.');
+      setSaveError(result?.error || 'Your profile could not be saved. Please try again.');
       return false;
     }
   };

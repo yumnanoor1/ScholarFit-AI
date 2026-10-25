@@ -42,9 +42,10 @@ export default function ActiveOpportunityBar() {
         type="button"
         className={`active-opportunity-applied ${isApplied ? 'is-applied' : ''}`}
         aria-pressed={isApplied}
+        title={isApplied ? 'Marked as applied. Click to move back to planning' : 'Planning. Click to mark as applied'}
         onClick={() => markOpportunityApplied(activeOpportunity.id, !isApplied)}
       >
-        {isApplied ? 'Applied' : 'Mark applied'}
+        {isApplied ? 'Applied' : 'Planning'}
       </button>
       <button type="button" className="active-opportunity-open" onClick={() => navigate('/timeline')} aria-label="Open active opportunity timeline">
         <ArrowRight size={15} aria-hidden="true" />

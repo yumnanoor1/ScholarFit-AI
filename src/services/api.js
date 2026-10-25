@@ -1,26 +1,37 @@
-import { 
-  mockProfile, 
-  mockUniversities, 
-  mockScholarships, 
-  mockApplicationPathways, 
-  mockRecommendations
+import { getProfileApi } from './profileApi';
+import { fetchMappedPrograms, fetchProgramById, mapProgramToFrontend } from './opportunityApi';
+import {
+  mockProfile,
+  mockScholarships,
+  mockApplicationPathways,
+  mockRecommendations,
 } from '../data/mockData';
 
 /**
- * Service Layer for FitScholar AI
+ * Service Layer for FitScholars
  * Provides an abstraction layer between UI components and backend services.
- * Currently uses mock data with realistic latency delays.
+ * Profile, Programs, and Universities now call the real FastAPI backend.
+ * Scholarships, Pathways, Recommendations, and Document extraction still use mock data.
  */
 export const apiService = {
   // ---------------------------------------------------------------------------
   // Profile Endpoints
   // ---------------------------------------------------------------------------
-  
+
   /**
    * Fetch current user's academic profile
-   * FastAPI Target Endpoint: GET /api/v1/profile/me
+   * FastAPI Target Endpoint: GET /profile/
    */
   getProfile: async () => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('fitscholar_token') : null;
+    if (token) {
+      try {
+        const { exists, data } = await getProfileApi(token);
+        if (exists && data) return data;
+      } catch (err) {
+        console.warn('apiService.getProfile backend error:', err?.message);
+      }
+    }
     return new Promise((resolve) => {
       setTimeout(() => resolve({ ...mockProfile }), 300);
     });
@@ -28,7 +39,7 @@ export const apiService = {
 
   /**
    * Update academic credentials or preferences
-   * FastAPI Target Endpoint: PUT /api/v1/profile/me
+   * FastAPI Target Endpoint: PUT /profile/
    */
   updateProfile: async (updatedData) => {
     return new Promise((resolve) => {
@@ -44,46 +55,25 @@ export const apiService = {
   // ---------------------------------------------------------------------------
 
   /**
-   * Retrieve matched universities with eligibility status and fit scores
-   * FastAPI Target Endpoint: POST /api/v1/matching/universities
+   * Retrieve programs from the real FastAPI backend.
+   * FastAPI Endpoint: GET /programs/ + GET /universities/
+   * Returns frontend-mapped program objects joined with university data.
+   * Falls back to an empty array — never falls back to mock data.
    */
-  getMatchedUniversities: async (filters = {}) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        let results = [...mockUniversities];
-
-        // Basic client-side filtering simulation
-        if (filters.status && filters.status !== 'All') {
-          results = results.filter(u => u.eligibilityStatus === filters.status);
-        }
-        if (filters.country && filters.country !== 'All') {
-          results = results.filter(u => u.country === filters.country);
-        }
-        if (filters.search) {
-          const query = filters.search.toLowerCase();
-          results = results.filter(u => 
-            u.program.toLowerCase().includes(query) || 
-            u.university.toLowerCase().includes(query)
-          );
-        }
-
-        resolve(results);
-      }, 300);
-    });
+  getMatchedUniversities: async () => {
+    return fetchMappedPrograms();
   },
 
   /**
-   * Fetch details for a specific university program
-   * FastAPI Target Endpoint: GET /api/v1/universities/{id}
+   * Fetch details for a specific university program by its ID.
+   * ID may be a string (e.g. "3") because ProfileContext stores string IDs.
+   * FastAPI Endpoints: GET /programs/{id} + GET /universities/{university_id}
+   * Returns null if not found.
    */
   getUniversityById: async (id) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const item = mockUniversities.find(u => u.id === id);
-        if (item) resolve(item);
-        else resolve(null);
-      }, 200);
-    });
+    const result = await fetchProgramById(id);
+    if (!result) return null;
+    return mapProgramToFrontend(result.program, result.university);
   },
 
   // ---------------------------------------------------------------------------
@@ -91,8 +81,8 @@ export const apiService = {
   // ---------------------------------------------------------------------------
 
   /**
-   * Retrieve matched scholarships, assistantships, and waivers
-   * FastAPI Target Endpoint: POST /api/v1/matching/scholarships
+   * Retrieve matched scholarships, assistantships, and waivers.
+   * Still uses mock data — scholarship backend integration is a separate task.
    */
   getMatchedScholarships: async () => {
     return new Promise((resolve) => {
@@ -101,27 +91,33 @@ export const apiService = {
   },
 
   /**
-   * Resolve a previously selected opportunity without substituting a different result.
+   * Resolve a previously selected opportunity by ID.
+   * Checks programs from the real backend first, then mock scholarships.
    */
   getOpportunityById: async (id) => {
-    const [universities, scholarships] = await Promise.all([
-      apiService.getMatchedUniversities(),
-      apiService.getMatchedScholarships(),
-    ]);
-    const program = universities.find((item) => item.id === id);
-    if (program) return { ...program, kind: 'program' };
+    // Try real backend programs first
+    try {
+      const result = await fetchProgramById(id);
+      if (result) {
+        return { ...mapProgramToFrontend(result.program, result.university), kind: 'program' };
+      }
+    } catch (err) {
+      console.warn('getOpportunityById: backend lookup failed:', err?.message);
+    }
+    // Fall back to mock scholarships
+    const scholarships = await apiService.getMatchedScholarships();
     const scholarship = scholarships.find((item) => item.id === id);
     return scholarship ? { ...scholarship, kind: 'scholarship' } : null;
   },
 
   /**
-   * Fetch details for a specific scholarship
+   * Fetch details for a specific scholarship.
    * FastAPI Target Endpoint: GET /api/v1/scholarships/{id}
    */
   getScholarshipById: async (id) => {
     return new Promise((resolve) => {
       setTimeout(() => {
-        const item = mockScholarships.find(s => s.id === id);
+        const item = mockScholarships.find((s) => s.id === id);
         resolve(item || null);
       }, 200);
     });
@@ -132,7 +128,7 @@ export const apiService = {
   // ---------------------------------------------------------------------------
 
   /**
-   * Get sequential application pathway steps for a target university
+   * Get sequential application pathway steps for a target university.
    * FastAPI Target Endpoint: GET /api/v1/pathways/{universityId}
    */
   getApplicationPathway: async (universityId, strategy = 'University First') => {
@@ -147,7 +143,7 @@ export const apiService = {
   },
 
   /**
-   * Fetch explainable decision-support recommendations
+   * Fetch explainable decision-support recommendations.
    * FastAPI Target Endpoint: GET /api/v1/recommendations
    */
   getRecommendations: async () => {
@@ -161,26 +157,26 @@ export const apiService = {
   // ---------------------------------------------------------------------------
 
   /**
-   * Simulate uploading CV or Transcript for OCR / LLM information extraction
+   * Simulate uploading CV or Transcript for OCR / LLM information extraction.
    * FastAPI Target Endpoint: POST /api/v1/documents/analyze
    */
   extractDocumentData: async (file) => {
     return new Promise((resolve) => {
       setTimeout(() => {
         resolve({
-          fileName: file ? file.name : "Official_Transcript.pdf",
+          fileName: file ? file.name : 'Official_Transcript.pdf',
           extractedData: {
-            degreeFound: "BS Computer Science",
-            cgpaFound: "3.65",
-            institutionFound: "National University of Sciences",
-            gradYearFound: "2024"
+            degreeFound: 'BS Computer Science',
+            cgpaFound: '3.65',
+            institutionFound: 'National University of Sciences',
+            gradYearFound: '2024',
           },
           missingData: [
-            "Official GRE Quantitative score report missing",
-            "University registrar seal unverified on transcript page 2"
-          ]
+            'Official GRE Quantitative score report missing',
+            'University registrar seal unverified on transcript page 2',
+          ],
         });
       }, 800);
     });
-  }
+  },
 };

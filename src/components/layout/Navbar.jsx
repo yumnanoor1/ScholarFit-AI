@@ -14,14 +14,10 @@ export default function Navbar() {
         <Search size={16} color="var(--color-text-muted)" style={{ position: 'absolute', left: '10px' }} />
         <input
           type="text" 
-          placeholder="Search universities, scholarships..." 
+          placeholder="Search universities, scholarships, or programs..."
         />
       </div>
       <div className="navbar-actions">
-        <div className="navbar-term" style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-          Academic Term: <strong style={{ color: 'var(--color-dark)' }}>2026 – 2027</strong>
-        </div>
-
         <button type="button" aria-label="Open application timeline" onClick={() => navigate('/timeline')} style={{ background: 'none', border: 'none', cursor: 'pointer', position: 'relative' }}>
           <Bell size={20} color="var(--color-dark)" />
           <span style={{
@@ -41,7 +37,6 @@ export default function Navbar() {
           </div>
           <div className="navbar-user-copy">
             <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--color-dark)' }}>{displayName}</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Master's Applicant</div>
           </div>
           <ChevronDown size={13} aria-hidden="true" />
         </div>

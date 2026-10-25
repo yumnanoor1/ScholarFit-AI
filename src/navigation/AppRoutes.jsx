@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // Global Context Providers
 import { AuthProvider } from '../context/AuthContext';
@@ -37,8 +37,14 @@ import Recommendations from '../pages/Recommendations';
 import Timeline from '../pages/Timeline';
 import ProfileImprovement from '../pages/ProfileImprovement';
 import Settings from '../pages/Settings';
+import Explore from '../pages/Explore';
+import PathwayHub from '../pages/PathwayHub';
+
+const ACTIVE_BAR_PATHS = ['/recommendations', '/financial', '/documents', '/timeline'];
 
 export default function AppRoutes() {
+  const { pathname } = useLocation();
+
   return (
     <AuthProvider>
       <ProfileProvider>
@@ -72,14 +78,9 @@ export default function AppRoutes() {
 
                     {/* Navbar */}
                     <Navbar />
-                    <ActiveOpportunityBar />
 
-                    <main
-                      style={{
-                        flex: 1,
-                        paddingBottom: '30px',
-                      }}
-                    >
+                    <main className="app-container">
+                      {ACTIVE_BAR_PATHS.includes(pathname.replace(/\/+$/, '')) && <ActiveOpportunityBar />}
 
                       <Routes>
 
@@ -124,7 +125,7 @@ export default function AppRoutes() {
                         {/* Universities */}
                         <Route
                           path="/universities"
-                          element={<Universities />}
+                          element={<Explore><Universities /></Explore>}
                         />
 
                         <Route
@@ -136,7 +137,7 @@ export default function AppRoutes() {
                         {/* Scholarships */}
                         <Route
                           path="/scholarships"
-                          element={<Scholarships />}
+                          element={<Explore><Scholarships /></Explore>}
                         />
 
                         <Route
@@ -163,17 +164,17 @@ export default function AppRoutes() {
 
                         <Route
                           path="/pathway"
-                          element={<ApplicationPathway />}
+                          element={<PathwayHub><ApplicationPathway /></PathwayHub>}
                         />
 
                         <Route
                           path="/recommendations"
-                          element={<Recommendations />}
+                          element={<Explore><Recommendations /></Explore>}
                         />
 
                         <Route
                           path="/timeline"
-                          element={<Timeline />}
+                          element={<PathwayHub><Timeline /></PathwayHub>}
                         />
 
                         <Route

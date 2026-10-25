@@ -1,4 +1,4 @@
-// Realistic Mock Dataset for FitScholar AI
+// Realistic Mock Dataset for FitScholars
 // Structured for easy replacement with FastAPI endpoints and MongoDB documents
 
 export const mockProfile = {
@@ -165,23 +165,53 @@ export const mockApplicationPathways = [
     type: "University First",
     steps: [
       {
-        id: "uni-assist-submission",
-        title: "Submit Uni-Assist / University Application",
-        description: "Submit online application form with verified transcript copy.",
-        status: "pending"
+        id: "build-profile",
+        title: "Build Your Profile",
+        description: "Complete your academic, personal, and language details to create your profile.",
+        status: "pending",
       },
       {
-        id: "admission-decision",
-        title: "Receive Admission Offer Letter",
-        description: "Await formal evaluation decision from faculty admission board.",
-        status: "pending"
+        id: "explore-opportunities",
+        title: "Explore Opportunities",
+        description: "Discover universities, scholarships, and programs that match your goals.",
+        status: "pending",
       },
       {
-        id: "daad-funding-application",
-        title: "Apply for Institutional Funding / DAAD",
-        description: "Submit admission offer letter along with scholarship funding packet.",
-        status: "pending"
-      }
+        id: "compare-shortlist",
+        title: "Compare & Shortlist",
+        description: "Shortlist the best options based on your preferences and eligibility.",
+        status: "pending",
+      },
+      {
+        id: "financial-feasibility",
+        title: "Financial Feasibility",
+        description: "Estimate tuition and living costs, review funding options, and check affordability.",
+        status: "pending",
+      },
+      {
+        id: "plan-application",
+        title: "Plan Your Application",
+        description: "Apply to the university first. Submit the Uni-Assist or university application, then apply for DAAD funding after receiving an admission decision.",
+        status: "pending",
+      },
+      {
+        id: "prepare-documents",
+        title: "Prepare Documents",
+        description: "Gather your verified transcript and the documents required for university admission and DAAD funding.",
+        status: "pending",
+      },
+      {
+        id: "track-deadlines",
+        title: "Track Deadlines",
+        description: "Track the university and scholarship deadlines separately and confirm dates with each official provider.",
+        status: "pending",
+      },
+      {
+        id: "application-ready",
+        title: "Application Ready",
+        description: "Review both applications and submit the scholarship application after following the university's admission process.",
+        status: "pending",
+      },
     ]
   },
   {
@@ -189,23 +219,53 @@ export const mockApplicationPathways = [
     type: "Combined Application",
     steps: [
       {
-        id: "advisor-outreach",
-        title: "Contact Potential Research Advisors",
-        description: "Reach out to faculty leads in NLP/AI labs with CV and project portfolio.",
-        status: "pending"
+        id: "build-profile",
+        title: "Build Your Profile",
+        description: "Complete your academic, personal, and language details to create your profile.",
+        status: "pending",
       },
       {
-        id: "combined-graduate-application",
-        title: "Submit Combined Graduate Application",
-        description: "Select Teaching/Research Assistantship consideration during portal submission.",
-        status: "pending"
+        id: "explore-opportunities",
+        title: "Explore Opportunities",
+        description: "Discover universities, scholarships, and programs that match your goals.",
+        status: "pending",
       },
       {
-        id: "departmental-interview",
-        title: "Departmental Interview & Offer",
-        description: "Participate in technical research interview with lab directors.",
-        status: "pending"
-      }
+        id: "compare-shortlist",
+        title: "Compare & Shortlist",
+        description: "Shortlist the best options based on your preferences and eligibility.",
+        status: "pending",
+      },
+      {
+        id: "financial-feasibility",
+        title: "Financial Feasibility",
+        description: "Estimate tuition and living costs, review funding options, and check affordability.",
+        status: "pending",
+      },
+      {
+        id: "plan-application",
+        title: "Plan Your Application",
+        description: "Use the combined application process. Contact potential research advisors and request assistantship consideration in the graduate application.",
+        status: "pending",
+      },
+      {
+        id: "prepare-documents",
+        title: "Prepare Documents",
+        description: "Gather your CV, transcripts, project portfolio, and other documents requested by the department.",
+        status: "pending",
+      },
+      {
+        id: "track-deadlines",
+        title: "Track Deadlines",
+        description: "Track application and interview dates and confirm the schedule with the department.",
+        status: "pending",
+      },
+      {
+        id: "application-ready",
+        title: "Application Ready",
+        description: "Review the combined application and prepare for any departmental interview.",
+        status: "pending",
+      },
     ]
   },
   {
@@ -213,23 +273,53 @@ export const mockApplicationPathways = [
     type: "Scholarship First",
     steps: [
       {
-        id: "scholarship-eligibility-review",
-        title: "Review scholarship eligibility and coverage",
-        description: "Compare the scholarship's published eligibility criteria, funding coverage, and application instructions.",
-        status: "pending"
+        id: "build-profile",
+        title: "Build Your Profile",
+        description: "Complete your academic, personal, and language details to create your profile.",
+        status: "pending",
       },
       {
-        id: "scholarship-application",
-        title: "Prepare and submit the scholarship application",
-        description: "Follow the scholarship provider's application process and verify its official document requirements.",
-        status: "pending"
+        id: "explore-opportunities",
+        title: "Explore Opportunities",
+        description: "Discover universities, scholarships, and programs that match your goals.",
+        status: "pending",
       },
       {
-        id: "university-application",
-        title: "Submit the university application",
-        description: "Apply to the selected university and follow the provider's instructions for linking admission and funding.",
-        status: "pending"
-      }
+        id: "compare-shortlist",
+        title: "Compare & Shortlist",
+        description: "Shortlist the best options based on your preferences and eligibility.",
+        status: "pending",
+      },
+      {
+        id: "financial-feasibility",
+        title: "Financial Feasibility",
+        description: "Estimate tuition and living costs, review funding options, and check affordability.",
+        status: "pending",
+      },
+      {
+        id: "plan-application",
+        title: "Plan Your Application",
+        description: "Apply for the scholarship first. Review its eligibility and submit the scholarship application, then apply to the university and follow the provider's instructions for linking admission and funding.",
+        status: "pending",
+      },
+      {
+        id: "prepare-documents",
+        title: "Prepare Documents",
+        description: "Gather the documents requested by the scholarship provider and the university, and verify their official requirements.",
+        status: "pending",
+      },
+      {
+        id: "track-deadlines",
+        title: "Track Deadlines",
+        description: "Track scholarship and university deadlines separately and confirm dates with each official provider.",
+        status: "pending",
+      },
+      {
+        id: "application-ready",
+        title: "Application Ready",
+        description: "Review both applications and make sure the university and scholarship submissions are linked as required.",
+        status: "pending",
+      },
     ]
   }
 ];

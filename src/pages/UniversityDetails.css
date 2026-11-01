@@ -1,0 +1,493 @@
+/* Program detail page (/universities/:id) */
+
+.program-detail {
+  max-width: 1180px;
+}
+
+.program-detail-state {
+  padding-block: 48px;
+}
+
+.program-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+  color: var(--brand-blue);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.program-detail-back:hover {
+  text-decoration: underline;
+}
+
+.program-detail-card,
+.program-detail-hero,
+.program-detail .official-application {
+  border: 1px solid var(--color-border-light);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 6px 20px -14px rgba(9, 38, 74, 0.3);
+}
+
+/* ---------- Header ---------- */
+
+.program-detail-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 18px;
+  padding: 24px;
+  margin-bottom: 20px;
+  background-image: var(--fitscholar-card-gradient);
+}
+
+.program-detail-mark {
+  display: inline-flex;
+  width: 56px;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: var(--brand-navy);
+  color: var(--brand-sky);
+}
+
+.program-detail-mark.has-logo {
+  padding: 8px;
+  border: 1px solid var(--brand-tint);
+  background: #fff;
+}
+
+.program-detail-mark img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.program-detail-heading h1 {
+  color: var(--color-dark);
+  font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.program-detail-heading > p {
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 15px !important;
+}
+
+.program-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.program-detail-tags span {
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--brand-tint);
+  color: var(--brand-blue-hover);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.program-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.program-detail-icon-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--color-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.program-detail-icon-button:hover,
+.program-detail-icon-button.is-saved {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+.program-detail-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--brand-blue);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.program-detail-link:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Layout ---------- */
+
+.program-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  align-items: start;
+  gap: 20px;
+}
+
+.program-detail-main,
+.program-detail-side {
+  display: grid;
+  gap: 20px;
+}
+
+.program-detail-side {
+  position: sticky;
+  top: calc(var(--navbar-height) + 16px);
+}
+
+.program-detail-card {
+  padding: 22px 24px;
+}
+
+.program-detail-card h2 {
+  margin-bottom: 16px;
+  color: var(--color-dark);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.program-detail-subheading {
+  margin: 22px 0 10px;
+  color: var(--color-dark);
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+/* ---------- Your fit ---------- */
+
+.program-fit-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+}
+
+.program-fit-summary strong {
+  display: block;
+  font-size: 15px;
+}
+
+.program-fit-summary p {
+  margin-top: 2px;
+  color: inherit;
+  opacity: 0.85;
+}
+
+.program-fit-summary svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.program-fit-summary.is-success { background: var(--color-success-bg); color: var(--color-success-text); }
+.program-fit-summary.is-warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.program-fit-summary.is-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.program-fit-summary.is-neutral { background: var(--brand-surface); color: var(--color-dark); }
+
+.program-fit-cta {
+  margin-top: 12px;
+}
+
+.program-fit-table {
+  margin-top: 16px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-light);
+  border-radius: 12px;
+}
+
+.program-fit-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1.1fr) minmax(0, 1.3fr) minmax(0, 1.1fr) 120px;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--brand-surface);
+  font-size: 14px;
+}
+
+.program-fit-row:last-child {
+  border-bottom: 0;
+}
+
+.program-fit-row.is-head {
+  background: var(--brand-surface);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.program-fit-name {
+  color: var(--color-dark);
+  font-weight: 600;
+}
+
+.program-fit-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.program-fit-status.is-success { background: var(--color-success-bg); color: var(--color-success-text); }
+.program-fit-status.is-warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.program-fit-status.is-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.program-fit-status.is-neutral { background: var(--brand-surface); color: var(--color-text-muted); }
+
+.program-fit-message {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+}
+
+.program-pref-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+}
+
+.program-pref-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 12px;
+}
+
+.program-pref-list strong {
+  color: var(--color-dark);
+  font-size: 14px;
+}
+
+.program-pref-list p {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+
+.program-pref-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+}
+
+.program-pref-list .is-success .program-pref-icon { background: var(--color-success-bg); color: var(--color-success-text); }
+.program-pref-list .is-danger .program-pref-icon { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.program-pref-list .is-neutral .program-pref-icon { background: var(--brand-surface); color: var(--color-text-muted); }
+
+.program-detail-notes {
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+  padding: 12px 16px 12px 32px;
+  border-radius: 12px;
+  background: var(--brand-surface);
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+/* ---------- Admission details ---------- */
+
+.program-detail-block + .program-detail-block {
+  margin-top: 16px;
+}
+
+.program-detail-block h3 {
+  margin-bottom: 4px;
+  color: var(--color-dark);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.program-detail-block p {
+  color: var(--color-dark);
+  line-height: 1.7;
+}
+
+.program-detail-footnote {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--brand-surface);
+  color: var(--color-secondary);
+  font-size: 12.5px !important;
+}
+
+/* ---------- Side panel ---------- */
+
+.program-facts {
+  display: grid;
+  gap: 14px;
+}
+
+.program-facts dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.program-facts dt svg {
+  color: var(--brand-blue);
+}
+
+.program-facts dd {
+  display: grid;
+  margin-top: 2px;
+  color: var(--color-dark);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.program-facts dd small {
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.program-sources {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+
+.program-sources a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--brand-blue);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.program-sources a:hover {
+  text-decoration: underline;
+}
+
+.program-detail .official-application {
+  display: grid;
+  gap: 10px;
+  padding: 22px 24px;
+}
+
+.program-detail .official-application h2 {
+  color: var(--color-dark);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.program-detail .official-application p {
+  color: var(--color-text-muted);
+}
+
+.program-detail .official-application-record {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--color-dark);
+  font-size: 13px;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (max-width: 1024px) {
+  .program-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .program-detail-side {
+    position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .program-detail-hero,
+  .program-detail-card {
+    padding: 18px;
+  }
+
+  .program-detail-link {
+    margin-left: 0;
+  }
+
+  .program-fit-row.is-head {
+    display: none;
+  }
+
+  .program-fit-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .program-fit-row [data-label] {
+    grid-column: 1 / -1;
+    color: var(--color-dark);
+  }
+
+  .program-fit-row [data-label]::before {
+    content: attr(data-label) ': ';
+    color: var(--color-text-muted);
+    font-weight: 600;
+  }
+
+  .program-fit-row .program-fit-status {
+    grid-row: 1;
+    grid-column: 2;
+  }
+}
+
+/* Same 20px gap between every sidebar card (global rule adds a top margin) */
+.program-detail-side > .official-application {
+  margin-top: 0;
+}
+
+/* External-link icon stays at the end of the text, even when the link wraps */
+.program-sources a {
+  display: inline;
+}
+
+.program-sources a svg {
+  display: inline;
+  margin-left: 4px;
+  vertical-align: -1px;
+}

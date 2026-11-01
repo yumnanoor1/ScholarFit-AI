@@ -1,35 +1,38 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, Bookmark, Check, CircleHelp,
-  GraduationCap, Grid2X2, List, MapPin, Search, SlidersHorizontal, Wallet,
+  Bookmark, Briefcase, Building2, ChevronRight, CircleHelp,
+  GraduationCap, MapPin, Search, SlidersHorizontal, Wallet,
 } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
+import SavedStatusNotice from '../components/opportunities/SavedStatusNotice';
+import UniversityLogo from '../components/common/UniversityLogo';
+import EligibilityBadge from '../components/opportunities/EligibilityBadge';
+import {
+  compareByRank, getCategoryTone, getEligibilityLabel, getEligibilityReason, getExclusionLabel, getMatchTone, getScholarshipDeadlineLabel,
+} from '../services/eligibilityBadges';
+import MatchRing from '../components/opportunities/MatchRing';
+import { ComparisonSelectionBar, OpportunityCompareCheckbox } from '../components/opportunities/ComparisonControls';
+import RetryButton from '../components/common/RetryButton';
 import { apiService } from '../services/api';
-import { evaluateOpportunityEligibility, getOpportunityTitle } from '../services/opportunityJourney';
+import { getOpportunityTitle } from '../services/opportunityJourney';
+import { getDeadlineInfo, getScholarshipLogo } from '../services/programFit';
+import { getSelectedProgramId } from '../services/opportunityApi';
+import { useProgramEligibility, useScholarshipEligibility, useScholarshipRecommendations } from '../hooks/useProgramEligibility';
+import './Universities.css';
 
 function hasFundingInformation(opportunity) {
   return Boolean(opportunity.coverage || opportunity.funding || opportunity.fundingOptions?.length);
 }
 
-function getOpportunityReason(opportunity, status) {
-  if (opportunity.matchReason) return opportunity.matchReason;
-  if (opportunity.kind === 'scholarship') return 'Review the provider’s published criteria and funding terms against your verified profile.';
-  if (status === 'awaiting-verification') return 'Some requirement or profile details need verification before this match can be assessed.';
-  return 'Review the program’s requirements against your verified academic and study profile.';
-}
-
 export default function Recommendations() {
   const navigate = useNavigate();
   const {
-    profile,
     activeOpportunityId,
     selectedOpportunities,
-    savedOpportunities,
+    isOpportunitySaved,
     toggleSaveOpportunity,
-    selectOpportunity,
     comparisonOpportunityIds,
-    toggleComparisonOpportunity,
   } = useProfile();
   const [opportunities, setOpportunities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -39,8 +42,14 @@ export default function Recommendations() {
   const [funding, setFunding] = useState('all');
   const [sort, setSort] = useState('match-desc');
   const [search, setSearch] = useState('');
-  const [viewMode, setViewMode] = useState('list');
-  const [expandedReasons, setExpandedReasons] = useState({});
+  const programEligibility = useProgramEligibility();
+  const scholarshipEligibility = useScholarshipEligibility();
+  // "" means the student chose no program; until they choose, the journey's active program applies
+  const [programChoice, setProgramChoice] = useState(null);
+  const selectedProgramId = programChoice === null ? getSelectedProgramId(activeOpportunityId) : getSelectedProgramId(programChoice);
+  const recommendations = useScholarshipRecommendations(selectedProgramId);
+  const isLoading = loading || programEligibility.loading || scholarshipEligibility.loading || recommendations.loading;
+  const excluded = recommendations.data?.excluded || [];
 
   useEffect(() => {
     let isCurrent = true;
@@ -68,10 +77,18 @@ export default function Recommendations() {
     [opportunities],
   );
   const programs = opportunities.filter((opportunity) => opportunity.kind === 'program');
-  const scholarships = opportunities.filter((opportunity) => opportunity.kind === 'scholarship');
+  // Only ranked scholarships are matches; hard exclusions are listed apart below
+  const rankedOpportunities = useMemo(() => opportunities
+    .map((opportunity) => {
+      if (opportunity.kind !== 'scholarship') return opportunity;
+      const recommendation = recommendations.getRecommendation(opportunity.id);
+      return { ...opportunity, recommendation, rank: recommendation?.rank ?? null, matchScore: recommendation?.score ?? null };
+    })
+    .filter((opportunity) => opportunity.kind !== 'scholarship' || opportunity.recommendation?.recommended), [opportunities, recommendations]);
+  const scholarships = rankedOpportunities.filter((opportunity) => opportunity.kind === 'scholarship');
   const visibleOpportunities = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return opportunities
+    return rankedOpportunities
       .filter((opportunity) => category === 'all'
         || (category === 'programs' && opportunity.kind === 'program')
         || (category === 'scholarships' && opportunity.kind === 'scholarship'))
@@ -85,42 +102,15 @@ export default function Recommendations() {
         opportunity.provider,
         opportunity.country,
       ].filter(Boolean).join(' ').toLowerCase().includes(query))
-      .sort((first, second) => sort === 'match-asc'
-        ? (Number(first.matchScore) || 0) - (Number(second.matchScore) || 0)
-        : (Number(second.matchScore) || 0) - (Number(first.matchScore) || 0));
-  }, [opportunities, category, country, funding, search, sort]);
+      .sort((first, second) => sort === 'match-asc' ? compareByRank(second, first) : compareByRank(first, second));
+  }, [rankedOpportunities, category, country, funding, search, sort]);
 
-  const selectForJourney = (opportunity) => {
-    selectOpportunity(opportunity);
-    navigate('/timeline');
-  };
-
-  const toggleCompare = (opportunity) => {
-    if (!comparisonOpportunityIds.includes(opportunity.id) && comparisonOpportunityIds.length >= 2) {
-      navigate('/compare');
-      return;
-    }
-    toggleComparisonOpportunity(opportunity.id);
-    navigate('/compare');
-  };
-
-  const getCostLabel = (opportunity, key) => {
-    const cost = opportunity.financialData?.costs?.[key];
-    const amountValue = Number(cost?.amount);
-    if (!cost || cost.amount === '' || cost.amount == null || !Number.isFinite(amountValue)) return 'Not listed';
-    const currency = /^[A-Za-z]{3}$/.test(cost.currency || '') ? cost.currency.toUpperCase() : 'USD';
-    const amount = new Intl.NumberFormat('en', {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 0,
-    }).format(amountValue);
-    return `${amount}${cost.period === 'monthly' ? ' / month' : cost.period === 'yearly' ? ' / year' : ''}`;
-  };
-
+  // A count of zero would read as "nothing matches you", which a failed request can't show
+  const scoresFailed = Boolean(error) || recommendations.state === 'error';
   const categories = [
-    { id: 'all', label: 'All Matches', count: opportunities.length },
-    { id: 'programs', label: "Master's Programs", count: programs.length },
-    { id: 'scholarships', label: 'Scholarships', count: scholarships.length },
+    { id: 'all', label: 'All Matches', count: scoresFailed ? null : programs.length + scholarships.length },
+    { id: 'programs', label: "Master's Programs", count: error ? null : programs.length },
+    { id: 'scholarships', label: 'Scholarships', count: scoresFailed ? null : scholarships.length },
   ];
 
   return (
@@ -135,7 +125,7 @@ export default function Recommendations() {
               aria-pressed={category === item.id}
               onClick={() => setCategory(item.id)}
             >
-              {item.label}<span>{item.count}</span>
+              {item.label}<span>{item.count ?? '–'}</span>
             </button>
           ))}
         </div>
@@ -154,6 +144,13 @@ export default function Recommendations() {
             <option value="not-listed">Funding not listed</option>
           </select>
         </label>
+        <label className="matched-filter-select">
+          <GraduationCap size={15} aria-hidden="true" />
+          <select value={selectedProgramId ?? ''} onChange={(event) => setProgramChoice(event.target.value)} aria-label="Rank scholarships for a program">
+            <option value="">No program selected</option>
+            {programs.map((item) => <option key={item.id} value={item.id}>{getOpportunityTitle(item)}, {item.university}</option>)}
+          </select>
+        </label>
         <label className="matched-search">
           <Search size={15} aria-hidden="true" />
           <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search opportunities..." />
@@ -161,19 +158,11 @@ export default function Recommendations() {
         <label className="matched-sort">
           <SlidersHorizontal size={15} aria-hidden="true" />
           <span>Sort by</span>
-          <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort opportunities by match score">
-            <option value="match-desc">Match Score (High → Low)</option>
-            <option value="match-asc">Match Score (Low → High)</option>
+          <select value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort opportunities by recommendation rank">
+            <option value="match-desc">Recommendation (Best first)</option>
+            <option value="match-asc">Recommendation (Last first)</option>
           </select>
         </label>
-        <div className="matched-view-toggle" role="group" aria-label="Opportunity view">
-          <button type="button" aria-label="List view" aria-pressed={viewMode === 'list'} className={viewMode === 'list' ? 'is-active' : ''} onClick={() => setViewMode('list')}>
-            <List size={17} aria-hidden="true" />
-          </button>
-          <button type="button" aria-label="Grid view" aria-pressed={viewMode === 'grid'} className={viewMode === 'grid' ? 'is-active' : ''} onClick={() => setViewMode('grid')}>
-            <Grid2X2 size={16} aria-hidden="true" />
-          </button>
-        </div>
       </section>
 
       {selectedOpportunities.length > 0 && (
@@ -184,105 +173,129 @@ export default function Recommendations() {
             : ' · no active opportunity'}
         </p>
       )}
-      {loading && <p role="status">Loading matched opportunities...</p>}
-      {error && <p className="disclaimer-box" role="alert">{error}</p>}
-      {!loading && !error && visibleOpportunities.length === 0 && (
+      <SavedStatusNotice />
+      {isLoading && <p role="status">Loading matched opportunities...</p>}
+      {error && <div className="disclaimer-box" role="alert"><p>{error}</p><RetryButton /></div>}
+      {!isLoading && !error && recommendations.state === 'error' && (
+        <div className="disclaimer-box" role="alert"><p>Your scholarship matches could not be loaded, so only programs are shown.</p><RetryButton /></div>
+      )}
+      {!isLoading && !error && visibleOpportunities.length === 0 && (
         <div className="matched-empty-state"><CircleHelp size={22} /><p>No matched opportunities found. Try changing the filters or search term.</p></div>
       )}
 
-      <div className={`opportunity-recommendations-grid ${viewMode}-view`}>
-        {visibleOpportunities.map((opportunity) => {
-          const title = getOpportunityTitle(opportunity);
-          const isActive = activeOpportunityId === opportunity.id;
-          const isSaved = savedOpportunities.includes(opportunity.id);
-          const isCompared = comparisonOpportunityIds.includes(opportunity.id);
-          const compareLimitReached = comparisonOpportunityIds.length >= 2 && !isCompared;
-          const eligibility = evaluateOpportunityEligibility(profile, opportunity);
-          const isProgram = opportunity.kind === 'program';
-          const organization = isProgram ? opportunity.university : opportunity.provider;
-          const reasons = opportunity.matchReason
-            ? [opportunity.matchReason]
-            : [getOpportunityReason(opportunity, eligibility.status)];
+      {!isLoading && !error && visibleOpportunities.length > 0 && (
+        <div className="program-list is-matches" role="list" aria-label="Matched opportunities">
+          <div className="program-list-head" aria-hidden="true">
+            <span>Opportunity</span>
+            <span>Tuition / funding</span>
+            <span>Deadline</span>
+            <span>Match</span>
+            <span>Eligibility</span>
+            <span>Compare</span>
+          </div>
+          {visibleOpportunities.map((opportunity) => {
+            const title = getOpportunityTitle(opportunity);
+            const isProgram = opportunity.kind === 'program';
+            // Both come from the backend eligibility endpoints
+            const eligibility = isProgram
+              ? programEligibility.getEvaluation(opportunity.id)
+              : scholarshipEligibility.getEvaluation(opportunity.id);
+            const { recommendation } = opportunity;
+            const organization = isProgram ? opportunity.university : opportunity.provider;
+            const programDeadline = isProgram ? getDeadlineInfo(opportunity.deadline) : null;
+            const deadline = isProgram
+              ? programDeadline && { label: programDeadline.label, note: programDeadline.passed ? 'Passed' : `${programDeadline.days} days left` }
+              : getScholarshipDeadlineLabel(eligibility.deadline);
+            const reason = !isProgram && scholarshipEligibility.state === 'ok' ? getEligibilityReason(eligibility) : '';
+            const saved = isOpportunitySaved(opportunity.id);
+            const ScholarshipIcon = opportunity.type === 'RA' ? Briefcase : Building2;
+            const openDetails = () => navigate(isProgram ? `/universities/${opportunity.id}` : `/scholarships/${opportunity.id}`);
 
-          return (
-            <article className="matched-opportunity-card" key={opportunity.id}>
-              <div className="matched-card-top">
-                <div className={`matched-opportunity-logo ${isProgram ? 'program-logo' : 'scholarship-logo'}`} aria-hidden="true">
-                  {isProgram ? <GraduationCap size={25} /> : <span>{opportunity.provider?.slice(0, 4).toUpperCase() || 'FUND'}</span>}
+            return (
+              <div
+                key={opportunity.id}
+                role="listitem"
+                className={`program-row ${activeOpportunityId === opportunity.id ? 'is-active' : ''}`}
+                tabIndex={0}
+                aria-label={`${title}, ${organization || 'provider not listed'}, ${getEligibilityLabel(eligibility.status)}. Open details`}
+                onClick={openDetails}
+                onKeyDown={(event) => {
+                  if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    openDetails();
+                  }
+                }}
+              >
+                <div className="program-row-main">
+                  {isProgram
+                    ? <UniversityLogo university={opportunity.university} size={42} fallback={<GraduationCap size={20} />} />
+                    : <UniversityLogo src={getScholarshipLogo(opportunity)} size={42} bareFallback fallback={<span className="program-row-mark is-scholarship" aria-hidden="true"><ScholarshipIcon size={20} /></span>} />}
+                  <div className="program-row-copy">
+                    <strong>{title}</strong>
+                    <span>{[organization || 'Provider not listed', opportunity.country].filter(Boolean).join(' · ')}</span>
+                    <span className="program-row-tags">
+                      <em className={isProgram ? 'is-program' : 'is-scholarship'}>{isProgram ? "Master's program" : opportunity.type || 'Scholarship'}</em>
+                    </span>
+                    {recommendation && (
+                      <small className="matched-row-badges">
+                        <span className={`program-status is-${getCategoryTone(recommendation.category)}`}>{recommendation.category_label}</span>
+                        {recommendation.program_match && (
+                          <span className={`program-status is-${getMatchTone(recommendation.program_match.outcome)}`}>{recommendation.program_match.label}</span>
+                        )}
+                      </small>
+                    )}
+                    {recommendation?.positive[0] && <small>Why: {recommendation.positive[0]}</small>}
+                    {recommendation?.warnings[0] && <small>Check: {recommendation.warnings[0]}</small>}
+                  </div>
                 </div>
-                <div className="matched-opportunity-identity">
-                  <h2>{title}</h2>
-                  <p><GraduationCap size={13} aria-hidden="true" /> {organization || 'Provider not listed'}</p>
-                  <p><MapPin size={13} aria-hidden="true" /> {opportunity.country || 'Country not listed'}</p>
-                  <span className={`matched-requirement-status ${eligibility.status === 'satisfied' ? 'is-satisfied' : 'is-warning'}`}>
-                    {eligibility.status === 'satisfied'
-                      ? <Check size={13} aria-hidden="true" />
-                      : <AlertTriangle size={13} aria-hidden="true" />}
-                    Requirements: {eligibility.status.replaceAll('-', ' ')}
-                  </span>
+                <div className="program-row-cell" data-label="Tuition / funding">
+                  <strong>{isProgram ? opportunity.tuitionOriginal || opportunity.tuition || 'Not listed' : recommendation?.funding.label || 'Not listed'}</strong>
+                  {recommendation && <small>{recommendation.funding.summary}</small>}
+                  {isProgram && opportunity.tuitionAmount > 0 && opportunity.tuitionCurrency !== 'USD' && opportunity.tuition && (
+                    <small>≈ {opportunity.tuition.replace(' / year', '')}</small>
+                  )}
                 </div>
-                <div className="matched-score">
-                  <span className={`matched-score-ring ${isProgram ? '' : 'scholarship-score'}`}>{opportunity.matchScore ?? '—'}{opportunity.matchScore != null && '%'}</span>
-                  <span>Match Score</span>
+                <div className="program-row-cell" data-label="Deadline">
+                  <strong>{deadline ? deadline.label : opportunity.deadline || 'Not listed'}</strong>
+                  {deadline && <small>{deadline.note}</small>}
                 </div>
-                <button
-                  type="button"
-                  className={`matched-bookmark ${isSaved ? 'is-saved' : ''}`}
-                  aria-label={`${isSaved ? 'Remove saved' : 'Save'} ${title}`}
-                  aria-pressed={isSaved}
-                  onClick={() => toggleSaveOpportunity(opportunity.id)}
-                >
-                  <Bookmark size={16} fill={isSaved ? 'currentColor' : 'none'} aria-hidden="true" />
-                </button>
-              </div>
-
-              <div className="matched-card-content">
-                <div className="matched-cost-stats" aria-label="Opportunity cost and deadline information">
-                  <div><span>{isProgram ? 'Tuition' : 'Funding'}</span><strong>{isProgram ? opportunity.tuition || 'Not listed' : opportunity.coverage || 'Not listed'}</strong></div>
-                  <div><span>Living cost</span><strong>{isProgram ? getCostLabel(opportunity, 'accommodationFood') : 'Not listed'}</strong></div>
-                  <div><span>Deadline</span><strong>{opportunity.deadline || 'Not listed'}{opportunity.deadline && opportunity.deadlineStatus !== 'official-verified' ? ' · listed' : ''}</strong></div>
+                <div className="program-row-cell" data-label="Match">
+                  <MatchRing score={opportunity.matchScore} />
                 </div>
-                <section className="matched-reasons">
+                <div className="program-row-cell" data-label="Eligibility">
+                  <EligibilityBadge status={eligibility.status} />
+                  {reason && <small className="program-row-reason">{reason}</small>}
+                </div>
+                <div className="program-row-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                  <OpportunityCompareCheckbox opportunity={{ ...opportunity, title }} />
                   <button
                     type="button"
-                    className="matched-reason-toggle"
-                    aria-expanded={Boolean(expandedReasons[opportunity.id])}
-                    aria-controls={`match-reason-${opportunity.id}`}
-                    onClick={() => setExpandedReasons((current) => ({ ...current, [opportunity.id]: !current[opportunity.id] }))}
+                    className={`program-row-save ${saved ? 'is-saved' : ''}`}
+                    aria-label={`${saved ? 'Remove saved' : 'Save'} ${title}`}
+                    aria-pressed={saved}
+                    onClick={() => toggleSaveOpportunity(opportunity.id)}
                   >
-                    <Check size={14} aria-hidden="true" /> Why this match? <span>{expandedReasons[opportunity.id] ? '−' : '+'}</span>
+                    <Bookmark size={16} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" />
                   </button>
-                  {expandedReasons[opportunity.id] && (
-                    <p id={`match-reason-${opportunity.id}`}>{reasons[0]}</p>
-                  )}
-                </section>
+                  <ChevronRight className="program-row-chevron" size={20} aria-hidden="true" />
+                </div>
               </div>
-
-              <footer className="matched-card-footer">
-                <button
-                  type="button"
-                  className="matched-start-button"
-                  aria-pressed={isActive}
-                  onClick={() => selectForJourney(opportunity)}
-                >
-                  {isActive ? 'Selected' : 'Select'}
-                  <ArrowRight size={14} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
-                  className="matched-compare-button"
-                  aria-pressed={isCompared}
-                  disabled={compareLimitReached}
-                  onClick={() => toggleCompare(opportunity)}
-                >
-                  Compare
-                </button>
-              </footer>
-            </article>
-          );
-        })}
-      </div>
-      <p className="matched-page-disclaimer">Match scores, requirements, costs, funding, and dates shown here are illustrative sample data. Verify details with the official university or scholarship provider.</p>
+            );
+          })}
+        </div>
+      )}
+      {!isLoading && excluded.length > 0 && (category !== 'programs') && (
+        <details className="matched-page-disclaimer">
+          <summary>Not recommended right now ({excluded.length})</summary>
+          <ul>
+            {excluded.map((item) => (
+              <li key={item.scholarship_id}><strong>{item.scholarship_name}:</strong> {getExclusionLabel(item)}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <p className="matched-page-disclaimer">Scholarship scores show how suitable an opportunity looks from its records. They aren't your chance of winning an award or being admitted. Program scores aren't available yet. Verify details with the official university or scholarship provider.</p>
+      {comparisonOpportunityIds.length > 0 && <ComparisonSelectionBar />}
     </div>
   );
 }

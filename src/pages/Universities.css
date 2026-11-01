@@ -1,0 +1,446 @@
+/* Explore > Programs: list view */
+
+.program-list {
+  overflow: hidden;
+  border: 1px solid var(--color-border-light);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 6px 20px -14px rgba(9, 38, 74, 0.3);
+}
+
+.program-list-head,
+.program-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.6fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(150px, 1fr) 156px;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+}
+
+.program-list-head {
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--brand-surface);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.program-row {
+  position: relative;
+  border-bottom: 1px solid var(--brand-surface);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.program-row:last-child {
+  border-bottom: 0;
+}
+
+.program-row:hover,
+.program-row:focus-visible {
+  background: var(--brand-surface);
+}
+
+.program-row:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+/* Blue edge marks the program currently in the student's journey */
+.program-row.is-active::before {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--brand-blue);
+  content: '';
+}
+
+.program-row-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.program-row-mark {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: var(--brand-tint);
+  color: var(--brand-blue);
+}
+
+.program-row-mark.has-logo {
+  padding: 6px;
+  border: 1px solid var(--brand-tint);
+  background: #fff;
+}
+
+.program-row-mark img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.program-row-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.program-row-copy strong {
+  overflow: hidden;
+  color: var(--color-dark);
+  font-family: var(--font-family-heading);
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.program-row-copy > span {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.program-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.program-row-tags em {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--brand-surface);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.program-row-cell {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.program-row-cell strong {
+  color: var(--color-dark);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.program-row-cell small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.program-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.program-status.is-success { background: var(--color-success-bg); color: var(--color-success-text); }
+.program-status.is-warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.program-status.is-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.program-status.is-neutral { background: var(--brand-surface); color: var(--color-text-muted); }
+
+.program-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.program-row-save {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-light);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.program-row-save:hover,
+.program-row-save.is-saved {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+.program-row-chevron {
+  color: var(--color-secondary);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.program-row:hover .program-row-chevron {
+  color: var(--brand-blue);
+  transform: translateX(3px);
+}
+
+/* Narrow screens: each row becomes a compact stacked item */
+@media (max-width: 960px) {
+  .program-list-head {
+    display: none;
+  }
+
+  .program-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px 14px;
+    padding: 16px;
+  }
+
+  .program-row-main {
+    grid-column: 1 / -1;
+  }
+
+  .program-row-cell::before {
+    color: var(--color-secondary);
+    content: attr(data-label);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .program-row-actions {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 560px) {
+  .program-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .program-row-cell:last-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .program-row-copy strong {
+    white-space: normal;
+  }
+}
+
+/* Toolbar: status pills on the left, result count on the right */
+.app-container .universities-page .university-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-container .universities-page .university-filter-tabs {
+  width: auto;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+}
+
+.app-container .universities-page .university-filter-tabs button {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.app-container .universities-page .university-filter-tabs button:hover {
+  border-color: var(--brand-line);
+  color: var(--color-dark);
+}
+
+.app-container .universities-page .university-filter-tabs button.active {
+  border-color: var(--brand-blue);
+  background: var(--brand-blue);
+  box-shadow: none;
+  color: #fff;
+}
+
+.app-container .universities-page .university-filter-tabs button.active .university-filter-count {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.university-result-count {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* One-line notice instead of a full message box */
+.university-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--brand-line);
+  border-radius: 10px;
+  background: var(--brand-tint);
+  color: var(--color-dark);
+  font-size: 13.5px;
+}
+
+.university-notice svg {
+  flex: 0 0 auto;
+  color: var(--brand-blue);
+}
+
+.university-notice a {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  color: var(--brand-blue);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.university-notice a:hover {
+  text-decoration: underline;
+}
+
+/* "Compare" label only appears on the row being looked at, or once ticked */
+.program-row .opportunity-compare-select span {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.program-row:hover .opportunity-compare-select span,
+.program-row:focus-within .opportunity-compare-select span,
+.program-row .opportunity-compare-select:has(input:checked) span {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .program-row .opportunity-compare-select span {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-container .universities-page .university-filter-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* My Matches and Scholarships: same table with a Match column */
+.program-list.is-matches .program-list-head,
+.program-list.is-matches .program-row {
+  grid-template-columns: minmax(0, 2.4fr) minmax(130px, 1.3fr) minmax(110px, 0.9fr) 64px minmax(150px, 1fr) 156px;
+}
+
+.program-row-mark.is-scholarship {
+  --tone: var(--brand-blue);
+  background: linear-gradient(135deg, var(--tone), color-mix(in srgb, var(--tone) 60%, var(--brand-cyan)));
+  color: #fff;
+}
+
+.program-row-mark.is-scholarship.tone-cyan { --tone: var(--brand-cyan); }
+.program-row-mark.is-scholarship.tone-navy { --tone: var(--brand-navy-light); }
+
+.program-row-tags em.is-program {
+  background: var(--brand-tint);
+  color: var(--brand-blue);
+}
+
+.program-row-tags em.is-scholarship {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+}
+
+.match-ring {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(var(--color-success) var(--match), var(--color-success-bg) 0);
+}
+
+.match-ring strong {
+  display: grid;
+  width: 37px;
+  height: 37px;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  color: var(--color-success-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.match-ring.is-empty {
+  background: var(--brand-surface);
+}
+
+.match-ring.is-empty strong {
+  color: var(--color-text-muted);
+}
+
+/* Leave room for the comparison bar pinned to the bottom */
+.opportunity-recommendations-page:has(.comparison-selection-bar),
+.scholarship-page .has-comparison-selection {
+  padding-bottom: 104px;
+}
+
+@media (max-width: 960px) {
+  .program-list.is-matches .program-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .program-list.is-matches .program-row-cell[data-label='Tuition / funding'],
+  .program-list.is-matches .program-row-cell[data-label='Coverage'] {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Long free-text values (scholarship coverage and deadlines) stay to three lines */
+.program-list.is-matches .program-row-cell > strong {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+/* One-line reason under a scholarship's eligibility badge */
+.program-row-cell .program-row-reason {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  line-height: 1.35;
+}

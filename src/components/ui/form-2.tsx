@@ -300,6 +300,7 @@ export default function FormLayout01({
       <Field label="Email Address" required error={errors.email}>{input("personalInfo", "email", { type: "email", autoComplete: "email", className: "profile-email-input" })}</Field>
       <Field label="Nationality" required error={errors.citizenshipCountry}>{select("personalInfo", "citizenshipCountry", COUNTRIES)}</Field>
       <Field label="Current Country of Residence" required error={errors.currentCountry}>{select("personalInfo", "currentCountry", COUNTRIES)}</Field>
+      <Field label={<>Date of Birth <span className="font-normal text-slate-500">(optional, used for scholarship age limits)</span></>}>{input("personalInfo", "dateOfBirth", { type: "date", autoComplete: "bday" })}</Field>
       <Field label={<>Phone Number <span className="font-normal text-slate-500">(optional)</span></>} >{input("personalInfo", "phoneNumber", { type: "tel", autoComplete: "tel" })}</Field>
     </div>{footerActions}</Section>}
 
@@ -350,6 +351,15 @@ export default function FormLayout01({
           {academic.gradingScale === "Other" && <Field label="Custom maximum grade" required error={errors.customGradingScale}>{input("academicBackground", "customGradingScale", { type: "number", min: "0", step: "0.01" })}</Field>}
           <Field label="Academic Achievements (Optional)">
             <Control as="textarea" rows={2} maxLength={500} value={academic.academicAchievements || ""} onChange={(event) => update("academicBackground", "academicAchievements", event.target.value)} placeholder="e.g. Dean's list, scholarships, awards, research projects..." />
+          </Field>
+          <Field label="Technical Skills (Optional)">
+            <Control as="textarea" rows={2} maxLength={500} value={academic.technicalSkills || ""} onChange={(event) => update("academicBackground", "technicalSkills", event.target.value)} placeholder="e.g. Python, SQL, machine learning..." />
+          </Field>
+          <Field label="Projects / Research (Optional)">
+            <Control as="textarea" rows={2} maxLength={500} value={academic.projects || ""} onChange={(event) => update("academicBackground", "projects", event.target.value)} placeholder="e.g. final-year project, publications, research interests..." />
+          </Field>
+          <Field label="Work Experience (Optional)">
+            <Control as="textarea" rows={2} maxLength={2000} value={academic.workExperience || ""} onChange={(event) => update("academicBackground", "workExperience", event.target.value)} placeholder="e.g. internships, jobs, volunteering, with dates..." />
           </Field>
         </div>
       </section>

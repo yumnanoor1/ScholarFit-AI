@@ -1,40 +1,30 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import {
   loginUser,
   registerUser,
   getCurrentUser,
-  normalizeUser,
 } from '../services/authApi';
+import {
+  clearStoredSession, getTokenExpiry, isSessionChange, readStoredSession, watchRejectedSessions,
+} from '../services/authSession';
 
 const AuthContext = createContext(null);
-
-function readStoredSession() {
-  const storedToken = localStorage.getItem('fitscholar_token');
-  const storedUser = localStorage.getItem('fitscholar_user');
-
-  if (!storedToken || !storedUser || storedToken.startsWith('mock_')) {
-    if (storedToken && storedToken.startsWith('mock_')) {
-      localStorage.removeItem('fitscholar_token');
-      localStorage.removeItem('fitscholar_user');
-    }
-    return { user: null, token: null };
-  }
-
-  try {
-    return { user: normalizeUser(JSON.parse(storedUser)), token: storedToken };
-  } catch (error) {
-    console.error('Failed to parse cached user data:', error);
-    localStorage.removeItem('fitscholar_token');
-    localStorage.removeItem('fitscholar_user');
-    return { user: null, token: null };
-  }
-}
+const MAX_TIMER_MS = 2 ** 31 - 1;
+const RECHECK_GAP_MS = 30 * 1000;
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(readStoredSession);
   const [loading, setLoading] = useState(() => Boolean(session.token));
   const { user, token } = session;
+
+  // Removing the stored sign-in is what tells every other tab
+  const endSession = useCallback(() => {
+    clearStoredSession();
+    setSession({ user: null, token: null });
+  }, []);
+
+  useEffect(() => watchRejectedSessions(endSession), [endSession]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -44,18 +34,19 @@ export function AuthProvider({ children }) {
       return;
     }
 
+    // A reply that arrives after logout or a new login must not touch the current session
+    const isSessionUnchanged = () => isCurrent && localStorage.getItem('fitscholar_token') === session.token;
+
     getCurrentUser(session.token)
       .then((verifiedUser) => {
-        if (!isCurrent) return;
+        if (!isSessionUnchanged()) return;
         setSession({ user: verifiedUser, token: session.token });
         localStorage.setItem('fitscholar_user', JSON.stringify(verifiedUser));
       })
       .catch((error) => {
-        console.warn('Stored session is invalid or expired:', error?.message);
-        if (!isCurrent) return;
-        localStorage.removeItem('fitscholar_token');
-        localStorage.removeItem('fitscholar_user');
-        setSession({ user: null, token: null });
+        console.warn('Stored session could not be verified:', error?.message);
+        // Only a refusal ends the session. An outage keeps it, and the pages report the failure
+        if (error?.status === 401 && isSessionUnchanged()) endSession();
       })
       .finally(() => {
         if (isCurrent) {
@@ -67,6 +58,54 @@ export function AuthProvider({ children }) {
       isCurrent = false;
     };
   }, []);
+
+  // Other tabs, and pages restored by the browser's back button, follow the stored session
+  useEffect(() => {
+    const syncSession = () => setSession(readStoredSession());
+    const handleStorage = (event) => {
+      if (isSessionChange(event)) syncSession();
+    };
+    const handlePageShow = (event) => {
+      if (event.persisted) syncSession();
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, []);
+
+  // A sign-in that expires while the app is open ends here. Coming back to the tab or waking
+  // the laptop asks the server too, in case the session was ended elsewhere
+  useEffect(() => {
+    if (!token) return undefined;
+    const expiry = getTokenExpiry(token);
+    let lastChecked = Date.now();
+    const endIfExpired = () => {
+      if (expiry === null || Date.now() < expiry) return false;
+      endSession();
+      return true;
+    };
+    const recheck = () => {
+      if (document.visibilityState !== 'visible' || endIfExpired() || Date.now() - lastChecked < RECHECK_GAP_MS) return;
+      lastChecked = Date.now();
+      getCurrentUser(token).catch(() => {});
+    };
+    const timer = expiry === null
+      ? null
+      : window.setTimeout(endIfExpired, Math.min(Math.max(expiry - Date.now(), 0) + 1000, MAX_TIMER_MS));
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('focus', recheck);
+    window.addEventListener('online', recheck);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', recheck);
+      window.removeEventListener('focus', recheck);
+      window.removeEventListener('online', recheck);
+    };
+  }, [token, endSession]);
 
   const login = async (email, password) => {
     setLoading(true);
@@ -84,6 +123,7 @@ export function AuthProvider({ children }) {
       return {
         success: true,
         user: verifiedUser,
+        token: accessToken,
       };
     } catch (err) {
       return {
@@ -127,8 +167,7 @@ export function AuthProvider({ children }) {
   const logout = () => {
     setSession({ user: null, token: null });
 
-    localStorage.removeItem('fitscholar_token');
-    localStorage.removeItem('fitscholar_user');
+    clearStoredSession();
   };
 
   return (

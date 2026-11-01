@@ -85,7 +85,7 @@ async function readDocxText(file) {
     const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
     return result.value || '';
   } catch {
-    throw new Error('This DOCX could not be read. Try another file or use the CV extraction service.');
+    throw new Error('This DOCX could not be read. Try another file or build your profile manually.');
   }
 }
 
@@ -134,7 +134,8 @@ export async function extractProfileFromCv(file, { user, onProgress } = {}) {
 
   for (const path of OPTIONAL_FIELDS) fieldStatuses[path] = 'optional';
   onProgress?.('Reading CV');
-  const text = await readableDocumentText(file);
+  // PDFs often hold curly apostrophes, and profile values such as Bachelor's are matched exactly
+  const text = (await readableDocumentText(file)).replace(/[‘’]/g, "'");
 
   const accountName = user?.name || '';
   const accountEmail = user?.email || '';

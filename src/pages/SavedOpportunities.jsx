@@ -1,7 +1,12 @@
-import { Bookmark, Building2, Clock3, GraduationCap, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bookmark, Building2, Clock3, GraduationCap, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '../context/ProfileContext';
-import { mockScholarships, mockUniversities } from '../data/mockData';
+import UniversityLogo from '../components/common/UniversityLogo';
+import { useOpportunityCatalog } from '../hooks/useOpportunityCatalog';
+import RetryButton from '../components/common/RetryButton';
+import { getScholarshipLogo } from '../services/programFit';
+import { resolveSavedItem } from '../services/savedScholarshipsApi';
+import SavedStatusNotice from '../components/opportunities/SavedStatusNotice';
 import EmptyState from '../components/common/EmptyState';
 import { GlowCard } from '../components/ui/spotlight-card';
 
@@ -19,15 +24,33 @@ export default function SavedOpportunities() {
   const navigate = useNavigate();
   const {
     savedOpportunities,
+    savedRecords,
+    hasSavedSnapshot,
+    removedSaves,
+    dismissRemovedSavedScholarships,
+    savedStatus,
     toggleSaveOpportunity,
     selectedOpportunities,
     activeOpportunityId,
     selectOpportunity,
   } = useProfile();
-  const savedItems = [
-    ...mockUniversities
-      .filter((item) => savedOpportunities.includes(item.id))
-      .map((item) => ({
+  const catalog = useOpportunityCatalog();
+  // Saved scholarships come from their own records, so a change of status can't hide them.
+  // Other saved IDs resolve against backend programs and scholarships (older sample IDs still resolve)
+  const savedItems = savedOpportunities
+    .map((id) => resolveSavedItem(id, savedRecords, catalog.getOpportunity))
+    .filter(Boolean)
+    .map((item) => (item.kind === 'scholarship'
+      ? {
+        ...item,
+        title: item.name,
+        organization: item.provider,
+        kind: 'scholarship',
+        tags: [item.type, item.degree].filter(Boolean),
+        image: scholarshipImage,
+        route: `/scholarships/${item.id}`,
+      }
+      : {
         ...item,
         title: item.program,
         organization: item.university,
@@ -35,19 +58,7 @@ export default function SavedOpportunities() {
         tags: [item.degree, item.country].filter(Boolean),
         image: universityImage,
         route: `/universities/${item.id}`,
-      })),
-    ...mockScholarships
-      .filter((item) => savedOpportunities.includes(item.id))
-      .map((item) => ({
-        ...item,
-        title: item.name,
-        organization: item.provider,
-        kind: 'scholarship',
-        tags: [item.type, item.coverage].filter(Boolean),
-        image: scholarshipImage,
-        route: `/scholarships/${item.id}`,
-      })),
-  ];
+      }));
 
   return (
     <div className="page-container saved-opportunities-page">
@@ -56,7 +67,28 @@ export default function SavedOpportunities() {
         <p className="page-subtitle">Your bookmarked universities, programs, and scholarships.</p>
       </header>
 
-      {savedItems.length === 0 ? (
+      <SavedStatusNotice />
+
+      {catalog.error && (
+        <p className="saved-load-error" role="alert">
+          <span>Some saved items could not be loaded, so this list may be incomplete.</span>
+          <RetryButton />
+        </p>
+      )}
+
+      {removedSaves.length > 0 && (
+        <p className="saved-load-error" role="status">
+          <span>
+            {removedSaves.map((item) => item.name || 'A saved scholarship').join(', ')}
+            {removedSaves.length === 1 ? ' was' : ' were'} removed from FitScholars, so {removedSaves.length === 1 ? "it's" : "they're"} no longer in your saved list.
+          </span>
+          <button type="button" className="btn btn-outline" onClick={dismissRemovedSavedScholarships}>Dismiss</button>
+        </p>
+      )}
+
+      {(savedStatus === 'loading' && !hasSavedSnapshot) || (catalog.loading && savedOpportunities.length > 0) ? (
+        <p role="status">Loading saved opportunities...</p>
+      ) : savedItems.length === 0 ? savedStatus === 'error' ? null : (
         <EmptyState
           title="No saved opportunities"
           description="Save universities or scholarships to keep them together here."
@@ -71,6 +103,9 @@ export default function SavedOpportunities() {
             return (
               <GlowCard as="article" customSize key={item.id} className="saved-opportunity-card">
                 <div className="saved-opportunity-card-heading">
+                  {item.kind === 'university'
+                    ? <UniversityLogo university={item.university} size={44} />
+                    : getScholarshipLogo(item) && <UniversityLogo src={getScholarshipLogo(item)} size={44} />}
                   <div className="saved-opportunity-title-wrap">
                     <h2>{item.title}</h2>
                     <p>{item.organization} · {item.country} <span aria-hidden="true">{countryFlags[item.country]}</span></p>
@@ -101,6 +136,13 @@ export default function SavedOpportunities() {
                 <div className="saved-opportunity-tags">
                   {item.tags.map((tag) => <span key={tag}>{tag}</span>)}
                 </div>
+
+                {item.sourceStatus === 'unverified' && (
+                  <p className="saved-unverified-warning">
+                    <AlertTriangle size={15} aria-hidden="true" />
+                    This scholarship is currently unverified.
+                  </p>
+                )}
 
                 <p className="saved-opportunity-deadline">
                   <Clock3 size={15} aria-hidden="true" />

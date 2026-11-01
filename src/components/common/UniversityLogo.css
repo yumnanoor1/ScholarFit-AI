@@ -1,0 +1,48 @@
+.university-logo-tile {
+  display: inline-grid;
+  width: var(--logo-size);
+  height: var(--logo-size);
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  border-radius: calc(var(--logo-size) * 0.26);
+  background: var(--brand-tint);
+  color: var(--brand-blue);
+}
+
+.university-logo-tile.has-logo {
+  padding: calc(var(--logo-size) * 0.14);
+  border: 1px solid var(--brand-tint);
+  background: #fff;
+  box-shadow: 0 4px 10px -8px rgba(9, 38, 74, 0.45);
+}
+
+.university-logo-tile img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+/* Logos placed before a title: the title takes the remaining width */
+.saved-opportunity-card-heading .saved-opportunity-title-wrap,
+.program-comparison-card-header > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.saved-opportunity-card-heading > .university-logo-tile,
+.program-comparison-card-header > .university-logo-tile {
+  margin-right: 2px;
+}
+
+.timeline-heading-logo + div {
+  min-width: 0;
+  flex: 1;
+}
+
+.timeline-page-heading:has(.timeline-heading-logo) {
+  align-items: center;
+  gap: 16px;
+}

@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, BriefcaseBusiness, GraduationCap, X } from 'lucide-react';
 import { useProfile } from '../../context/ProfileContext';
+import UniversityLogo from '../common/UniversityLogo';
+import { getScholarshipLogo } from '../../services/programFit';
 import { getOpportunityOrganization, getOpportunityTitle } from '../../services/opportunityJourney';
 
 export default function ActiveOpportunityBar() {
@@ -22,7 +24,9 @@ export default function ActiveOpportunityBar() {
 
   return (
     <section className="active-opportunity-bar" aria-label="Active application opportunity">
-      <OpportunityIcon size={18} aria-hidden="true" />
+      {activeOpportunity.kind === 'scholarship'
+        ? <UniversityLogo src={getScholarshipLogo(activeOpportunity)} size={30} fallback={<OpportunityIcon size={16} />} />
+        : <UniversityLogo university={activeOpportunity.university} size={30} fallback={<OpportunityIcon size={16} />} />}
       <div className="active-opportunity-copy">
         <span>Active opportunity</span>
         <strong>{getOpportunityTitle(activeOpportunity)}</strong>

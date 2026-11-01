@@ -30,6 +30,7 @@ export interface AcademicBackground {
   programmingLanguages: string;
   certifications: string;
   projects: string;
+  workExperience: string;
   academicAchievements: string;
   previousDegree: string;
   previousDegreeTitle: string;
@@ -105,7 +106,7 @@ export const EMPTY_PROFILE: StudentProfile = {
     institutionCountry: "", academicStatus: "", currentYear: "", cgpa: "",
     gradingScale: "", customGradingScale: "", expectedGraduationDate: "", graduationDate: "", transcript: null,
     degreeStartDate: "",
-    relevantCoursework: "", technicalSkills: "", programmingLanguages: "", certifications: "", projects: "",
+    relevantCoursework: "", technicalSkills: "", programmingLanguages: "", certifications: "", projects: "", workExperience: "",
     academicAchievements: "", previousDegree: "", previousDegreeTitle: "",
     previousDegreeInstitution: "", previousDegreeDate: "",
   },

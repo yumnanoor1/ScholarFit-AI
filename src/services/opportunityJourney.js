@@ -5,6 +5,13 @@ function getProfileSection(profile, name) {
   return verified[name] || profile[name] || {};
 }
 
+// Plain-language explanation shown on each requirement task
+const REQUIREMENT_TASK_REASONS = {
+  'missing-information': 'Your profile is missing the information needed to check this.',
+  'not-satisfied': 'Your profile does not meet this requirement yet.',
+  'awaiting-verification': 'Check this against the official program requirements.',
+};
+
 export function getOpportunityKind(opportunity) {
   if (opportunity.kind) return opportunity.kind;
   if (opportunity.id?.startsWith('sch-')) return 'scholarship';
@@ -157,11 +164,12 @@ export function getOpportunityTimelineTasks(profile, opportunity, pathway) {
       id: `requirement:${opportunity.id}:${requirement.id}`,
       opportunityId: opportunity.id,
       kind: 'requirement',
-      title: `${requirement.status === 'missing-information' ? 'Provide' : 'Review'} ${requirement.label.toLowerCase()}`,
+      // Lower-case only the first letter so acronyms such as CGPA stay readable
+      title: `${requirement.status === 'missing-information' ? 'Provide' : 'Review'} ${requirement.label.charAt(0).toLowerCase()}${requirement.label.slice(1)}`,
       status: 'todo',
       dueDate: null,
       source: requirement.sourceStatus,
-      reason: requirement.status,
+      reason: REQUIREMENT_TASK_REASONS[requirement.status] || REQUIREMENT_TASK_REASONS['awaiting-verification'],
       requirement,
     }));
 

@@ -1,8 +1,17 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { MotionConfig } from 'framer-motion';
+import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import Modal from '../components/common/Modal';
-import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
+import BrandLogo from '../components/common/BrandLogo';
+import AuthBrandPanel from '../components/auth/AuthBrandPanel';
+import { AnimatedForm } from '../components/ui/modern-animated-sign-in';
+
+const POLICY_TEXT = {
+  terms: 'FitScholars helps you find and compare study-abroad programs and scholarships. Eligibility results are guidance based on published requirements, not an admission decision. Always confirm requirements, costs and deadlines with the official university or provider. FitScholars does not submit applications for you.',
+  privacy: 'Your account (name, email) and the academic profile you enter are stored in the FitScholars database so we can match you with programs. Your password is stored only as a secure hash. We use your email for account messages such as password resets.',
+};
 
 export default function Register() {
   const navigate = useNavigate();
@@ -14,34 +23,26 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [policy, setPolicy] = useState(null);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!fullName || !email || !password || !confirmPassword) {
-      setError('Please fill in all required fields.');
-      return;
-    }
-
+  // AnimatedForm has already checked required fields, email format and password length
+  const handleSubmit = async () => {
+    setNotice('');
     if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+      setError('The two passwords don’t match.');
       return;
     }
-
     if (!agreeTerms) {
-      setError('You must agree to the Terms of Service and Privacy Policy.');
+      setError('Please agree to the Terms of Service and Privacy Policy.');
       return;
     }
 
     setLoading(true);
     setError('');
-
     try {
-      const res = await register(fullName, email, password);
-
+      const res = await register(fullName.trim(), email.trim(), password);
       if (res.success) {
         navigate('/profile-setup');
       } else {
@@ -54,433 +55,112 @@ export default function Register() {
     }
   };
 
-  const handleGoogleRegister = async () => {
-    setGoogleLoading(true);
+  // Google sign-up needs a Google OAuth client and a backend endpoint; until then say so plainly
+  const handleGoogleRegister = () => {
     setError('');
-
-    try {
-      const result = await register('Google Demo User', 'google-demo@fitscholar.local', 'demo-google');
-      if (result.success) navigate('/profile-setup');
-    } catch {
-      setError('Failed to sign up with Google. Please try again.');
-    } finally {
-      setGoogleLoading(false);
-    }
+    setNotice('Google sign-up isn’t available yet. Please create your account with your email and a password.');
   };
 
-  return (
-    <div
-      style={{
-        backgroundColor: 'var(--color-bg)',
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: '40px 20px'
-      }}
-    >
+  const fields = [
+    {
+      label: 'Full name',
+      name: 'full-name',
+      required: true,
+      type: 'text',
+      placeholder: 'e.g. Ayesha Khan',
+      autoComplete: 'name',
+      onChange: (event) => setFullName(event.target.value),
+    },
+    {
+      label: 'Email',
+      name: 'email',
+      required: true,
+      type: 'email',
+      placeholder: 'name@university.com',
+      autoComplete: 'email',
+      onChange: (event) => setEmail(event.target.value),
+    },
+    {
+      label: 'Password',
+      name: 'password',
+      required: true,
+      type: 'password',
+      placeholder: 'At least 6 characters',
+      autoComplete: 'new-password',
+      onChange: (event) => setPassword(event.target.value),
+    },
+    {
+      label: 'Confirm password',
+      name: 'confirm-password',
+      required: true,
+      type: 'password',
+      placeholder: 'Enter it again',
+      autoComplete: 'new-password',
+      onChange: (event) => setConfirmPassword(event.target.value),
+    },
+  ];
 
-      {/* Top Logo Icon */}
-      <div
-        style={{
-          width: '44px',
-          height: '44px',
-          borderRadius: '10px',
-          backgroundColor: 'var(--color-primary)',
-          color: '#FFFFFF',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontWeight: 'bold',
-          fontSize: '1.3rem',
-          marginBottom: '16px'
-        }}
-      >
-        F
-      </div>
-
-      {/* Header Titles */}
-      <h1
-        style={{
-          fontSize: '1.8rem',
-          fontWeight: '700',
-          color: 'var(--color-dark)',
-          marginBottom: '6px',
-          textAlign: 'center'
-        }}
-      >
-        Create your account
-      </h1>
-
-      <p
-        style={{
-          fontSize: '0.92rem',
-          color: 'var(--color-text-muted)',
-          marginBottom: '28px',
-          textAlign: 'center'
-        }}
-      >
-        Start your study abroad journey today
-      </p>
-
-      {/* Register Card */}
-      <div
-        style={{
-          backgroundColor: '#FFFFFF',
-          borderRadius: '12px',
-          width: '100%',
-          maxWidth: 'var(--auth-card-width)',
-          padding: '36px 32px',
-          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.04)',
-          border: '1px solid var(--color-border-light)'
-        }}
-      >
-
-        {/* Error Message */}
-        {error && (
-          <div
-            style={{
-              backgroundColor: '#FEF2F2',
-              color: 'var(--color-danger)',
-              padding: '10px 14px',
-              borderRadius: '6px',
-              fontSize: '0.82rem',
-              marginBottom: '16px',
-              border: '1px solid #FCA5A5'
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit}>
-
-          {/* Full Name */}
-          <div style={{ marginBottom: '18px' }}>
-            <label
-              style={{
-                fontSize: '0.85rem',
-                fontWeight: '600',
-                color: 'var(--color-dark)',
-                marginBottom: '8px',
-                display: 'block'
-              }}
-            >
-              Full Name
-            </label>
-
-            <input
-              className="auth-form-input"
-              type="text"
-              placeholder="John Doe"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '11px 14px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border)',
-                fontSize: '0.9rem',
-                backgroundColor: '#FFFFFF'
-              }}
-              required
-            />
-          </div>
-
-          {/* Email */}
-          <div style={{ marginBottom: '18px' }}>
-            <label
-              style={{
-                fontSize: '0.85rem',
-                fontWeight: '600',
-                color: 'var(--color-dark)',
-                marginBottom: '8px',
-                display: 'block'
-              }}
-            >
-              Email Address
-            </label>
-
-            <input
-              className="auth-form-input"
-              type="email"
-              placeholder="name@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '11px 14px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border)',
-                fontSize: '0.9rem',
-                backgroundColor: '#FFFFFF'
-              }}
-              required
-            />
-          </div>
-
-          {/* Password */}
-          <div style={{ marginBottom: '18px' }}>
-            <label
-              style={{
-                fontSize: '0.85rem',
-                fontWeight: '600',
-                color: 'var(--color-dark)',
-                marginBottom: '8px',
-                display: 'block'
-              }}
-            >
-              Password
-            </label>
-
-            <input
-              className="auth-form-input"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '11px 14px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border)',
-                fontSize: '0.9rem',
-                backgroundColor: '#FFFFFF'
-              }}
-              required
-            />
-          </div>
-
-          {/* Confirm Password */}
-          <div style={{ marginBottom: '18px' }}>
-            <label
-              style={{
-                fontSize: '0.85rem',
-                fontWeight: '600',
-                color: 'var(--color-dark)',
-                marginBottom: '8px',
-                display: 'block'
-              }}
-            >
-              Confirm Password
-            </label>
-
-            <input
-              className="auth-form-input"
-              type="password"
-              placeholder="••••••••"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '11px 14px',
-                borderRadius: '6px',
-                border: '1px solid var(--color-border)',
-                fontSize: '0.9rem',
-                backgroundColor: '#FFFFFF'
-              }}
-              required
-            />
-          </div>
-
-          {/* Terms & Privacy */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: '10px',
-              marginBottom: '24px'
-            }}
-          >
-            <input
-              type="checkbox"
-              id="terms"
-              checked={agreeTerms}
-              onChange={(e) => setAgreeTerms(e.target.checked)}
-              style={{
-                width: '16px',
-                height: '16px',
-                marginTop: '3px',
-                accentColor: 'var(--color-primary)',
-                cursor: 'pointer'
-              }}
-            />
-
-            <label
-              htmlFor="terms"
-              style={{
-                fontSize: '0.82rem',
-                color: 'var(--color-text-muted)',
-                cursor: 'pointer',
-                lineHeight: '1.4'
-              }}
-            >
-              I agree to the{' '}
-              <a
-                href="#terms"
-                onClick={(event) => { event.preventDefault(); setPolicy('terms'); }}
-                style={{
-                  color: 'var(--color-primary)',
-                  textDecoration: 'none'
-                }}
-              >
-                Terms of Service
-              </a>{' '}
-              and{' '}
-              <a
-                href="#privacy"
-                onClick={(event) => { event.preventDefault(); setPolicy('privacy'); }}
-                style={{
-                  color: 'var(--color-primary)',
-                  textDecoration: 'none'
-                }}
-              >
-                Privacy Policy
-              </a>
-            </label>
-          </div>
-
-          {/* Create Account */}
-          <button
-            type="submit"
-            disabled={loading || googleLoading}
-            style={{
-              width: '100%',
-              padding: '12px',
-              fontSize: '0.95rem',
-              fontWeight: '600',
-              borderRadius: '6px',
-              backgroundColor: 'var(--color-primary)',
-              color: '#FFFFFF',
-              border: 'none',
-              cursor: loading ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {loading ? 'Creating Account...' : 'Create Account'}
-          </button>
-
-        </form>
-
-        {/* OR Divider */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            margin: '24px 0'
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              height: '1px',
-              backgroundColor: 'var(--color-border-light)'
-            }}
-          />
-
-          <span
-            style={{
-              fontSize: '0.78rem',
-              color: 'var(--color-text-muted)',
-              fontWeight: '500'
-            }}
-          >
-            OR
-          </span>
-
-          <div
-            style={{
-              flex: 1,
-              height: '1px',
-              backgroundColor: 'var(--color-border-light)'
-            }}
-          />
-        </div>
-
-        {/* Continue with Google */}
-        <button
-          type="button"
-          onClick={handleGoogleRegister}
-          disabled={loading || googleLoading}
-          style={{
-            width: '100%',
-            padding: '11px 14px',
-            fontSize: '0.92rem',
-            fontWeight: '600',
-            borderRadius: '6px',
-            backgroundColor: '#FFFFFF',
-            color: 'var(--color-dark)',
-            border: '1px solid var(--color-border)',
-            cursor: googleLoading ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '10px'
-          }}
-        >
-          {/* Google Icon */}
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              fill="#4285F4"
-              d="M21.35 12.27c0-.78-.07-1.53-.22-2.27H12v4.3h5.24a4.48 4.48 0 0 1-1.94 2.94v2.45h3.14c1.84-1.7 2.91-4.2 2.91-7.42z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 21.6c2.63 0 4.84-.87 6.45-2.35l-3.14-2.45c-.87.58-1.98.92-3.31.92-2.54 0-4.69-1.72-5.46-4.03H3.3v2.53A9.74 9.74 0 0 0 12 21.6z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M6.54 13.69A5.84 5.84 0 0 1 6.23 12c0-.59.1-1.16.31-1.69V7.78H3.3A9.74 9.74 0 0 0 2.25 12c0 1.57.38 3.05 1.05 4.22l3.24-2.53z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 6.28c1.43 0 2.72.49 3.73 1.45l2.8-2.8C16.83 3.39 14.63 2.4 12 2.4a9.74 9.74 0 0 0-8.7 5.38l3.24 2.53C7.31 8 9.46 6.28 12 6.28z"
-            />
-          </svg>
-
-          {googleLoading
-            ? 'Connecting to Google...'
-            : 'Continue with Google (Demo)'}
+  const termsCheckbox = (
+    <label className="flex items-start gap-2.5 text-sm text-(--color-text-muted)">
+      <input
+        type="checkbox"
+        checked={agreeTerms}
+        onChange={(event) => setAgreeTerms(event.target.checked)}
+        className="mt-0.5 size-4 shrink-0 cursor-pointer accent-(--brand-blue)"
+      />
+      <span>
+        I agree to the{' '}
+        <button type="button" className="font-semibold text-(--brand-blue) hover:cursor-pointer hover:underline" onClick={() => setPolicy('terms')}>
+          Terms of Service
+        </button>{' '}
+        and{' '}
+        <button type="button" className="font-semibold text-(--brand-blue) hover:cursor-pointer hover:underline" onClick={() => setPolicy('privacy')}>
+          Privacy Policy
         </button>
+      </span>
+    </label>
+  );
 
-        <hr
-          style={{
-            border: 'none',
-            borderTop: '1px solid var(--color-border-light)',
-            margin: '28px 0 20px 0'
-          }}
-        />
+  return (
+    <MotionConfig reducedMotion="user">
+      <div className="tw-spacing flex min-h-[100dvh] bg-white">
+        <AuthBrandPanel />
 
-        {/* Login Redirect */}
-        <div
-          style={{
-            textAlign: 'center',
-            fontSize: '0.88rem',
-            color: 'var(--color-text-muted)'
-          }}
-        >
-          Already have an account?{' '}
-
-          <Link
-            to="/login"
-            style={{
-              color: 'var(--color-primary)',
-              fontWeight: '700',
-              textDecoration: 'none',
-              display: 'block',
-              marginTop: '4px'
-            }}
-          >
-            Log in
+        <main className="flex w-full flex-col items-center justify-center px-6 py-10 lg:w-1/2">
+          <Link to="/" className="mb-8 lg:hidden" aria-label="FitScholars home">
+            <BrandLogo height={56} alt="" />
           </Link>
-        </div>
 
+          <AnimatedForm
+            header="Create your account"
+            centerHeader
+            fields={fields}
+            googleLogin="Continue with Google"
+            onGoogleLogin={handleGoogleRegister}
+            beforeSubmit={termsCheckbox}
+            submitButton="Create account"
+            submittingButton="Creating account…"
+            isSubmitting={loading}
+            errorField={error}
+            onSubmit={handleSubmit}
+            footer={(
+              <div className="flex flex-col items-center gap-3 text-sm">
+                {notice && (
+                  <p className="w-full rounded-md border border-(--brand-line) bg-(--brand-tint) px-3 py-2 text-(--brand-navy)" role="status">
+                    {notice}
+                  </p>
+                )}
+                <p className="text-(--color-text-muted)">
+                  Already have an account?{' '}
+                  <Link to="/login" className="font-semibold text-(--brand-blue) hover:underline">Sign in</Link>
+                </p>
+                <Link to="/" className="inline-flex items-center gap-1.5 text-(--color-text-muted) hover:text-(--color-dark)">
+                  <ArrowLeft size={15} aria-hidden="true" /> Back to home
+                </Link>
+              </div>
+            )}
+          />
+        </main>
       </div>
 
       <Modal
@@ -489,30 +169,9 @@ export default function Register() {
         title={policy === 'terms' ? 'Terms of Service' : 'Privacy Policy'}
       >
         <p style={{ color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-          {policy === 'terms'
-            ? 'This frontend demo creates a browser-only session. It does not submit account details to an account service.'
-            : 'This demo stores authentication and profile details in this browser. No server-side profile storage is configured.'}
+          {policy ? POLICY_TEXT[policy] : ''}
         </p>
       </Modal>
-
-      {/* Back to Home */}
-      <Link
-        to="/"
-        style={{
-          marginTop: '28px',
-          fontSize: '0.85rem',
-          color: 'var(--color-text-muted)',
-          textDecoration: 'none',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '6px',
-          fontWeight: '500'
-        }}
-      >
-        <ChevronSmallRightIcon size={16} className="rotate-180" aria-hidden="true" />
-        Back to FitScholars Home
-      </Link>
-
-    </div>
+    </MotionConfig>
   );
 }

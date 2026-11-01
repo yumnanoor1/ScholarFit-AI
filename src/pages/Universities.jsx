@@ -1,21 +1,33 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   Bookmark,
-  CalendarDays,
   CheckCircle2,
-  GraduationCap,
+  ChevronRight,
+  CircleHelp,
   Info,
   Landmark,
   Search,
-  Wallet,
   X,
+  XCircle,
 } from 'lucide-react';
 import { apiService } from '../services/api';
 import { useProfile } from '../context/ProfileContext';
-import { evaluateOpportunityEligibility } from '../services/opportunityJourney';
+import { useProgramEligibility } from '../hooks/useProgramEligibility';
+import { getDeadlineInfo, getUniversityLogo } from '../services/programFit';
 import { ComparisonSelectionBar, OpportunityCompareCheckbox } from '../components/opportunities/ComparisonControls';
+import { ELIGIBILITY_SORT_ORDER } from '../services/eligibilityBadges';
+import RetryButton from '../components/common/RetryButton';
+import './Universities.css';
+
+// Eligibility badge shown in each list row
+const ELIGIBILITY_BADGES = {
+  satisfied: { label: 'Eligible', tone: 'success', icon: CheckCircle2 },
+  'missing-information': { label: 'Profile info missing', tone: 'warning', icon: AlertTriangle },
+  'not-satisfied': { label: 'Not eligible', tone: 'danger', icon: XCircle },
+  'awaiting-verification': { label: 'Verify manually', tone: 'neutral', icon: CircleHelp },
+};
 
 const tuitionRanges = [
   { value: 'all', label: 'Any tuition range', max: Infinity },
@@ -29,16 +41,20 @@ function getAnnualTuition(tuition) {
   return Number.isFinite(amount) ? amount : null;
 }
 
+// Shown above the list when eligibility can't be checked for any program
+const ELIGIBILITY_NOTICES = {
+  'logged-out': 'Log in to see which programs you are eligible for.',
+  'no-profile': 'Complete your profile to see which programs you are eligible for.',
+  'not-found': 'Eligibility is not available for these programs yet.',
+  error: 'Eligibility could not be checked right now. Please try again later.',
+};
+
 export default function Universities() {
   const navigate = useNavigate();
   const {
-    profile,
-    documentRecords,
     isOpportunitySaved,
     toggleSaveOpportunity,
-    selectedOpportunities,
     activeOpportunityId,
-    selectOpportunity,
     comparisonOpportunityIds,
   } = useProfile();
   const [programs, setPrograms] = useState([]);
@@ -52,6 +68,9 @@ export default function Universities() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [showSampleBanner, setShowSampleBanner] = useState(false);
+  const eligibility = useProgramEligibility();
+  const { getEvaluation } = eligibility;
+  const isLoading = loading || eligibility.loading;
 
   useEffect(() => {
     let isCurrent = true;
@@ -97,7 +116,7 @@ export default function Universities() {
 
     return programs
       .filter((program) => {
-        if (statusFilter !== 'All' && evaluateOpportunityEligibility(profile, program).status !== statusFilter) return false;
+        if (statusFilter !== 'All' && getEvaluation(program.id).status !== statusFilter) return false;
         if (countryFilter !== 'All' && program.country !== countryFilter) return false;
         if (query && !`${program.program} ${program.university} ${program.country}`.toLowerCase().includes(query)) return false;
 
@@ -116,22 +135,24 @@ export default function Universities() {
           const difference = (getAnnualTuition(first.tuition) ?? Infinity) - (getAnnualTuition(second.tuition) ?? Infinity);
           return sortBy === 'tuition-asc' ? difference : -difference;
         }
-        return (second.matchScore ?? 0) - (first.matchScore ?? 0);
+        const statusDifference = ELIGIBILITY_SORT_ORDER[getEvaluation(first.id).status]
+          - ELIGIBILITY_SORT_ORDER[getEvaluation(second.id).status];
+        return statusDifference || (second.matchScore ?? 0) - (first.matchScore ?? 0);
       });
-  }, [programs, profile, searchTerm, statusFilter, countryFilter, tuitionFilter, fundingFilter, sortBy, scholarshipsByCountry]);
+  }, [programs, getEvaluation, searchTerm, statusFilter, countryFilter, tuitionFilter, fundingFilter, sortBy, scholarshipsByCountry]);
 
   const statusCounts = programs.reduce((counts, program) => {
-    const status = evaluateOpportunityEligibility(profile, program).status;
+    const status = getEvaluation(program.id).status;
     counts[status] = (counts[status] || 0) + 1;
     return counts;
   }, {});
   const filterTabs = [
     { value: 'All', label: 'All matches', count: programs.length },
-    { value: 'satisfied', label: 'Verified', count: statusCounts.satisfied || 0 },
+    { value: 'satisfied', label: 'Eligible', count: statusCounts.satisfied || 0 },
     { value: 'missing-information', label: 'Profile info missing', count: statusCounts['missing-information'] || 0 },
-    { value: 'not-satisfied', label: 'Not satisfied', count: statusCounts['not-satisfied'] || 0 },
-    { value: 'awaiting-verification', label: 'Awaiting verification', count: statusCounts['awaiting-verification'] || 0 },
-  ];
+    { value: 'not-satisfied', label: 'Not eligible', count: statusCounts['not-satisfied'] || 0 },
+    { value: 'awaiting-verification', label: 'Verify manually', count: statusCounts['awaiting-verification'] || 0 },
+  ].filter((tab) => tab.value === 'All' || tab.count > 0 || tab.value === statusFilter);
 
   return (
     <div className="universities-page">
@@ -166,19 +187,26 @@ export default function Universities() {
             <option value="tuition-desc">Sort by: Highest Tuition</option>
           </select>
         </div>
-        <div className="university-filter-tabs" role="group" aria-label="Requirement status filter">
-          {filterTabs.map((tab) => (
-            <button
-              key={tab.value}
-              type="button"
-              className={statusFilter === tab.value ? 'active' : ''}
-              aria-label={`${tab.label} (${tab.count})`}
-              aria-pressed={statusFilter === tab.value}
-              onClick={() => setStatusFilter(tab.value)}
-            >
-              {tab.label}<span className="university-filter-count">{tab.count}</span>
-            </button>
-          ))}
+        <div className="university-filter-row">
+          <div className="university-filter-tabs" role="group" aria-label="Requirement status filter">
+            {filterTabs.map((tab) => (
+              <button
+                key={tab.value}
+                type="button"
+                className={statusFilter === tab.value ? 'active' : ''}
+                aria-label={`${tab.label} (${tab.count})`}
+                aria-pressed={statusFilter === tab.value}
+                onClick={() => setStatusFilter(tab.value)}
+              >
+                {tab.label}<span className="university-filter-count">{tab.count}</span>
+              </button>
+            ))}
+          </div>
+          {!isLoading && !loadError && (
+            <p className="university-result-count">
+              {filteredPrograms.length} {filteredPrograms.length === 1 ? 'program' : 'programs'}
+            </p>
+          )}
         </div>
       </section>
 
@@ -193,116 +221,95 @@ export default function Universities() {
       )}
 
       <section className="university-results" aria-label="Matched university programs" aria-live="polite">
-        {loading && <p className="university-message">Loading university matches...</p>}
-        {!loading && loadError && <p className="university-message university-error" role="alert">{loadError}</p>}
-        {!loading && !loadError && filteredPrograms.length === 0 && (
+        {isLoading && <p className="university-message">Loading university matches...</p>}
+        {!isLoading && loadError && <div className="university-message university-error" role="alert"><p>{loadError}</p><RetryButton /></div>}
+        {!isLoading && !loadError && programs.length > 0 && eligibility.state !== 'ok' && (
+          <p className="university-notice" role="status">
+            <Info size={16} aria-hidden="true" />
+            <span>{ELIGIBILITY_NOTICES[eligibility.state] || ELIGIBILITY_NOTICES.error}</span>
+            {eligibility.state === 'no-profile' && (
+              <Link to="/profile">Complete profile <ChevronRight size={14} aria-hidden="true" /></Link>
+            )}
+          </p>
+        )}
+        {!isLoading && !loadError && filteredPrograms.length === 0 && (
           <p className="university-message">No programs match these filters. Try adjusting your search.</p>
         )}
-        {!loading && !loadError && filteredPrograms.map((program) => {
-          const evaluation = evaluateOpportunityEligibility(profile, program);
-          const isEligible = evaluation.status === 'satisfied';
-          const statusLabel = evaluation.status.replaceAll('-', ' ');
-          const countryScholarships = scholarshipsByCountry[program.country] || [];
-          const score = program.matchScore ?? 0;
-          const cgpaStatus = evaluation.requirements.find((requirement) => requirement.field === 'cgpa')?.status;
-          const englishStatus = evaluation.requirements.find((requirement) => requirement.field === 'englishScore')?.status;
-          const requiredDocuments = program.requiredDocuments || [];
-          const documentsPrepared = requiredDocuments.length > 0
-            && requiredDocuments.every((document) => documentRecords[document.id]?.status === 'uploaded');
-          return (
-            <article className="university-program-card" key={program.id}>
-              <div className="university-program-main">
-                <div className="university-program-identity">
-                  <span className="university-mark"><Landmark size={27} aria-hidden="true" /></span>
-                  <div className="university-program-copy">
-                    <h2>{program.program}</h2>
-                    <p><GraduationCap size={14} aria-hidden="true" /> {program.university} <span>·</span> {program.country}</p>
-                    <span className="university-degree-tag">{program.degree}</span>
-                    <span className={`university-status ${isEligible ? 'is-eligible' : 'is-missing'}`}>
-                      {isEligible ? <CheckCircle2 size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
-                      {statusLabel}
+        {!isLoading && !loadError && filteredPrograms.length > 0 && (
+          <div className="program-list" role="list">
+            <div className="program-list-head" aria-hidden="true">
+              <span>Program</span>
+              <span>Tuition / year</span>
+              <span>Deadline</span>
+              <span>Eligibility</span>
+              <span>Compare</span>
+            </div>
+            {filteredPrograms.map((program) => {
+              const evaluation = getEvaluation(program.id);
+              const status = ELIGIBILITY_BADGES[evaluation.status] || ELIGIBILITY_BADGES['awaiting-verification'];
+              const deadline = getDeadlineInfo(program.deadline);
+              const saved = isOpportunitySaved(program.id);
+              const openProgram = () => navigate(`/universities/${program.id}`);
+              return (
+                <div
+                  key={program.id}
+                  role="listitem"
+                  className={`program-row ${activeOpportunityId === program.id ? 'is-active' : ''}`}
+                  tabIndex={0}
+                  aria-label={`${program.program} at ${program.university}, ${status.label}. Open details`}
+                  onClick={openProgram}
+                  onKeyDown={(event) => {
+                    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault();
+                      openProgram();
+                    }
+                  }}
+                >
+                  <div className="program-row-main">
+                    <span className={`program-row-mark ${getUniversityLogo(program.university) ? 'has-logo' : ''}`} aria-hidden="true">
+                      {getUniversityLogo(program.university)
+                        ? <img src={getUniversityLogo(program.university)} alt="" loading="lazy" decoding="async" />
+                        : <Landmark size={20} />}
+                    </span>
+                    <div className="program-row-copy">
+                      <strong>{program.program}</strong>
+                      <span>{program.university} · {program.country}</span>
+                      {program.fieldOfStudy && (
+                        <span className="program-row-tags"><em>{program.fieldOfStudy}</em></span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="program-row-cell" data-label="Tuition / year">
+                    <strong>{program.tuitionOriginal || program.tuition || 'Not listed'}</strong>
+                    {program.tuitionAmount > 0 && program.tuitionCurrency !== 'USD' && program.tuition && <small>≈ {program.tuition.replace(' / year', '')}</small>}
+                  </div>
+                  <div className="program-row-cell" data-label="Deadline">
+                    <strong>{deadline ? deadline.label : program.deadline || 'Not listed'}</strong>
+                    {deadline && <small>{deadline.passed ? 'Passed' : `${deadline.days} days left`}</small>}
+                  </div>
+                  <div className="program-row-cell" data-label="Eligibility">
+                    <span className={`program-status is-${status.tone}`}>
+                      <status.icon size={14} aria-hidden="true" /> {status.label}
                     </span>
                   </div>
-                </div>
-
-                <div className="university-match">
-                  <div
-                    className="university-score-ring"
-                    role="progressbar"
-                    aria-label={`${program.program} sample match score`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={score}
-                    style={{ '--match-score': `${Math.min(Math.max(score, 0), 100)}%` }}
-                  >
-                    <strong>{score}%</strong>
+                  <div className="program-row-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                    <OpportunityCompareCheckbox opportunity={{ ...program, title: program.program }} />
+                    <button
+                      type="button"
+                      className={`program-row-save ${saved ? 'is-saved' : ''}`}
+                      aria-label={`${saved ? 'Remove saved' : 'Save'} ${program.program}`}
+                      aria-pressed={saved}
+                      onClick={() => toggleSaveOpportunity(program.id)}
+                    >
+                      <Bookmark size={16} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" />
+                    </button>
+                    <ChevronRight className="program-row-chevron" size={20} aria-hidden="true" />
                   </div>
                 </div>
-              </div>
-
-              <div className="university-program-details">
-                <div className="university-detail-metrics">
-                  <div className="university-detail-metric">
-                    <Wallet size={16} aria-hidden="true" />
-                    <div><span>Listed tuition / year</span><strong>{program.tuition || 'Not listed'} · unverified sample</strong></div>
-                  </div>
-                  <div className="university-detail-metric">
-                    <GraduationCap size={16} aria-hidden="true" />
-                    <div><span>Study duration</span><strong>{program.duration || 'Not listed'}</strong></div>
-                  </div>
-                  <div className="university-detail-metric">
-                    <CalendarDays size={16} aria-hidden="true" />
-                    <div><span>Listed deadline</span><strong>{program.deadline || 'Not listed'} · unverified sample</strong></div>
-                  </div>
-                </div>
-                <div className="university-requirement-chips" aria-label="Profile requirement checklist">
-                  <span className={cgpaStatus === 'satisfied' ? 'is-satisfied' : ''} title="CGPA status depends on official requirement verification">
-                    {cgpaStatus === 'satisfied' ? '✓' : '?'} CGPA
-                  </span>
-                  <span className={englishStatus === 'satisfied' ? 'is-satisfied' : ''} title="English status depends on official requirement verification">
-                    {englishStatus === 'satisfied' ? '✓' : '?'} English
-                  </span>
-                  <span className={documentsPrepared ? 'is-satisfied' : ''} title="Uploaded documents are not automatically verified">
-                    {documentsPrepared ? '✓' : '?'} Documents
-                  </span>
-                </div>
-              </div>
-
-              <div className="university-card-footer">
-                <button type="button" className="university-view-details" onClick={() => navigate(`/universities/${program.id}`)}>
-                  View Details <span aria-hidden="true">→</span>
-                </button>
-                {countryScholarships.length > 0 && (
-                  <button type="button" className="university-scholarship-link" onClick={() => navigate('/scholarships')}>
-                    View {countryScholarships.length} country scholarship {countryScholarships.length === 1 ? 'option' : 'options'}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="university-scholarship-link"
-                  onClick={() => selectOpportunity({ ...program, kind: 'program' })}
-                >
-                  {activeOpportunityId === program.id
-                    ? 'Viewing this opportunity'
-                    : selectedOpportunities.some((item) => item.id === program.id) ? 'Switch journey here' : 'Start this journey'}
-                </button>
-                <div className="university-card-footer-tools">
-                  <OpportunityCompareCheckbox opportunity={{ ...program, title: program.program }} />
-                  <button
-                    type="button"
-                    className={`university-save ${isOpportunitySaved(program.id) ? 'is-saved' : ''}`}
-                    aria-label={`${isOpportunitySaved(program.id) ? 'Remove saved' : 'Save'} ${program.program}`}
-                    aria-pressed={isOpportunitySaved(program.id)}
-                    onClick={() => toggleSaveOpportunity(program.id)}
-                  >
-                    <Bookmark size={15} fill={isOpportunitySaved(program.id) ? 'currentColor' : 'none'} aria-hidden="true" />
-                    {isOpportunitySaved(program.id) ? 'Saved' : 'Save'}
-                  </button>
-                </div>
-              </div>
-            </article>
-          );
-        })}
+              );
+            })}
+          </div>
+        )}
       </section>
       {comparisonOpportunityIds.length > 0 && <ComparisonSelectionBar />}
     </div>

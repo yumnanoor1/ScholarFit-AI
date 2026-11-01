@@ -4,6 +4,7 @@ import {
   AlertCircle, ArrowRight, CalendarDays, CheckCircle2, Circle, Clock3,
   FileText, GraduationCap,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
 import { apiService } from '../services/api';
 import { mockApplicationPathways } from '../data/mockData';
@@ -18,6 +19,8 @@ import {
   getSelectedApplicationStrategy,
   saveSelectedApplicationStrategy,
 } from '../services/applicationWorkflow';
+import UniversityLogo from '../components/common/UniversityLogo';
+import { getUniversityLogo } from '../services/programFit';
 import './Timeline.css';
 
 const EMPTY_TASK_STATUSES = {};
@@ -57,7 +60,9 @@ function TimelineTaskCard({
     ? 'Officially verified'
     : task.source === 'unverified-sample' || task.source === 'pathway-sample'
       ? 'Sample data · verify with provider'
-      : task.source;
+      : task.source === 'live-backend'
+        ? 'From the FitScholars database · verify with provider'
+        : task.source;
 
   return (
     <article className={`timeline-task-card ${status === 'in-progress' ? 'is-in-progress' : ''}`}>
@@ -123,6 +128,8 @@ export default function Timeline() {
     opportunityTaskStatuses,
     setOpportunityTaskStatus,
   } = useProfile();
+  const { user } = useAuth();
+  const userId = user?.id;
   const activeOpportunityId = activeOpportunity?.id;
   const [strategySelection, setStrategySelection] = useState(null);
   const [pathwayResult, setPathwayResult] = useState(null);
@@ -131,7 +138,7 @@ export default function Timeline() {
   const strategy = activeOpportunityId
     ? strategySelection?.opportunityId === activeOpportunityId
       ? strategySelection.value
-      : getSelectedApplicationStrategy(activeOpportunityId)
+      : getSelectedApplicationStrategy(userId, activeOpportunityId)
     : DEFAULT_APPLICATION_STRATEGY;
   const activeStatuses = activeOpportunityId
     ? opportunityTaskStatuses[activeOpportunityId] || EMPTY_TASK_STATUSES
@@ -179,7 +186,7 @@ export default function Timeline() {
   const changeStrategy = (event) => {
     const nextStrategy = event.target.value;
     try {
-      saveSelectedApplicationStrategy(activeOpportunity.id, nextStrategy);
+      saveSelectedApplicationStrategy(userId, activeOpportunity.id, nextStrategy);
       setStrategySelection({ opportunityId: activeOpportunity.id, value: nextStrategy });
       setPathwayError(null);
     } catch (error) {
@@ -238,6 +245,9 @@ export default function Timeline() {
   return (
     <main className="page-container application-timeline-page">
       <header className="timeline-page-heading">
+        {activeOpportunity.kind !== 'scholarship' && getUniversityLogo(activeOpportunity.university) && (
+          <UniversityLogo university={activeOpportunity.university} size={56} className="timeline-heading-logo" />
+        )}
         <div>
           <span className="timeline-eyebrow">STUDY OPPORTUNITY PLANNING</span>
           <h1>Application Tasks</h1>

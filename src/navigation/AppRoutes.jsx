@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // Global Context Providers
@@ -6,39 +7,46 @@ import { ProfileProvider } from '../context/ProfileContext';
 
 // Route Protection
 import ProtectedRoute from './ProtectedRoute';
+import AdminRoute from './AdminRoute';
 
 // Layout Components
 import Sidebar from '../components/layout/Sidebar';
 import Navbar from '../components/layout/Navbar';
 import ActiveOpportunityBar from '../components/opportunities/ActiveOpportunityBar';
 import RouteLoadingOverlay from '../components/common/RouteLoadingOverlay';
+import RouteErrorBoundary from '../components/common/RouteErrorBoundary';
+import Loader from '../components/common/Loader';
 
-// Public & Authentication Pages
-import Home from '../pages/Home';
-import Login from '../pages/Login';
-import Register from '../pages/Register';
+// Styles for every page, then the pages themselves, each loaded when first opened
+import './pageStyles';
 
-// Protected Application Pages
-import Dashboard from '../pages/Dashboard';
-import Profile from '../pages/Profile';
-import ProfileSetupChoice from '../pages/ProfileSetupChoice';
-import CvUpload from '../pages/CvUpload';
-import ProfileVerification from '../pages/ProfileVerification';
-import Documents from '../pages/Documents';
-import Universities from '../pages/Universities';
-import UniversityDetails from '../pages/UniversityDetails';
-import Scholarships from '../pages/Scholarships';
-import ScholarshipDetails from '../pages/ScholarshipDetails';
-import SavedOpportunities from '../pages/SavedOpportunities';
-import Compare from '../pages/Compare';
-import FinancialFeasibility from '../pages/FinancialFeasibility';
-import ApplicationPathway from '../pages/ApplicationPathway';
-import Recommendations from '../pages/Recommendations';
-import Timeline from '../pages/Timeline';
-import ProfileImprovement from '../pages/ProfileImprovement';
-import Settings from '../pages/Settings';
-import Explore from '../pages/Explore';
-import PathwayHub from '../pages/PathwayHub';
+const Home = lazy(() => import('../pages/Home'));
+const Login = lazy(() => import('../pages/Login'));
+const Register = lazy(() => import('../pages/Register'));
+const ForgotPassword = lazy(() => import('../pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('../pages/ResetPassword'));
+const Dashboard = lazy(() => import('../pages/Dashboard'));
+const Profile = lazy(() => import('../pages/Profile'));
+const ProfileSetupChoice = lazy(() => import('../pages/ProfileSetupChoice'));
+const CvUpload = lazy(() => import('../pages/CvUpload'));
+const ProfileVerification = lazy(() => import('../pages/ProfileVerification'));
+const Documents = lazy(() => import('../pages/Documents'));
+const Universities = lazy(() => import('../pages/Universities'));
+const UniversityDetails = lazy(() => import('../pages/UniversityDetails'));
+const Scholarships = lazy(() => import('../pages/Scholarships'));
+const ScholarshipDetails = lazy(() => import('../pages/ScholarshipDetails'));
+const SavedOpportunities = lazy(() => import('../pages/SavedOpportunities'));
+const Compare = lazy(() => import('../pages/Compare'));
+const FinancialFeasibility = lazy(() => import('../pages/FinancialFeasibility'));
+const ApplicationPathway = lazy(() => import('../pages/ApplicationPathway'));
+const Recommendations = lazy(() => import('../pages/Recommendations'));
+const Timeline = lazy(() => import('../pages/Timeline'));
+const ProfileImprovement = lazy(() => import('../pages/ProfileImprovement'));
+const AdminScholarships = lazy(() => import('../pages/AdminScholarships'));
+const AdminScholarshipEdit = lazy(() => import('../pages/AdminScholarshipEdit'));
+const Settings = lazy(() => import('../pages/Settings'));
+const Explore = lazy(() => import('../pages/Explore'));
+const PathwayHub = lazy(() => import('../pages/PathwayHub'));
 
 const ACTIVE_BAR_PATHS = ['/recommendations', '/financial', '/documents', '/timeline'];
 
@@ -49,6 +57,8 @@ export default function AppRoutes() {
     <AuthProvider>
       <ProfileProvider>
         <>
+          <RouteErrorBoundary key={`public-${pathname}`}>
+          <Suspense fallback={<Loader message="Loading page..." />}>
           <Routes>
 
           {/* =========================
@@ -58,6 +68,8 @@ export default function AppRoutes() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
 
           {/* =========================
@@ -82,6 +94,8 @@ export default function AppRoutes() {
                     <main className="app-container">
                       {ACTIVE_BAR_PATHS.includes(pathname.replace(/\/+$/, '')) && <ActiveOpportunityBar />}
 
+                      <RouteErrorBoundary key={pathname}>
+                      <Suspense fallback={<Loader message="Loading page..." />}>
                       <Routes>
 
                         {/* Profile Onboarding */}
@@ -146,6 +160,14 @@ export default function AppRoutes() {
                         />
 
 
+                        {/* Administration */}
+                        <Route element={<AdminRoute />}>
+                          <Route path="/admin/scholarships" element={<AdminScholarships />} />
+                          <Route path="/admin/scholarships/new" element={<AdminScholarshipEdit />} />
+                          <Route path="/admin/scholarships/:id" element={<AdminScholarshipEdit />} />
+                        </Route>
+
+
                         {/* Decision Support */}
                         <Route
                           path="/saved"
@@ -195,6 +217,8 @@ export default function AppRoutes() {
                         />
 
                       </Routes>
+                      </Suspense>
+                      </RouteErrorBoundary>
 
                     </main>
 
@@ -205,6 +229,8 @@ export default function AppRoutes() {
           </Route>
 
           </Routes>
+          </Suspense>
+          </RouteErrorBoundary>
           <RouteLoadingOverlay />
         </>
       </ProfileProvider>

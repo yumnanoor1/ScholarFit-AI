@@ -1,194 +1,289 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { 
-  Bookmark, 
-  Building2, 
-  Briefcase, 
-  ChevronDown,
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Bookmark, Briefcase, Building2, ChevronRight, Info,
 } from 'lucide-react';
-import { GlowCard } from '../components/ui/spotlight-card';
 import { ComparisonSelectionBar, OpportunityCompareCheckbox } from '../components/opportunities/ComparisonControls';
-import { mockScholarships } from '../data/mockData';
+import EligibilityBadge from '../components/opportunities/EligibilityBadge';
+import ScholarshipFilters from '../components/opportunities/ScholarshipFilters';
+import { getCoverageNote, getEligibilityLabel, getEligibilityReason, getMatchTone, getScholarshipDeadlineLabel } from '../services/eligibilityBadges';
+import { fetchScholarshipProgramCoverage, getSelectedProgramId, mapScholarshipToFrontend } from '../services/opportunityApi';
+import { EMPTY_FILTERS, PAGE_SIZE, buildSearchQuery, getPageCount } from '../services/scholarshipSearch';
+import MatchRing from '../components/opportunities/MatchRing';
+import { apiService } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
-import { evaluateOpportunityEligibility } from '../services/opportunityJourney';
+import SavedStatusNotice from '../components/opportunities/SavedStatusNotice';
+import { useEligibilityProfileKey, useScholarshipEligibility } from '../hooks/useProgramEligibility';
+import { getScholarshipLogo } from '../services/programFit';
+import UniversityLogo from '../components/common/UniversityLogo';
+import './Universities.css';
 import './Scholarships.css';
+
+// Icon colour per funding type
+const FUNDING_TONES = {
+  'Fully Funded': 'blue',
+  'Partially Funded': 'cyan',
+  'Mixed Funding': 'cyan',
+  'Tuition Only': 'navy',
+  RA: 'cyan',
+  Fellowship: 'navy',
+};
+
+// Shown above the table when eligibility can't be checked at all
+const SEARCH_DELAY_MS = 300;
+
+const ELIGIBILITY_NOTICES = {
+  'logged-out': 'Log in to see which scholarships you are eligible for.',
+  'no-profile': 'Complete your profile to see which scholarships you are eligible for.',
+  error: 'Eligibility could not be checked right now. Please try again later.',
+};
+
+// "European Union (multi-country, hosted …)" -> "European Union" for rows
+function shortCountry(country) {
+  return String(country || '').replace(/\s*\(.*\)\s*$/, '') || country;
+}
 
 export default function Scholarships() {
   const navigate = useNavigate();
   const {
     savedOpportunities,
-    profile,
     toggleSaveOpportunity,
-    selectedOpportunities,
     activeOpportunityId,
-    selectOpportunity,
     comparisonOpportunityIds,
   } = useProfile();
 
-  const [sortAscending, setSortAscending] = useState(false);
-  const [selectedCountries, setSelectedCountries] = useState([]);
-  const [selectedFundingTypes, setSelectedFundingTypes] = useState([]);
+  const { token } = useAuth();
+  const profileKey = useEligibilityProfileKey('scholarship');
+  const eligibility = useScholarshipEligibility();
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [searchText, setSearchText] = useState('');
+  const [sort, setSort] = useState('');
+  const [page, setPage] = useState(1);
+  const [programChoice, setProgramChoice] = useState(undefined);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [options, setOptions] = useState(null);
+  const [coverage, setCoverage] = useState({});
+  const [result, setResult] = useState(null);
+  const [retry, setRetry] = useState(0);
+  // Until the student chooses, the journey's active program applies
+  const programId = programChoice === undefined ? getSelectedProgramId(activeOpportunityId) : programChoice;
+  const query = buildSearchQuery(filters, { programId, sort, page });
+  const requestKey = `${token || ''}|${query}|${profileKey}|${retry}`;
 
-  const scholarshipsList = mockScholarships.map((item) => ({
-    ...item,
-    kind: 'scholarship',
-    title: item.name,
-    fundingType: item.type,
-    coverage: item.coverage || 'Coverage not listed',
-    deadlineBadge: item.deadline || 'Deadline not listed',
-    match: item.matchScore,
-    eligibility: evaluateOpportunityEligibility(profile, { ...item, kind: 'scholarship' }).status,
-    icon: item.type === 'RA'
-      ? <Briefcase size={20} color="var(--color-primary)" />
-      : <Building2 size={20} color="var(--color-primary)" />,
-  }));
-  const countries = [...new Set(scholarshipsList.map((item) => item.country).filter(Boolean))].sort();
-  const fundingTypes = [...new Set(scholarshipsList.map((item) => item.fundingType).filter(Boolean))];
+  // Any change to what's being asked for goes back to the first page
+  const changeFilters = useCallback((next) => { setFilters(next); setPage(1); }, []);
 
-  const toggleFilter = (setter, value) => {
-    setter((current) => current.includes(value)
-      ? current.filter((selected) => selected !== value)
-      : [...current, value]);
-  };
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilters((current) => (current.q === searchText ? current : { ...current, q: searchText }));
+      setPage((current) => (filters.q === searchText ? current : 1));
+    }, SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [searchText, filters.q]);
 
-  const visibleScholarships = scholarshipsList
-    .filter((item) => selectedCountries.length === 0 || selectedCountries.includes(item.country))
-    .filter((item) => selectedFundingTypes.length === 0 || selectedFundingTypes.includes(item.fundingType))
-    .sort((first, second) => sortAscending ? first.match - second.match : second.match - first.match);
+  useEffect(() => {
+    let isCurrent = true;
+    apiService.getScholarshipFilterOptions()
+      .then((data) => { if (isCurrent) setOptions(data); })
+      .catch((error) => console.warn('Filter options are unavailable.', error?.message));
+    // A small extra note, so the page works the same without it
+    fetchScholarshipProgramCoverage()
+      .then((rows) => { if (isCurrent) setCoverage(rows); })
+      .catch((error) => console.warn('Program coverage is unavailable.', error?.message));
+    return () => { isCurrent = false; };
+  }, []);
 
-  const handleSelectOpportunity = (item) => {
-    selectOpportunity(item);
-    navigate(`/scholarships/${item.id}`);
+  useEffect(() => {
+    let isCurrent = true;
+    apiService.searchScholarships(query, token)
+      .then((data) => { if (isCurrent) setResult({ key: requestKey, data }); })
+      .catch((error) => {
+        console.error('Unable to search scholarships.', error);
+        if (isCurrent) setResult({ key: requestKey, error: 'Scholarships could not be loaded. Please try again.' });
+      });
+    return () => { isCurrent = false; };
+  }, [requestKey, query, token]);
+
+  const current = result?.key === requestKey ? result : null;
+  const loading = !current;
+  const loadError = current?.error || '';
+  const data = current?.data || null;
+  // The last results stay in the count while a new search runs
+  const total = data?.total ?? result?.data?.total ?? 0;
+  const signedIn = Boolean(token);
+
+  const visibleScholarships = (data?.items || []).map(({ scholarship, deadline, ...entry }) => {
+    const item = mapScholarshipToFrontend(scholarship);
+    return {
+      ...item,
+      ...entry,
+      deadlineResult: deadline,
+      kind: 'scholarship',
+      title: item.name,
+      fundingType: item.type,
+      coverage: item.coverageSummary || item.coverage || 'Not listed',
+      match: entry.score,
+      evaluation: eligibility.getEvaluation(item.id),
+      icon: item.type === 'RA' ? <Briefcase size={20} /> : <Building2 size={20} />,
+      tone: FUNDING_TONES[item.type] || 'blue',
+    };
+  });
+
+  const clearAll = () => {
+    setSearchText('');
+    setProgramChoice(null);
+    changeFilters(EMPTY_FILTERS);
   };
 
   return (
     <div className="page-container scholarship-page" style={{ maxWidth: '1240px', margin: '0 auto', position: 'relative' }}>
       
-      <div className="scholarships-sort-row">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
-          <span style={{ color: 'var(--color-text-muted)' }}>Sort by</span>
-          <button type="button" onClick={() => setSortAscending((current) => !current)} aria-label={`Sort by match percentage, ${sortAscending ? 'ascending' : 'descending'}`} style={{
-            backgroundColor: '#FFFFFF',
-            border: '1px solid var(--color-border)',
-            borderRadius: '6px',
-            padding: '8px 14px',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontWeight: '600',
-            color: 'var(--color-dark)',
-            cursor: 'pointer'
-          }}>
-            Match % {sortAscending ? '↑' : '↓'} <ChevronDown size={16} />
-          </button>
-        </div>
-      </div>
+      <ScholarshipFilters
+        searchText={searchText}
+        onSearchText={setSearchText}
+        filters={filters}
+        onChange={(next) => { setSearchText(next.q); changeFilters(next); }}
+        options={options}
+        programId={programId}
+        onProgramChange={(value) => { setProgramChoice(value); changeFilters({ ...filters, match: [] }); }}
+        sort={sort}
+        onSortChange={(value) => { setSort(value); setPage(1); }}
+        total={loadError ? null : total}
+        loading={loading}
+        signedIn={signedIn}
+        open={filtersOpen}
+        onToggle={() => setFiltersOpen((value) => !value)}
+        onClear={clearAll}
+      />
 
-      <section className="scholarships-filter-bar" aria-label="Filter scholarships">
-        <fieldset className="scholarships-filter-group">
-          <legend>Country</legend>
-          <div className="scholarships-filter-options">
-            {countries.map((country) => (
-              <label className="scholarships-filter-chip" key={country}>
-                <input type="checkbox" checked={selectedCountries.includes(country)} onChange={() => toggleFilter(setSelectedCountries, country)} />
-                <span>{country}</span>
-                <small>{scholarshipsList.filter((item) => item.country === country).length}</small>
-              </label>
-            ))}
+      <section className={comparisonOpportunityIds.length > 0 ? 'has-comparison-selection' : ''} aria-label="Scholarships" aria-live="polite">
+        <SavedStatusNotice />
+        {!loading && !loadError && eligibility.state && eligibility.state !== 'ok' && (
+          <p className="university-notice" role="status">
+            <Info size={16} aria-hidden="true" />
+            <span>{ELIGIBILITY_NOTICES[eligibility.state] || ELIGIBILITY_NOTICES.error}</span>
+            {eligibility.state === 'no-profile' && <Link to="/profile">Complete profile</Link>}
+            {eligibility.state === 'logged-out' && <Link to="/login">Log in</Link>}
+          </p>
+        )}
+        {data?.profile_incomplete && (
+          <p className="university-notice" role="status">
+            <Info size={16} aria-hidden="true" />
+            <span>
+              Your eligibility and scores use an incomplete profile
+              {data.profile_gaps.length > 0 ? ` (missing: ${data.profile_gaps.map((gap) => gap.label.toLowerCase()).join(', ')})` : ''}.
+            </span>
+            <Link to="/profile">Update profile</Link>
+          </p>
+        )}
+        {loading ? (
+          <p className="university-message" role="status">Loading scholarships...</p>
+        ) : loadError ? (
+          <div className="university-message university-error" role="alert">
+            <p>{loadError}</p>
+            <button type="button" className="scholarships-clear" onClick={() => setRetry((value) => value + 1)}>Try again</button>
           </div>
-        </fieldset>
-        <fieldset className="scholarships-filter-group">
-          <legend>Funding type</legend>
-          <div className="scholarships-filter-options">
-            {fundingTypes.map((type) => (
-              <label className="scholarships-filter-chip" key={type}>
-                <input type="checkbox" checked={selectedFundingTypes.includes(type)} onChange={() => toggleFilter(setSelectedFundingTypes, type)} />
-                <span>{type}</span>
-                <small>{scholarshipsList.filter((item) => item.fundingType === type).length}</small>
-              </label>
-            ))}
+        ) : visibleScholarships.length === 0 ? (
+          <div className="university-message" role="status">
+            <p>No scholarships match this search. Try removing a filter or using fewer words.</p>
+            <button type="button" className="scholarships-clear" onClick={clearAll}>Clear all filters</button>
           </div>
-        </fieldset>
+        ) : (
+          <div className="program-list is-matches" role="list">
+            <div className="program-list-head" aria-hidden="true">
+              <span>Scholarship</span>
+              <span>Coverage</span>
+              <span>Deadline</span>
+              <span>Match</span>
+              <span>Eligibility</span>
+              <span>Compare</span>
+            </div>
+            {visibleScholarships.map((item) => {
+              const saved = savedOpportunities.includes(item.id);
+              const deadline = getScholarshipDeadlineLabel(item.deadlineResult);
+              const reason = eligibility.state === 'ok' ? getEligibilityReason(item.evaluation) : '';
+              const openDetails = () => navigate(`/scholarships/${item.id}`);
+              return (
+                <div
+                  key={item.id}
+                  role="listitem"
+                  className={`program-row ${activeOpportunityId === item.id ? 'is-active' : ''}`}
+                  tabIndex={0}
+                  aria-label={`${item.title}, ${item.provider || 'provider not listed'}, ${getEligibilityLabel(item.evaluation.status)}. Open details`}
+                  onClick={openDetails}
+                  onKeyDown={(event) => {
+                    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault();
+                      openDetails();
+                    }
+                  }}
+                >
+                  <div className="program-row-main">
+                    <UniversityLogo
+                      src={getScholarshipLogo(item)}
+                      size={42}
+                      bareFallback
+                      fallback={<span className={`program-row-mark is-scholarship tone-${item.tone}`} aria-hidden="true">{item.icon}</span>}
+                    />
+                    <div className="program-row-copy">
+                      <strong>{item.title}</strong>
+                      <span>{[item.provider || 'Provider not listed', shortCountry(item.country)].filter(Boolean).join(' · ')}</span>
+                      {item.fundingType && (
+                        <span className="program-row-tags"><em className="is-scholarship">{item.fundingType}</em></span>
+                      )}
+                      {getCoverageNote(coverage[item.id]) && <small>{getCoverageNote(coverage[item.id])}</small>}
+                      {item.program_match && (
+                        <small><span className={`program-status is-${getMatchTone(item.program_match.outcome)}`}>{item.program_match.label}</span></small>
+                      )}
+                      {item.verificationStatus === 'unverified' && <small>Unverified record</small>}
+                      {item.has_conflict && <small>Conflicting information on this record</small>}
+                      {item.nationality_status === 'not_evaluated' && <small>Your citizenship needs a manual check</small>}
+                      {item.matched_fields.length > 0 && <small>Found in: {item.matched_fields.join(', ')}</small>}
+                    </div>
+                  </div>
+                  <div className="program-row-cell" data-label="Coverage">
+                    <strong>{item.funding_label}</strong>
+                    <small>{item.coverage}</small>
+                  </div>
+                  <div className="program-row-cell" data-label="Deadline">
+                    <strong>{deadline ? deadline.label : item.deadline || 'Not listed'}</strong>
+                    {deadline && <small>{deadline.note}</small>}
+                  </div>
+                  <div className="program-row-cell" data-label="Match">
+                    <MatchRing score={item.match} />
+                    {item.exclusions.length > 0 && <small>{item.exclusions[0].rule === 'closed' ? 'Closed' : 'Not suitable'}</small>}
+                  </div>
+                  <div className="program-row-cell" data-label="Eligibility">
+                    <EligibilityBadge status={item.evaluation.status} />
+                    {reason && <small className="program-row-reason">{reason}</small>}
+                  </div>
+                  <div className="program-row-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                    <OpportunityCompareCheckbox opportunity={item} />
+                    <button
+                      type="button"
+                      className={`program-row-save ${saved ? 'is-saved' : ''}`}
+                      aria-label={`${saved ? 'Remove saved' : 'Save'} ${item.title}`}
+                      aria-pressed={saved}
+                      onClick={() => toggleSaveOpportunity(item.id)}
+                    >
+                      <Bookmark size={16} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" />
+                    </button>
+                    <ChevronRight className="program-row-chevron" size={20} aria-hidden="true" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {!loading && !loadError && total > PAGE_SIZE && (
+          <nav className="scholarships-pager" aria-label="Scholarship results pages">
+            <button type="button" disabled={page === 1} onClick={() => setPage((value) => value - 1)}>Previous</button>
+            <span>Page {page} of {getPageCount(total)}</span>
+            <button type="button" disabled={page >= getPageCount(total)} onClick={() => setPage((value) => value + 1)}>Next</button>
+          </nav>
+        )}
       </section>
-
-      <div className="scholarships-layout">
-        <div className={`scholarships-results${comparisonOpportunityIds.length > 0 ? ' has-comparison-selection' : ''}`}>
-          
-          {visibleScholarships.map(item => {
-            const isSaved = savedOpportunities.includes(item.id);
-            const isJourneySelected = selectedOpportunities.some((opportunity) => opportunity.id === item.id);
-
-            return (
-              <GlowCard
-                key={item.id}
-                customSize
-                className="scholarship-result-card"
-                style={{
-                  backgroundColor: '#FFFFFF',
-                  border: '1px solid #E2E8F0',
-                  borderRadius: '12px',
-                  boxShadow: '0 3px 10px rgba(0,0,0,0.04)'
-                }}
-              >
-                <div className="scholarship-result-header">
-                  <OpportunityCompareCheckbox opportunity={item} />
-                  <span className="scholarship-result-icon">{item.icon}</span>
-                  <div className="scholarship-result-identity">
-                    <h3>{item.title}</h3>
-                    <p>{item.provider || 'Provider not listed'}</p>
-                  </div>
-                  <span className={`scholarship-eligibility is-${item.eligibility}`}>
-                    {item.eligibility.replaceAll('-', ' ')}
-                  </span>
-                  <div className="scholarship-match-score">
-                    <strong>{item.match}%</strong>
-                    <span>Match score</span>
-                  </div>
-                </div>
-
-                <dl className="scholarship-result-details">
-                  <div className="scholarship-result-country">
-                    <dt>Country</dt>
-                    <dd>{item.country || 'Not listed'}</dd>
-                  </div>
-                  <div className="scholarship-result-coverage">
-                    <dt>Coverage listed</dt>
-                    <dd>{item.coverage}</dd>
-                  </div>
-                  <div className="scholarship-result-deadline">
-                    <dt>Deadline listed</dt>
-                    <dd>{item.deadline || 'Not listed'}</dd>
-                  </div>
-                </dl>
-
-                <div className="scholarship-result-actions">
-                  <button
-                    type="button"
-                    className={`scholarship-save-button${isSaved ? ' is-saved' : ''}`}
-                    aria-label={`${isSaved ? 'Unsave' : 'Save'} ${item.title}`}
-                    aria-pressed={isSaved}
-                    onClick={() => toggleSaveOpportunity(item.id)}
-                  >
-                    <Bookmark size={17} fill={isSaved ? 'currentColor' : 'none'} aria-hidden="true" />
-                    <span>{isSaved ? 'Saved' : 'Save'}</span>
-                  </button>
-                  <div className="scholarship-result-action-buttons">
-                    <button type="button" className="scholarship-select-button" onClick={() => handleSelectOpportunity(item)}>
-                      {activeOpportunityId === item.id ? 'Viewing' : isJourneySelected ? 'Switch here' : 'Select'}
-                    </button>
-                    <button type="button" className="scholarship-details-button" onClick={() => navigate(`/scholarships/${item.id}`)}>
-                      Details
-                    </button>
-                  </div>
-                </div>
-              </GlowCard>
-            );
-          })}
-
-          {visibleScholarships.length === 0 && <p role="status">No demo scholarships match these filters.</p>}
-        </div>
-
-      </div>
 
       {comparisonOpportunityIds.length > 0 && <ComparisonSelectionBar />}
     </div>

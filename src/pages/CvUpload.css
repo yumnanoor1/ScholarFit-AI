@@ -1,8 +1,12 @@
+/* Content is centred both ways in the space below the navbar */
 .cv-upload-page {
+  display: flex;
   width: 100%;
   max-width: none;
   min-height: calc(100vh - 112px);
-  padding: 46px 24px 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
   background: #f0f4f9;
 }
 
@@ -13,6 +17,19 @@
 
 .cv-upload-content > div:first-child {
   margin-bottom: 30px !important;
+  text-align: center;
+}
+
+/* PageHeader is a left-aligned flex row; centre it on this page */
+.cv-upload-content .page-header {
+  justify-content: center;
+  text-align: center;
+}
+
+.cv-upload-content .page-header-copy {
+  flex: 1 1 100%;
+  width: 100%;
+  text-align: center;
 }
 
 .cv-upload-content .page-title {
@@ -82,6 +99,7 @@
 
 .cv-upload-note {
   margin-top: 13px;
+  text-align: center;
   color: #505d6a;
   font-size: 0.88rem;
   line-height: 1.5;

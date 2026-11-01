@@ -1,9 +1,34 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { EMPTY_PROFILE } from '../data/profileModel';
 import { mockScholarships, mockUniversities } from '../data/mockData';
-import { getApplicationTaskStatuses, saveApplicationTaskStatuses } from '../services/applicationWorkflow';
+import { saveApplicationTaskStatuses } from '../services/applicationWorkflow';
+import {
+  ACTIVE_OPPORTUNITY_KEY,
+  APPLIED_OPPORTUNITIES_KEY,
+  COMPARISON_OPPORTUNITIES_KEY,
+  DOCUMENT_RECORDS_KEY,
+  SAVED_OPPORTUNITIES_KEY,
+  SELECTED_OPPORTUNITIES_KEY,
+  readOpportunityData,
+  readSavedLocally,
+  readUserProfile,
+  writeUserProfile,
+  writeUserStorage,
+} from '../services/userStorage';
+import {
+  createSavedQueue,
+  dismissRemovedSaves,
+  forgetLocalSave,
+  forgetSavedRecord,
+  getSaveErrorMessage,
+  isBackendSavedId,
+  loadSavedOpportunities,
+  rememberSavedRecord,
+  removeSavedScholarship,
+  saveScholarship,
+} from '../services/savedScholarshipsApi';
 import {
   getProfileApi,
   createProfileApi,
@@ -37,76 +62,9 @@ const DEFAULT_PROFILE = {
   profileComplete: false,
 };
 
-const PROFILE_STORAGE_KEY = 'fitscholar.profile.v2';
-const SAVED_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.savedOpportunities.v1';
-const DEFAULT_SAVED_OPPORTUNITIES = [];
-const COMPARISON_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.comparisonOpportunities.v1';
-const SELECTED_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.selectedOpportunities.v1';
-const ACTIVE_OPPORTUNITY_STORAGE_KEY = 'fitscholar.activeOpportunity.v1';
-const APPLIED_OPPORTUNITIES_STORAGE_KEY = 'fitscholar.appliedOpportunities.v1';
-const DOCUMENT_RECORDS_STORAGE_KEY = 'fitscholar.documentRecords.v1';
-const FINANCIAL_BUDGET_STORAGE_KEY = 'fitscholar.financialBudget.v1';
-
-function readJsonStorage(key, fallback) {
-  if (typeof window === 'undefined') return fallback;
-  try {
-    const stored = window.localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function persistJsonStorage(key, value) {
-  if (typeof window === 'undefined') return false;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-    return true;
-  } catch {
-    console.error(`Unable to persist ${key} in browser storage.`);
-    return false;
-  }
-}
-
-function readSavedOpportunities() {
-  if (typeof window === 'undefined') return DEFAULT_SAVED_OPPORTUNITIES;
-  try {
-    const saved = window.localStorage.getItem(SAVED_OPPORTUNITIES_STORAGE_KEY);
-    if (!saved) return DEFAULT_SAVED_OPPORTUNITIES;
-    const parsed = JSON.parse(saved);
-    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : DEFAULT_SAVED_OPPORTUNITIES;
-  } catch {
-    return DEFAULT_SAVED_OPPORTUNITIES;
-  }
-}
-
-function getProfileStorageKey(userId) {
-  return userId ? `${PROFILE_STORAGE_KEY}.${userId}` : PROFILE_STORAGE_KEY;
-}
-
 function readSavedProfile(userId) {
-  if (typeof window === 'undefined') return DEFAULT_PROFILE;
-  try {
-    const key = getProfileStorageKey(userId);
-    const savedProfile = window.localStorage.getItem(key) || window.localStorage.getItem(PROFILE_STORAGE_KEY);
-    return savedProfile ? { ...DEFAULT_PROFILE, ...JSON.parse(savedProfile) } : DEFAULT_PROFILE;
-  } catch {
-    return DEFAULT_PROFILE;
-  }
-}
-
-function persistProfile(profile, userId) {
-  if (typeof window === 'undefined') return;
-  const key = getProfileStorageKey(userId);
-  try {
-    const serialized = JSON.stringify(profile, (k, value) => (
-      ['profilePhoto', 'transcript', 'moiCertificate'].includes(k) ? null : value
-    ));
-    window.localStorage.setItem(key, serialized);
-    window.localStorage.setItem(PROFILE_STORAGE_KEY, serialized);
-  } catch {
-    return;
-  }
+  const savedProfile = readUserProfile(userId);
+  return savedProfile ? { ...DEFAULT_PROFILE, ...savedProfile } : DEFAULT_PROFILE;
 }
 
 function getPreferredCountries(value) {
@@ -178,39 +136,99 @@ function calculateMatchStatistics(profile) {
 
 export function ProfileProvider({ children }) {
   const { user, token } = useAuth();
+  const userId = user?.id;
   const [profile, setProfile] = useState(() => readSavedProfile(user?.id));
   const [hasBackendProfile, setHasBackendProfile] = useState(false);
-  const [savedOpportunities, setSavedOpportunities] = useState(readSavedOpportunities);
-  const [comparisonOpportunityIds, setComparisonOpportunityIds] = useState(() => {
-    const ids = readJsonStorage(COMPARISON_OPPORTUNITIES_STORAGE_KEY, []);
-    return Array.isArray(ids) ? [...new Set(ids.filter((id) => typeof id === 'string'))].slice(0, 2) : [];
-  });
-  const [selectedOpportunities, setSelectedOpportunities] = useState(() => {
-    const opportunities = readJsonStorage(SELECTED_OPPORTUNITIES_STORAGE_KEY, []);
-    return Array.isArray(opportunities) ? opportunities.filter((item) => item && typeof item.id === 'string') : [];
-  });
-  const [activeOpportunityId, setActiveOpportunityId] = useState(() => (
-    readJsonStorage(ACTIVE_OPPORTUNITY_STORAGE_KEY, null)
-  ));
-  const [appliedOpportunityIds, setAppliedOpportunityIds] = useState(() => {
-    const ids = readJsonStorage(APPLIED_OPPORTUNITIES_STORAGE_KEY, []);
-    return Array.isArray(ids) ? ids.filter((id) => typeof id === 'string') : [];
-  });
-  const [opportunityTaskStatuses, setOpportunityTaskStatuses] = useState(() => {
-    const statuses = getApplicationTaskStatuses();
-    return statuses && typeof statuses === 'object' && !Array.isArray(statuses) ? statuses : {};
-  });
-  const [documentRecords, setDocumentRecords] = useState(() => {
-    const records = readJsonStorage(DOCUMENT_RECORDS_STORAGE_KEY, {});
-    return records && typeof records === 'object' && !Array.isArray(records) ? records : {};
-  });
-  const [financialBudget, setFinancialBudget] = useState(() => {
-    const budget = readJsonStorage(FINANCIAL_BUDGET_STORAGE_KEY, null);
-    return budget && typeof budget.amount === 'string' && typeof budget.currency === 'string'
-      ? budget
-      : { amount: '', currency: '' };
-  });
+  const [initialData] = useState(() => readOpportunityData(userId));
+  const [dataOwnerId, setDataOwnerId] = useState(userId);
+  const [savedOpportunities, setSavedOpportunities] = useState(initialData.savedOpportunities);
+  const [savedRecords, setSavedRecords] = useState(initialData.savedRecords);
+  const [hasSavedSnapshot, setHasSavedSnapshot] = useState(initialData.hasSavedSnapshot);
+  const [removedSaves, setRemovedSaves] = useState(initialData.removedSaves);
+  const [savedStatus, setSavedStatus] = useState(token ? 'loading' : 'ready'); // loading | ready | error
+  const [savedReloadCount, setSavedReloadCount] = useState(0);
+  const [saveError, setSaveError] = useState('');
+  const [comparisonOpportunityIds, setComparisonOpportunityIds] = useState(initialData.comparisonOpportunityIds);
+  const [selectedOpportunities, setSelectedOpportunities] = useState(initialData.selectedOpportunities);
+  const [activeOpportunityId, setActiveOpportunityId] = useState(initialData.activeOpportunityId);
+  const [appliedOpportunityIds, setAppliedOpportunityIds] = useState(initialData.appliedOpportunityIds);
+  const [opportunityTaskStatuses, setOpportunityTaskStatuses] = useState(initialData.opportunityTaskStatuses);
+  const [documentRecords, setDocumentRecords] = useState(initialData.documentRecords);
   const [loading, setLoading] = useState(false);
+
+  // Swap during render, not in an effect, so the screen never shows the previous account's data
+  if (dataOwnerId !== userId) {
+    const data = readOpportunityData(userId);
+    setDataOwnerId(userId);
+    setProfile(readSavedProfile(userId));
+    setHasBackendProfile(false);
+    setSavedOpportunities(data.savedOpportunities);
+    setSavedRecords(data.savedRecords);
+    setHasSavedSnapshot(data.hasSavedSnapshot);
+    setRemovedSaves(data.removedSaves);
+    setSavedStatus(userId == null ? 'ready' : 'loading');
+    setSaveError('');
+    setComparisonOpportunityIds(data.comparisonOpportunityIds);
+    setSelectedOpportunities(data.selectedOpportunities);
+    setActiveOpportunityId(data.activeOpportunityId);
+    setAppliedOpportunityIds(data.appliedOpportunityIds);
+    setOpportunityTaskStatuses(data.opportunityTaskStatuses);
+    setDocumentRecords(data.documentRecords);
+  }
+
+  // Saves can finish after the account changed; their result must not reach the new account
+  const signedInUserId = useRef(userId);
+  useEffect(() => {
+    signedInUserId.current = userId;
+  }, [userId]);
+  const isStillSignedIn = () => userId != null && signedInUserId.current === userId;
+
+  // Saved scholarships come from the database; a failed load keeps the last confirmed list on screen.
+  // Each account has its own queue, so a slow request can't hold up or overwrite another account.
+  const savedSync = useRef({ ownerId: undefined });
+  const getSavedSync = (ownerId) => {
+    if (savedSync.current.ownerId !== ownerId) {
+      savedSync.current = { ownerId, enqueue: createSavedQueue(), inProgress: new Set() };
+    }
+    return savedSync.current;
+  };
+  useEffect(() => {
+    if (!token || userId == null) return undefined;
+    let isCurrent = true;
+    getSavedSync(userId).enqueue(() => loadSavedOpportunities(token, userId))
+      .then(({ ids, records, removed }) => {
+        if (!isCurrent) return;
+        setSavedOpportunities(ids);
+        setSavedRecords(records);
+        setHasSavedSnapshot(true);
+        setRemovedSaves(removed);
+        setSavedStatus('ready');
+      })
+      .catch((error) => {
+        console.warn('Unable to load saved scholarships:', error?.message);
+        if (isCurrent) setSavedStatus('error');
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, [userId, token, savedReloadCount]);
+
+  useEffect(() => {
+    if (!saveError) return undefined;
+    const timer = setTimeout(() => setSaveError(''), 6000);
+    return () => clearTimeout(timer);
+  }, [saveError]);
+
+  const retrySavedOpportunities = () => {
+    if (savedStatus === 'loading') return;
+    setSavedStatus('loading');
+    setSavedReloadCount((count) => count + 1);
+  };
+
+  const dismissRemovedSavedScholarships = () => {
+    dismissRemovedSaves(userId);
+    setRemovedSaves([]);
+  };
 
   // Fetch the authenticated student's profile from the backend on login / token availability
   useEffect(() => {
@@ -231,7 +249,7 @@ export function ProfileProvider({ children }) {
           setHasBackendProfile(true);
           const mappedProfile = mapBackendToFrontendProfile(data, user, cachedDraft);
           setProfile(mappedProfile);
-          persistProfile(mappedProfile, user.id);
+          writeUserProfile(user.id, mappedProfile);
         } else {
           // 404: Profile not yet created in PostgreSQL
           setHasBackendProfile(false);
@@ -251,7 +269,7 @@ export function ProfileProvider({ children }) {
               },
             };
             setProfile(initial);
-            persistProfile(initial, user.id);
+            writeUserProfile(user.id, initial);
           }
         }
       })
@@ -265,14 +283,16 @@ export function ProfileProvider({ children }) {
   }, [user?.id, token]);
 
   const saveCvUpload = (fileInfo) => {
+    if (!isStillSignedIn()) return;
     setProfile((current) => {
       const nextProfile = { ...current, cvUpload: fileInfo };
-      persistProfile(nextProfile, user?.id);
+      writeUserProfile(userId, nextProfile);
       return nextProfile;
     });
   };
 
   const saveExtractedProfile = ({ extractedProfile, fieldStatuses, fileInfo }) => {
+    if (!isStillSignedIn()) return;
     setProfile((current) => {
       const nextProfile = {
         ...current,
@@ -288,12 +308,15 @@ export function ProfileProvider({ children }) {
         profileCompletionPercentage: 0,
         verifiedProfile: null,
       };
-      persistProfile(nextProfile, user?.id);
+      writeUserProfile(userId, nextProfile);
       return nextProfile;
     });
   };
 
   const updateProfile = async (updatedData, progress = { step: 0, complete: false }) => {
+    if (!isStillSignedIn()) {
+      return { success: false, error: 'Please sign in to save your profile.' };
+    }
     setLoading(true);
 
     try {
@@ -361,12 +384,12 @@ export function ProfileProvider({ children }) {
           } else {
             try {
               await createProfileApi(token, backendPayload);
-              setHasBackendProfile(true);
+              if (isStillSignedIn()) setHasBackendProfile(true);
             } catch (createErr) {
               // If it already exists on server, gracefully switch to PUT update
               if (createErr.status === 400 && String(createErr.message).includes('already exists')) {
                 await updateProfileApi(token, backendPayload);
-                setHasBackendProfile(true);
+                if (isStillSignedIn()) setHasBackendProfile(true);
               } else {
                 throw createErr;
               }
@@ -385,8 +408,8 @@ export function ProfileProvider({ children }) {
         }
       }
 
-      persistProfile(finalProfile, user?.id);
-      setProfile(finalProfile);
+      writeUserProfile(userId, finalProfile);
+      if (isStillSignedIn()) setProfile(finalProfile);
 
       return {
         success: true,
@@ -404,18 +427,47 @@ export function ProfileProvider({ children }) {
     }
   };
 
-  const toggleSaveOpportunity = (id) => {
-    setSavedOpportunities((prev) => {
-      const next = prev.includes(id)
-        ? prev.filter((savedId) => savedId !== id)
-        : [...prev, id];
-      try {
-        window.localStorage.setItem(SAVED_OPPORTUNITIES_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        return next;
+  const toggleSaveOpportunity = async (id) => {
+    if (!isStillSignedIn()) return;
+    const removing = savedOpportunities.includes(id);
+
+    if (!isBackendSavedId(id)) {
+      const local = readSavedLocally(userId);
+      writeUserStorage(SAVED_OPPORTUNITIES_KEY, userId, removing ? local.filter((savedId) => savedId !== id) : [...local, id]);
+      setSavedOpportunities((prev) => (removing ? prev.filter((savedId) => savedId !== id) : [...prev, id]));
+      return;
+    }
+
+    // The bookmark changes only after the database confirms it
+    const { enqueue, inProgress } = getSavedSync(userId);
+    if (inProgress.has(id)) return;
+    inProgress.add(id);
+    const dropSaved = () => {
+      forgetLocalSave(userId, id);
+      forgetSavedRecord(userId, id);
+      if (!isStillSignedIn()) return;
+      setSavedOpportunities((prev) => prev.filter((savedId) => savedId !== id));
+      setSavedRecords((prev) => prev.filter((record) => `sch-db-${record.scholarship_id}` !== id));
+    };
+    try {
+      const record = await enqueue(() => (removing ? removeSavedScholarship : saveScholarship)(token, id));
+      if (removing) {
+        dropSaved();
+      } else {
+        rememberSavedRecord(userId, record);
+        if (isStillSignedIn()) {
+          setSavedOpportunities((prev) => [...new Set([...prev, id])]);
+          setSavedRecords((prev) => [...prev.filter((item) => item.scholarship_id !== record.scholarship_id), record]);
+        }
       }
-      return next;
-    });
+      if (isStillSignedIn()) setSaveError('');
+    } catch (error) {
+      console.warn('Unable to update saved scholarship:', error?.message);
+      if (error?.status === 404) dropSaved(); // deleted, so it can't stay bookmarked
+      if (isStillSignedIn()) setSaveError(getSaveErrorMessage(error, removing));
+    } finally {
+      inProgress.delete(id);
+    }
   };
 
   const isOpportunitySaved = (id) => {
@@ -432,13 +484,13 @@ export function ProfileProvider({ children }) {
         : current.length < 2
           ? [...current, id]
           : current;
-      if (next !== current) persistJsonStorage(COMPARISON_OPPORTUNITIES_STORAGE_KEY, next);
+      if (next !== current) writeUserStorage(COMPARISON_OPPORTUNITIES_KEY, userId, next);
       return next;
     });
   };
 
   const clearComparisonOpportunities = () => {
-    persistJsonStorage(COMPARISON_OPPORTUNITIES_STORAGE_KEY, []);
+    writeUserStorage(COMPARISON_OPPORTUNITIES_KEY, userId, []);
     setComparisonOpportunityIds([]);
   };
 
@@ -459,10 +511,10 @@ export function ProfileProvider({ children }) {
     const next = selectedOpportunities.some((item) => item.id === snapshot.id)
       ? selectedOpportunities.map((item) => item.id === snapshot.id ? snapshot : item)
       : [...selectedOpportunities, snapshot];
-    persistJsonStorage(SELECTED_OPPORTUNITIES_STORAGE_KEY, next);
+    writeUserStorage(SELECTED_OPPORTUNITIES_KEY, userId, next);
     setSelectedOpportunities(next);
     setActiveOpportunityId(snapshot.id);
-    persistJsonStorage(ACTIVE_OPPORTUNITY_STORAGE_KEY, snapshot.id);
+    writeUserStorage(ACTIVE_OPPORTUNITY_KEY, userId, snapshot.id);
   };
 
   const setActiveOpportunity = (id) => {
@@ -470,12 +522,12 @@ export function ProfileProvider({ children }) {
       throw new Error('Only a selected opportunity can become active.');
     }
     setActiveOpportunityId(id);
-    persistJsonStorage(ACTIVE_OPPORTUNITY_STORAGE_KEY, id);
+    writeUserStorage(ACTIVE_OPPORTUNITY_KEY, userId, id);
   };
 
   const removeSelectedOpportunity = (id) => {
     const next = selectedOpportunities.filter((item) => item.id !== id);
-    persistJsonStorage(SELECTED_OPPORTUNITIES_STORAGE_KEY, next);
+    writeUserStorage(SELECTED_OPPORTUNITIES_KEY, userId, next);
     setSelectedOpportunities(next);
     if (activeOpportunityId === id) setActiveOpportunity(null);
   };
@@ -484,7 +536,7 @@ export function ProfileProvider({ children }) {
     const next = applied
       ? [...new Set([...appliedOpportunityIds, id])]
       : appliedOpportunityIds.filter((item) => item !== id);
-    persistJsonStorage(APPLIED_OPPORTUNITIES_STORAGE_KEY, next);
+    writeUserStorage(APPLIED_OPPORTUNITIES_KEY, userId, next);
     setAppliedOpportunityIds(next);
   };
 
@@ -496,7 +548,7 @@ export function ProfileProvider({ children }) {
       ...opportunityTaskStatuses,
       [opportunityId]: { ...opportunityTaskStatuses[opportunityId], [taskId]: status },
     };
-    saveApplicationTaskStatuses(opportunityId, next[opportunityId]);
+    saveApplicationTaskStatuses(userId, opportunityId, next[opportunityId]);
     setOpportunityTaskStatuses(next);
   };
 
@@ -511,31 +563,15 @@ export function ProfileProvider({ children }) {
       status: 'awaiting-verification',
     };
     const next = { ...documentRecords, [documentId]: record };
-    persistJsonStorage(DOCUMENT_RECORDS_STORAGE_KEY, next);
+    writeUserStorage(DOCUMENT_RECORDS_KEY, userId, next);
     setDocumentRecords(next);
   };
 
   const removeDocumentRecord = (documentId) => {
     const next = { ...documentRecords };
     delete next[documentId];
-    persistJsonStorage(DOCUMENT_RECORDS_STORAGE_KEY, next);
+    writeUserStorage(DOCUMENT_RECORDS_KEY, userId, next);
     setDocumentRecords(next);
-  };
-
-  const saveFinancialBudget = (budget) => {
-    if (
-      !budget ||
-      typeof budget.amount !== 'string' ||
-      typeof budget.currency !== 'string' ||
-      (budget.amount !== '' && (!Number.isFinite(Number(budget.amount)) || Number(budget.amount) < 0))
-    ) {
-      throw new Error('Enter a valid non-negative total study budget and currency.');
-    }
-    const next = { amount: budget.amount, currency: budget.currency.trim().toUpperCase() };
-    if (!persistJsonStorage(FINANCIAL_BUDGET_STORAGE_KEY, next)) {
-      throw new Error('Unable to persist the financial budget in browser storage.');
-    }
-    setFinancialBudget(next);
   };
 
   return (
@@ -543,8 +579,6 @@ export function ProfileProvider({ children }) {
       documentRecords,
       saveDocumentRecord,
       removeDocumentRecord,
-      financialBudget,
-      saveFinancialBudget,
       profile: profileWithAccount,
       loading,
       hasBackendProfile,
@@ -553,6 +587,12 @@ export function ProfileProvider({ children }) {
       saveExtractedProfile,
       matchStatistics: calculateMatchStatistics(profileWithAccount),
       savedOpportunities,
+      savedRecords,
+      hasSavedSnapshot,
+      removedSaves,
+      dismissRemovedSavedScholarships,
+      savedStatus,
+      retrySavedOpportunities,
       toggleSaveOpportunity,
       isOpportunitySaved,
       comparisonOpportunityIds,
@@ -570,6 +610,7 @@ export function ProfileProvider({ children }) {
       setOpportunityTaskStatus,
     }}>
       {children}
+      {saveError && <p className="save-error-notice" role="alert">{saveError}</p>}
     </ProfileContext.Provider>
   );
 }

@@ -79,6 +79,9 @@ export default function CvUpload() {
         await wait(240);
       }
       const extraction = await extractProfileFromCv(file, { user });
+      if (extraction.source === 'no-readable-text') {
+        throw new Error('We couldn’t find any text in this file. Scanned PDFs and older .doc files can’t be read. Upload a text-based PDF or DOCX, or go back and build your profile manually.');
+      }
       setProcessingStep(PROCESSING_STEPS.length - 1);
       await wait(180);
       saveExtractedProfile({

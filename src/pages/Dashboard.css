@@ -307,6 +307,41 @@
   background: linear-gradient(145deg, #e6f2ff, #cbdff5);
 }
 
+.dashboard-campus-photo-wrap {
+  display: block;
+  align-self: center;
+}
+
+.dashboard-campus-photo {
+  display: block;
+  width: 82px;
+  height: 82px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: linear-gradient(145deg, #e6f2ff, #cbdff5);
+}
+
+/* University logo on a white tile */
+.dashboard-university-logo {
+  display: grid;
+  width: 82px;
+  height: 82px;
+  align-self: center;
+  place-items: center;
+  padding: 10px;
+  border: 1px solid #e1edf8;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.dashboard-university-logo img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
 .dashboard-match-content {
   min-width: 0;
   align-self: center;
@@ -327,19 +362,6 @@
   font-weight: 720;
   line-height: 1.35;
   overflow-wrap: anywhere;
-}
-
-.dashboard-match-score {
-  position: absolute;
-  top: 9px;
-  right: 9px;
-  padding: 4px 8px;
-  border-radius: 99px;
-  color: #07835d;
-  background: #dcf8ec;
-  font-size: 12px;
-  font-weight: 750;
-  white-space: nowrap;
 }
 
 .dashboard-match-program {
@@ -412,10 +434,6 @@
 .dashboard-button-secondary:hover,
 .dashboard-button-secondary.is-selected {
   background: #edf6ff;
-}
-
-.dashboard-match-sample {
-  display: none;
 }
 
 .dashboard-matches-message {
@@ -560,12 +578,14 @@
 
 .dashboard-rail-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
 .dashboard-rail-heading h2 {
+  min-width: 0;
   color: #132b5c;
   font-size: .88rem;
   font-weight: 750;
@@ -587,6 +607,8 @@
 .dashboard-next-tasks,
 .dashboard-upcoming-deadlines {
   display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
   gap: 9px;
   padding: 12px;
   border: 1px solid #dce9f7;
@@ -751,9 +773,15 @@
     padding: 6px;
   }
 
-  .dashboard-campus-placeholder {
+  .dashboard-campus-placeholder,
+  .dashboard-campus-photo,
+  .dashboard-university-logo {
     width: 64px;
     height: 64px;
+  }
+
+  .dashboard-university-logo {
+    padding: 8px;
   }
 
   .dashboard-match-content {
@@ -768,12 +796,7 @@
     padding-top: 20px;
   }
 
-  .dashboard-match-score {
-    top: 7px;
-    right: 7px;
-  }
-
-  .dashboard-match-meta {
+    .dashboard-match-meta {
     gap: 3px 9px;
   }
 
@@ -800,4 +823,216 @@
   .dashboard-rail {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ---- Colour accents ---- */
+
+/* Stat tiles: each tile has its own colour (top bar, icon, soft corner glow) */
+.dashboard-page .dashboard-stat-card {
+  --tone: var(--brand-blue);
+  --tone-2: var(--brand-sky);
+  position: relative;
+  overflow: hidden;
+  border-color: var(--color-border-light);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--tone) 14%, transparent) 0, transparent 120px),
+    #fff;
+  box-shadow: 0 6px 18px -14px rgba(9, 38, 74, 0.45);
+}
+
+.dashboard-page .dashboard-stat-card.tone-green { --tone: var(--color-success); --tone-2: #4CAF50; }
+.dashboard-page .dashboard-stat-card.tone-amber { --tone: var(--color-warning); --tone-2: #F59E0B; }
+.dashboard-page .dashboard-stat-card.tone-cyan { --tone: var(--brand-cyan); --tone-2: var(--brand-sky); }
+
+.dashboard-page .dashboard-stat-card::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--tone), var(--tone-2));
+  content: '';
+}
+
+.dashboard-page .dashboard-stat-card:hover {
+  border-color: color-mix(in srgb, var(--tone) 35%, #fff);
+  box-shadow: 0 12px 24px -16px color-mix(in srgb, var(--tone) 60%, transparent);
+}
+
+.dashboard-page .dashboard-stat-card .dashboard-stat-icon {
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--tone), var(--tone-2));
+  color: #fff;
+  box-shadow: 0 6px 12px -8px var(--tone);
+}
+
+.dashboard-page .dashboard-stat-card > strong {
+  color: var(--color-dark);
+  font-family: var(--font-family-heading);
+}
+
+/* Shared card look for the big panels */
+.dashboard-page .dashboard-matches,
+.dashboard-page .dashboard-profile-card,
+.dashboard-page .dashboard-next-tasks,
+.dashboard-page .dashboard-upcoming-deadlines {
+  border-color: var(--color-border-light);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 8px 24px -18px rgba(9, 38, 74, 0.45);
+}
+
+.dashboard-page .dashboard-section-heading h2,
+.dashboard-page .dashboard-rail-heading h2,
+.dashboard-page .dashboard-profile-card h2 {
+  color: var(--color-dark);
+  font-family: var(--font-family-heading);
+}
+
+/* Top matches: blue edge, lift on hover, gradient match pill */
+.dashboard-page .dashboard-match-card {
+  border-color: var(--color-border-light);
+  border-radius: 12px;
+  background: linear-gradient(100deg, var(--brand-surface) 0%, #fff 40%);
+  box-shadow: inset 4px 0 0 var(--brand-blue);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dashboard-page .dashboard-match-card:nth-child(2) { box-shadow: inset 4px 0 0 var(--brand-cyan); }
+.dashboard-page .dashboard-match-card:nth-child(3) { box-shadow: inset 4px 0 0 var(--brand-navy-light); }
+
+.dashboard-page .dashboard-match-card:hover {
+  transform: translateY(-2px);
+  box-shadow: inset 4px 0 0 var(--brand-blue), 0 12px 24px -18px rgba(9, 38, 74, 0.6);
+}
+
+.dashboard-page .dashboard-university-logo {
+  border-color: var(--brand-tint);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px -8px rgba(9, 38, 74, 0.4);
+}
+
+.dashboard-page .dashboard-match-title-row h3 {
+  color: var(--brand-blue);
+}
+
+.dashboard-page .dashboard-match-program {
+  color: var(--color-dark);
+  font-weight: 600;
+}
+
+.dashboard-page /* Profile completeness: tinted header area and a blue-to-cyan ring */
+.dashboard-page .dashboard-profile-card {
+  background: linear-gradient(180deg, var(--brand-tint) 0%, #fff 55%);
+}
+
+.dashboard-page .dashboard-profile-ring {
+  background: conic-gradient(var(--brand-blue) 0, var(--brand-cyan) var(--profile-completion), var(--brand-line) 0);
+  box-shadow: 0 8px 20px -12px rgba(18, 106, 169, 0.5);
+}
+
+.dashboard-page .dashboard-profile-ring span {
+  color: var(--brand-blue);
+}
+
+.dashboard-page .dashboard-profile-card > button {
+  border-color: transparent;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--brand-blue), var(--brand-blue-hover));
+}
+
+/* Rail headings get a small coloured icon */
+.dashboard-rail-heading h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dashboard-rail-icon {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 8px;
+  color: #fff;
+}
+
+.dashboard-rail-icon.is-blue { background: linear-gradient(135deg, var(--brand-blue), var(--brand-cyan)); }
+.dashboard-rail-icon.is-amber { background: linear-gradient(135deg, var(--color-warning), #F59E0B); }
+
+/* Next tasks: numbered steps */
+.dashboard-page .dashboard-next-tasks ol {
+  counter-reset: dashboard-task;
+}
+
+.dashboard-page .dashboard-next-tasks li {
+  counter-increment: dashboard-task;
+  border-color: var(--color-border-light);
+  border-radius: 10px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.dashboard-page .dashboard-next-tasks li:hover {
+  border-color: var(--brand-line);
+  background: var(--brand-surface);
+}
+
+.dashboard-page .dashboard-next-tasks li > button {
+  color: var(--color-dark);
+}
+
+.dashboard-page .dashboard-next-tasks li > button::before {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--brand-tint);
+  color: var(--brand-blue);
+  content: counter(dashboard-task);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dashboard-page .dashboard-next-tasks li > button > span {
+  flex: 1;
+}
+
+/* Deadlines: amber edge like a calendar tab */
+.dashboard-page .dashboard-upcoming-deadlines li {
+  border-color: var(--color-border-light);
+  border-radius: 10px;
+  background: linear-gradient(100deg, var(--color-warning-bg) 0%, #fff 55%);
+  box-shadow: inset 4px 0 0 var(--color-warning);
+}
+
+.dashboard-page .dashboard-upcoming-deadlines li > span {
+  color: var(--color-dark);
+}
+
+.dashboard-page .dashboard-upcoming-deadlines li > strong {
+  color: var(--color-warning-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-page .dashboard-match-card:hover {
+    transform: none;
+  }
+}
+
+.dashboard-page .dashboard-rail-heading h2,
+.dashboard-page .dashboard-rail-heading > button {
+  white-space: nowrap;
+}
+
+/* Stat tiles: labels take two lines' room so the numbers line up across all four tiles */
+.dashboard-page .dashboard-stat-card .dashboard-stat-label {
+  display: -webkit-box;
+  min-height: calc(12px * 1.3 * 2);
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }

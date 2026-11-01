@@ -1,9 +1,12 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { startTransition } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bookmark, Calculator, FileText, GitCompare,
-  GraduationCap, Home, Map, Plane,
-  Settings, UserRound,
+  GraduationCap, Home, LogOut, Map,
+  Settings, ShieldCheck, UserRound,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import BrandLogo from '../common/BrandLogo';
 
 const navigationGroups = [
   {
@@ -16,7 +19,7 @@ const navigationGroups = [
   {
     label: 'Plan',
     links: [
-      { to: '/compare', label: 'Compare Programs', icon: GitCompare },
+      { to: '/compare', label: 'Compare', icon: GitCompare },
       { to: '/financial', label: 'Financial Planner', icon: Calculator },
       { to: '/pathway', label: 'Application Pathway', icon: Map, match: ['/pathway', '/timeline'] },
       { to: '/documents', label: 'Documents', icon: FileText },
@@ -40,14 +43,21 @@ function SidebarLink({ to, label, icon: Icon, match }) {
 }
 
 export default function Sidebar() {
+  const navigate = useNavigate();
+  const { logout, user } = useAuth();
+
+  // Together, so ProtectedRoute doesn't record this page as somewhere to return to after login
+  const handleLogout = () => {
+    startTransition(() => {
+      logout();
+      navigate('/login', { replace: true });
+    });
+  };
+
   return (
     <aside className="sidebar">
       <NavLink to="/dashboard" className="sidebar-brand" aria-label="FitScholars dashboard">
-        <span className="sidebar-brand-mark"><Plane size={23} aria-hidden="true" /></span>
-        <span className="sidebar-brand-copy">
-          <strong>FitScholars</strong>
-          <small>Study Abroad &amp; Scholarship<br />Decision Support System</small>
-        </span>
+        <BrandLogo tone="light" height={62} alt="" />
       </NavLink>
 
       <nav className="sidebar-nav" aria-label="Main navigation">
@@ -64,7 +74,12 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-bottom">
+        {user?.role === 'admin' && <SidebarLink to="/admin/scholarships" label="Administration" icon={ShieldCheck} />}
         <SidebarLink to="/settings" label="Settings" icon={Settings} />
+        <button type="button" className="sidebar-link sidebar-logout" onClick={handleLogout}>
+          <LogOut size={18} aria-hidden="true" />
+          <span>Log out</span>
+        </button>
       </div>
     </aside>
   );

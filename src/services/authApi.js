@@ -1,3 +1,5 @@
+import { reachApi } from './reachApi.js';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
 function extractErrorMessage(data, fallback = 'Request failed') {
@@ -31,7 +33,7 @@ export async function loginUser(email, password) {
   formData.append('username', email.trim());
   formData.append('password', password);
 
-  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  const response = await reachApi(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -52,7 +54,7 @@ export async function loginUser(email, password) {
 }
 
 export async function getCurrentUser(token) {
-  const response = await fetch(`${API_BASE_URL}/auth/me`, {
+  const response = await reachApi(`${API_BASE_URL}/auth/me`, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -72,7 +74,7 @@ export async function getCurrentUser(token) {
 }
 
 export async function registerUser(fullName, email, password) {
-  const response = await fetch(`${API_BASE_URL}/auth/register`, {
+  const response = await reachApi(`${API_BASE_URL}/auth/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -96,3 +98,28 @@ export async function registerUser(fullName, email, password) {
   return normalizeUser(data);
 }
 
+
+async function postJson(path, body, fallback) {
+  const response = await reachApi(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(extractErrorMessage(data, fallback));
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+/** POST /auth/forgot-password -> { message } (same reply whether or not the account exists) */
+export function requestPasswordReset(email) {
+  return postJson('/auth/forgot-password', { email: email.trim() }, 'Could not send the reset link. Please try again.');
+}
+
+/** POST /auth/reset-password -> { message } */
+export function resetPassword(token, newPassword) {
+  return postJson('/auth/reset-password', { token, new_password: newPassword }, 'Could not reset your password. Please try again.');
+}

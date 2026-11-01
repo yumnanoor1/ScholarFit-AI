@@ -23,8 +23,8 @@ export default function ProfileVerification() {
       if (result?.success) return true;
       setSaveError(result?.error || 'Your progress could not be saved. Please try again.');
       return false;
-    } catch {
-      setSaveError(result?.error || 'Your progress could not be saved. Please try again.');
+    } catch (error) {
+      setSaveError(error?.message || 'Your progress could not be saved. Please try again.');
       return false;
     }
   };

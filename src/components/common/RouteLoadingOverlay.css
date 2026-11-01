@@ -21,16 +21,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.route-loading-mark {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 12px;
-  color: var(--color-white);
-  background: var(--color-primary);
-}
-
 .route-loading-spinner {
   width: 24px;
   height: 24px;
@@ -39,12 +29,6 @@
   border-right-color: var(--color-primary);
   border-radius: 50%;
   animation: route-spinner-turn 700ms linear infinite;
-}
-
-.route-loading-title {
-  color: var(--color-dark);
-  font-size: 0.9rem;
-  font-weight: 700;
 }
 
 .route-loading-message {

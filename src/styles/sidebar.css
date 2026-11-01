@@ -15,45 +15,17 @@
 .sidebar-brand {
   display: flex;
   min-height: 93px;
-  align-items: center;
-  gap: 10px;
-  padding: 15px 20px 13px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  padding: 14px 20px 12px;
   color: #fff;
   text-decoration: none;
 }
 
-.sidebar-brand-mark {
-  display: inline-flex;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(89, 179, 255, .37);
-  border-radius: 50%;
-  color: #55b7ff;
-  background: rgba(18, 113, 199, .16);
-  transform: rotate(-12deg);
-}
-
-.sidebar-brand-copy {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.sidebar-brand-copy strong {
-  color: #fff;
-  font-size: 1.12rem;
-  font-weight: 750;
-  letter-spacing: -.025em;
-  line-height: 1;
-}
-
-.sidebar-brand-copy small {
-  color: #c3d9f0;
-  font-size: 12px;
-  line-height: 1.45;
+.sidebar-brand .brand-logo {
+  max-width: 100%;
 }
 
 .sidebar-nav {
@@ -61,7 +33,7 @@
   overflow-y: auto;
   padding: 10px 12px 12px;
   scrollbar-color: rgba(176, 205, 235, .35) transparent;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 
 .sidebar-primary-links {
@@ -136,6 +108,14 @@
   padding: 7px 12px 13px;
 }
 
+.sidebar-logout {
+  width: 100%;
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .sidebar-improve-card {
   display: grid;
   min-width: 0;
@@ -187,7 +167,8 @@
   background: linear-gradient(120deg, rgba(25, 111, 196, .8), rgba(17, 86, 153, .75));
 }
 
-.sidebar a:focus-visible {
+.sidebar a:focus-visible,
+.sidebar button:focus-visible {
   outline: 3px solid #82c7ff;
   outline-offset: 2px;
 }
@@ -204,20 +185,14 @@
 
   .sidebar-brand {
     min-height: 64px;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
     padding: 10px 14px;
   }
 
-  .sidebar-brand-mark {
-    width: 34px;
-    height: 34px;
-  }
-
-  .sidebar-brand-copy strong {
-    font-size: 1rem;
-  }
-
-  .sidebar-brand-copy small {
-    font-size: 12px;
+  .sidebar-brand .brand-logo {
+    height: 44px !important;
   }
 
   .sidebar-nav {
@@ -257,6 +232,10 @@
 
   .sidebar-bottom .sidebar-link {
     align-self: stretch;
+  }
+
+  .sidebar-logout {
+    width: auto;
   }
 }
 

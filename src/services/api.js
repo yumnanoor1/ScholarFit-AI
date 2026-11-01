@@ -1,18 +1,45 @@
 import { getProfileApi } from './profileApi';
-import { fetchMappedPrograms, fetchProgramById, mapProgramToFrontend } from './opportunityApi';
+import {
+  fetchMappedPrograms,
+  fetchProgramById,
+  mapProgramToFrontend,
+  fetchProgramEligibilities,
+  fetchProgramEligibilityById,
+  mapEligibilityToFrontend,
+  getEligibilityErrorState,
+  fetchMappedScholarships,
+  fetchScholarshipById,
+  mapScholarshipToFrontend,
+  parseScholarshipId,
+  postFinancialFeasibility,
+  fetchProfileImprovements,
+  fetchFinancialPlan,
+  putFinancialBudget,
+  putProgramExpenses,
+  fetchScholarshipEligibilities,
+  fetchScholarshipEligibilityById,
+  mapScholarshipEligibilityToFrontend,
+  fetchScholarshipRecommendations,
+  fetchScholarshipRecommendation,
+  fetchScholarshipSearch,
+  fetchScholarshipFilterOptions,
+} from './opportunityApi';
 import {
   mockProfile,
   mockScholarships,
   mockApplicationPathways,
-  mockRecommendations,
 } from '../data/mockData';
 
 /**
  * Service Layer for FitScholars
  * Provides an abstraction layer between UI components and backend services.
- * Profile, Programs, and Universities now call the real FastAPI backend.
- * Scholarships, Pathways, Recommendations, and Document extraction still use mock data.
+ * Profile, Programs, Universities, Scholarships, and Program eligibility call the real FastAPI backend.
+ * Pathways, Recommendations, and Document extraction have no backend endpoints yet and use local data.
  */
+function readStoredToken() {
+  return typeof window !== 'undefined' ? localStorage.getItem('fitscholar_token') : null;
+}
+
 export const apiService = {
   // ---------------------------------------------------------------------------
   // Profile Endpoints
@@ -23,7 +50,7 @@ export const apiService = {
    * FastAPI Target Endpoint: GET /profile/
    */
   getProfile: async () => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('fitscholar_token') : null;
+    const token = readStoredToken();
     if (token) {
       try {
         const { exists, data } = await getProfileApi(token);
@@ -77,17 +104,115 @@ export const apiService = {
   },
 
   // ---------------------------------------------------------------------------
+  // Program Eligibility Endpoints (authenticated)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check the student's backend profile against every program.
+   * FastAPI Endpoint: GET /eligibility/programs
+   * Never rejects. Resolves to { state, results } where state is
+   * 'ok' | 'logged-out' | 'no-profile' | 'error' and results maps the
+   * frontend program ID (string) to a mapped evaluation.
+   */
+  getProgramEligibilities: async (token = readStoredToken()) => {
+    if (!token) return { state: 'logged-out', results: {} };
+    try {
+      const data = await fetchProgramEligibilities(token);
+      const results = Object.fromEntries(
+        (Array.isArray(data) ? data : []).map((item) => [String(item.program_id), mapEligibilityToFrontend(item)]),
+      );
+      return { state: 'ok', results };
+    } catch (err) {
+      console.warn('apiService.getProgramEligibilities backend error:', err?.message);
+      return { state: getEligibilityErrorState(err), results: {} };
+    }
+  },
+
+  /**
+   * Check the student's backend profile against one program.
+   * FastAPI Endpoint: GET /eligibility/programs/{id}
+   * Never rejects. Resolves to { state, evaluation } where state is
+   * 'ok' | 'logged-out' | 'no-profile' | 'not-found' | 'error'.
+   */
+  getProgramEligibilityById: async (id, token = readStoredToken()) => {
+    if (!token) return { state: 'logged-out', evaluation: null };
+    if (!Number.isFinite(Number(id))) return { state: 'not-found', evaluation: null };
+    try {
+      const data = await fetchProgramEligibilityById(token, id);
+      return { state: 'ok', evaluation: mapEligibilityToFrontend(data) };
+    } catch (err) {
+      console.warn('apiService.getProgramEligibilityById backend error:', err?.message);
+      return { state: getEligibilityErrorState(err), evaluation: null };
+    }
+  },
+
+  /**
+   * Check the student's backend profile against every verified scholarship.
+   * FastAPI Endpoint: GET /eligibility/scholarships
+   * Never rejects. Resolves to { state, results } like getProgramEligibilities;
+   * results are keyed by the frontend scholarship ID ("sch-db-12").
+   */
+  getScholarshipEligibilities: async (token = readStoredToken()) => {
+    if (!token) return { state: 'logged-out', results: {} };
+    try {
+      const data = await fetchScholarshipEligibilities(token);
+      const results = Object.fromEntries(
+        (Array.isArray(data) ? data : []).map((item) => [`sch-db-${item.scholarship_id}`, mapScholarshipEligibilityToFrontend(item)]),
+      );
+      return { state: 'ok', results };
+    } catch (err) {
+      console.warn('apiService.getScholarshipEligibilities backend error:', err?.message);
+      return { state: getEligibilityErrorState(err), results: {} };
+    }
+  },
+
+  /**
+   * Check the student's backend profile against one scholarship.
+   * FastAPI Endpoint: GET /eligibility/scholarships/{id}
+   * Never rejects. Resolves to { state, evaluation }.
+   */
+  getScholarshipEligibilityById: async (id, token = readStoredToken()) => {
+    if (!token) return { state: 'logged-out', evaluation: null };
+    try {
+      const data = await fetchScholarshipEligibilityById(token, id);
+      return { state: 'ok', evaluation: mapScholarshipEligibilityToFrontend(data) };
+    } catch (err) {
+      console.warn('apiService.getScholarshipEligibilityById backend error:', err?.message);
+      return { state: getEligibilityErrorState(err), evaluation: null };
+    }
+  },
+
+  /**
+   * Personal guidance from the student's profile and eligibility results.
+   * FastAPI Endpoint: GET /eligibility/improvements
+   * Never rejects. Resolves to { state, data } where state is
+   * 'ok' | 'logged-out' | 'no-profile' | 'not-found' | 'error'.
+   */
+  getProfileImprovements: async (query, token = readStoredToken()) => {
+    if (!token) return { state: 'logged-out', data: null };
+    try {
+      return { state: 'ok', data: await fetchProfileImprovements(token, query || {}) };
+    } catch (err) {
+      console.warn('apiService.getProfileImprovements backend error:', err?.message);
+      return { state: getEligibilityErrorState(err), data: null };
+    }
+  },
+
+  // ---------------------------------------------------------------------------
   // Scholarship & Funding Endpoints
   // ---------------------------------------------------------------------------
 
   /**
-   * Retrieve matched scholarships, assistantships, and waivers.
-   * Still uses mock data — scholarship backend integration is a separate task.
+   * Retrieve verified scholarships from the real FastAPI backend.
+   * FastAPI Endpoint: GET /scholarships/
+   * Like programs, never falls back to mock data; errors reach the caller.
    */
+  searchScholarships: (query, token = readStoredToken()) => fetchScholarshipSearch(query, token),
+
+  getScholarshipFilterOptions: () => fetchScholarshipFilterOptions(),
+
   getMatchedScholarships: async () => {
-    return new Promise((resolve) => {
-      setTimeout(() => resolve([...mockScholarships]), 300);
-    });
+    return fetchMappedScholarships();
   },
 
   /**
@@ -104,23 +229,23 @@ export const apiService = {
     } catch (err) {
       console.warn('getOpportunityById: backend lookup failed:', err?.message);
     }
-    // Fall back to mock scholarships
-    const scholarships = await apiService.getMatchedScholarships();
-    const scholarship = scholarships.find((item) => item.id === id);
-    return scholarship ? { ...scholarship, kind: 'scholarship' } : null;
+    // Backend scholarships use "sch-db-<id>"
+    if (parseScholarshipId(id) != null) {
+      const scholarship = await fetchScholarshipById(id);
+      return scholarship ? mapScholarshipToFrontend(scholarship) : null;
+    }
+    // Older saved selections may still hold sample scholarship IDs (sch-1…)
+    const sample = mockScholarships.find((item) => item.id === id);
+    return sample ? { ...sample, kind: 'scholarship' } : null;
   },
 
   /**
    * Fetch details for a specific scholarship.
-   * FastAPI Target Endpoint: GET /api/v1/scholarships/{id}
+   * FastAPI Endpoint: GET /scholarships/{id}
    */
   getScholarshipById: async (id) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const item = mockScholarships.find((s) => s.id === id);
-        resolve(item || null);
-      }, 200);
-    });
+    const scholarship = await fetchScholarshipById(id);
+    return scholarship ? mapScholarshipToFrontend(scholarship) : null;
   },
 
   // ---------------------------------------------------------------------------
@@ -143,13 +268,67 @@ export const apiService = {
   },
 
   /**
-   * Fetch explainable decision-support recommendations.
-   * FastAPI Target Endpoint: GET /api/v1/recommendations
+   * Calculate whether a program (optionally with a scholarship) fits the student's budget.
+   * FastAPI Endpoint: POST /financial-feasibility/calculate
+   * Rejects with an error carrying `.status` (401 when signed out).
    */
-  getRecommendations: async () => {
-    return new Promise((resolve) => {
-      setTimeout(() => resolve([...mockRecommendations]), 300);
-    });
+  calculateFinancialFeasibility: async (payload, { signal, token = readStoredToken() } = {}) => {
+    if (!token) {
+      const error = new Error('Sign in to calculate financial feasibility.');
+      error.status = 401;
+      throw error;
+    }
+    return postFinancialFeasibility(token, payload, { signal });
+  },
+
+  /**
+   * The student's saved budget and expense estimates.
+   * FastAPI Endpoints: GET /financial-feasibility/plan, PUT .../plan/budget, PUT .../plan/expenses/{programId}
+   * Reject with an error carrying `.status` (401 when signed out).
+   */
+  getFinancialPlan: async (token = readStoredToken()) => {
+    if (!token) throw Object.assign(new Error('Sign in to see your financial plan.'), { status: 401 });
+    return fetchFinancialPlan(token);
+  },
+
+  saveFinancialBudget: async (budget, token = readStoredToken()) => {
+    if (!token) throw Object.assign(new Error('Sign in to save your budget.'), { status: 401 });
+    return putFinancialBudget(token, budget);
+  },
+
+  saveProgramExpenses: async (programId, expenses, token = readStoredToken()) => {
+    if (!token) throw Object.assign(new Error('Sign in to save your costs.'), { status: 401 });
+    return putProgramExpenses(token, programId, expenses);
+  },
+
+  /**
+   * Scholarships ranked for the logged-in student, optionally for one program.
+   * FastAPI Endpoint: GET /recommendations/scholarships
+   * Never rejects. Resolves to { state, data }; state is 'ok' | 'logged-out' | 'not-found' | 'error'.
+   */
+  getRecommendations: async (programId = null, token = readStoredToken()) => {
+    if (!token) return { state: 'logged-out', data: null };
+    try {
+      return { state: 'ok', data: await fetchScholarshipRecommendations(token, programId) };
+    } catch (err) {
+      console.warn('apiService.getRecommendations backend error:', err?.message);
+      return { state: getEligibilityErrorState(err), data: null };
+    }
+  },
+
+  /**
+   * The logged-in student's result for one scholarship.
+   * FastAPI Endpoint: GET /recommendations/scholarships/{id}
+   * Never rejects. Resolves to { state, data }.
+   */
+  getScholarshipRecommendation: async (id, programId = null, token = readStoredToken()) => {
+    if (!token) return { state: 'logged-out', data: null };
+    try {
+      return { state: 'ok', data: await fetchScholarshipRecommendation(token, id, programId) };
+    } catch (err) {
+      console.warn('apiService.getScholarshipRecommendation backend error:', err?.message);
+      return { state: getEligibilityErrorState(err), data: null };
+    }
   },
 
   // ---------------------------------------------------------------------------

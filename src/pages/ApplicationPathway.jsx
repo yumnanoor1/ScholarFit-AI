@@ -13,11 +13,11 @@ import {
   Info,
   LockKeyhole,
   Map,
-  Plane,
   Search,
   UserRound,
   WalletCards,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
 import { apiService } from '../services/api';
 import { mockApplicationPathways } from '../data/mockData';
@@ -28,6 +28,7 @@ import {
   getSelectedApplicationStrategy,
   saveSelectedApplicationStrategy,
 } from '../services/applicationWorkflow';
+import UniversityLogo from '../components/common/UniversityLogo';
 import './ApplicationPathway.css';
 
 const STEP_ICONS = [
@@ -41,33 +42,22 @@ const STEP_ICONS = [
   Flag,
 ];
 
-function JourneyIllustration() {
+// Banner photo on the right, faded into the hero gradient (see .application-pathway-photo)
+function JourneyPhoto() {
   return (
-    <svg className="application-pathway-illustration" viewBox="0 0 520 190" aria-hidden="true">
-      <defs>
-        <linearGradient id="pathway-mountain-back" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stopColor="#d7efff" />
-          <stop offset="1" stopColor="#aad5fa" />
-        </linearGradient>
-        <linearGradient id="pathway-mountain-front" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stopColor="#84c4f7" />
-          <stop offset="1" stopColor="#3b8ce0" />
-        </linearGradient>
-      </defs>
-      <path d="M0 190 108 104l48 41 91-94 75 75 55-47 143 111Z" fill="url(#pathway-mountain-back)" opacity=".72" />
-      <path d="m122 190 111-117 54 58 45-38 92 97Z" fill="url(#pathway-mountain-front)" opacity=".76" />
-      <path d="m214 190 75-91 40 43 24-23 69 71Z" fill="#5ba7ed" opacity=".72" />
-      <path d="M159 52c66-42 107-35 147-22" fill="none" stroke="#77b8ed" strokeDasharray="5 7" strokeWidth="2" />
-      <path d="m295 26 19 4-16 12 4-8-11-2Z" fill="#196bc2" />
-      <path d="m382 36 15-15 2 17-8-5-10 3Z" fill="#fff" opacity=".95" />
-      <path d="M389 36v27" stroke="#4b91d2" strokeWidth="2" />
-    </svg>
+    <img
+      className="application-pathway-photo"
+      src="/images/graduation-students.jpg"
+      alt=""
+      aria-hidden="true"
+      decoding="async"
+    />
   );
 }
 
-const JOURNEY_ROWS = [190, 80, 190];
-const JOURNEY_ROW_TOPS = [0, 190, 270];
-const JOURNEY_HEIGHT = 460;
+const JOURNEY_ROWS = [215, 95, 215];
+const JOURNEY_ROW_TOPS = [0, 215, 310];
+const JOURNEY_HEIGHT = 525;
 const NODE_CENTER_Y = 40;
 
 function getJourneyPosition(index, stepCount) {
@@ -91,8 +81,8 @@ function getJourneySegments(stepCount) {
       const bulge = Math.min(previous.x + 110, 995);
       return `M ${previous.x} ${previous.y} C ${bulge} ${previous.y}, ${bulge} ${point.y}, ${point.x} ${point.y}`;
     }
-    const midY = (previous.y + point.y) / 2;
-    return `M ${previous.x} ${previous.y} C ${previous.x} ${midY}, ${point.x + 60} ${point.y}, ${point.x} ${point.y}`;
+    // Leave the node sideways so the curve clears the step's text below it
+    return `M ${previous.x} ${previous.y} C ${previous.x - 140} ${previous.y}, ${point.x} ${previous.y}, ${point.x} ${point.y}`;
   });
 }
 
@@ -151,18 +141,21 @@ function JourneyStep({ step, index, stepCount, status, isNext, canUpdate, onTogg
           {completed ? <Check size={13} strokeWidth={3} aria-hidden="true" /> : index + 1}
         </span>
       </div>
-      <h2 className="application-journey-title">{step.title}</h2>
-      <p className="application-journey-desc">{getStepDescription(step)}</p>
-      <button
-        type="button"
-        className={`application-journey-chip is-${state}`}
-        onClick={onToggle}
-        disabled={!canUpdate || state === 'locked'}
-        title={state === 'current' ? 'Mark this step as completed' : state === 'complete' ? 'Mark this step as not completed' : undefined}
-      >
-        {completed ? <BadgeCheck size={13} aria-hidden="true" /> : isNext ? <Circle size={12} aria-hidden="true" /> : <LockKeyhole size={12} aria-hidden="true" />}
-        {completed ? 'Completed' : isNext ? 'In Progress' : 'Locked'}
-      </button>
+      {/* Opaque backing so the roadmap line passes behind the text, never through it */}
+      <div className="application-journey-copy">
+        <h2 className="application-journey-title">{step.title}</h2>
+        <p className="application-journey-desc">{getStepDescription(step)}</p>
+        <button
+          type="button"
+          className={`application-journey-chip is-${state}`}
+          onClick={onToggle}
+          disabled={!canUpdate || state === 'locked'}
+          title={state === 'current' ? 'Mark this step as completed' : state === 'complete' ? 'Mark this step as not completed' : undefined}
+        >
+          {completed ? <BadgeCheck size={13} aria-hidden="true" /> : isNext ? <Circle size={12} aria-hidden="true" /> : <LockKeyhole size={12} aria-hidden="true" />}
+          {completed ? 'Completed' : isNext ? 'In Progress' : 'Locked'}
+        </button>
+      </div>
     </article>
   );
 }
@@ -177,6 +170,8 @@ export default function ApplicationPathway() {
     selectedOpportunities,
     setActiveOpportunity,
   } = useProfile();
+  const { user } = useAuth();
+  const userId = user?.id;
   const activeOpportunityId = activeOpportunity?.id;
   const activeOpportunityKind = activeOpportunity?.kind;
   const [strategySelection, setStrategySelection] = useState(null);
@@ -187,7 +182,7 @@ export default function ApplicationPathway() {
       ? activeOpportunity.pathway || DEFAULT_APPLICATION_STRATEGY
       : strategySelection?.opportunityId === activeOpportunityId
       ? strategySelection.value
-      : getSelectedApplicationStrategy(activeOpportunityId)
+      : getSelectedApplicationStrategy(userId, activeOpportunityId)
     : DEFAULT_APPLICATION_STRATEGY;
   const strategies = activeOpportunityKind === 'program'
     ? [...new Set(mockApplicationPathways
@@ -267,7 +262,7 @@ export default function ApplicationPathway() {
   const changeStrategy = (event) => {
     const nextStrategy = event.target.value;
     try {
-      saveSelectedApplicationStrategy(activeOpportunity.id, nextStrategy);
+      saveSelectedApplicationStrategy(userId, activeOpportunity.id, nextStrategy);
       setStrategySelection({ opportunityId: activeOpportunity.id, value: nextStrategy });
       setError('');
     } catch (saveError) {
@@ -297,17 +292,16 @@ export default function ApplicationPathway() {
         <div className="application-pathway-main">
           <header className="application-pathway-hero">
             <div className="application-pathway-hero-copy">
-              <span className="application-pathway-eyebrow"><Plane size={16} /> Application Journey</span>
               <h1>Your Study Abroad Journey</h1>
               <p>Follow each step, complete your tasks and get closer to your dream university!</p>
             </div>
-            <JourneyIllustration />
+            <JourneyPhoto />
           </header>
 
           {activeOpportunity && (
             <div className="application-pathway-controls">
               <div className="application-pathway-selected">
-                <GraduationCap size={15} aria-hidden="true" />
+                <UniversityLogo university={activeOpportunity.university} size={26} fallback={<GraduationCap size={15} />} />
                 {selectedOpportunities.length > 1 ? (
                   <label>
                     <span className="sr-only">Active opportunity</span>
@@ -384,16 +378,16 @@ export default function ApplicationPathway() {
                   })}
                 </div>
               </section>
-              <p className="application-pathway-note">
-                {!activeOpportunity
-                  ? 'Journey preview: select an opportunity to see its application strategy and track your progress.'
-                  : strategy === 'University First'
+              {activeOpportunity && (
+                <p className="application-pathway-note">
+                  {strategy === 'University First'
                     ? 'University first: apply for admission before submitting a separate scholarship application, unless the official provider instructs otherwise.'
                     : strategy === 'Scholarship First'
                       ? 'Scholarship first: submit the scholarship application before applying to the university, unless the official provider instructs otherwise.'
                       : 'Combined application: apply through the combined university and funding process described by the provider.'}
-                {activeOpportunity && ' Confirm application order, deadlines, and document requirements with the official provider.'}
-              </p>
+                  {' Confirm application order, deadlines, and document requirements with the official provider.'}
+                </p>
+              )}
               {!activeOpportunity && (
                 <button
                   type="button"
@@ -464,12 +458,6 @@ export default function ApplicationPathway() {
             </ul>
           </section>
 
-          <section className="application-pathway-encouragement">
-            <p>Big dreams<br />take consistent steps.</p>
-            <small>You’re doing great!</small>
-            <Plane size={22} aria-hidden="true" />
-            <div className="application-pathway-encouragement-mountains" aria-hidden="true" />
-          </section>
         </aside>
       </div>
     </main>

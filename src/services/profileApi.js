@@ -103,6 +103,7 @@ export function mapFrontendToBackendProfile(data, fallback = {}) {
   const academic = data.academicBackground || fallback.academicBackground || {};
   const english = data.englishProficiency || fallback.englishProficiency || {};
   const preferences = data.studyPreferences || fallback.studyPreferences || {};
+  const personal = data.personalInfo || fallback.personalInfo || {};
 
   // 1. degree_level (Required by backend ProfileCreate)
   const degreeLevel = academic.currentDegree || academic.degreeTitle || fallback.degreeLevel || "Bachelor's";
@@ -199,6 +200,14 @@ export function mapFrontendToBackendProfile(data, fallback = {}) {
     research_interests: researchInterests || null,
     preferred_countries: preferredCountries || null,
     budget_usd: budgetUsd,
+    // Used by scholarship eligibility (nationality and age limits)
+    nationality: (personal.citizenshipCountry || '').trim() || null,
+    date_of_birth: /^\d{4}-\d{2}-\d{2}$/.test(personal.dateOfBirth || '') ? personal.dateOfBirth : null,
+    // Used by profile improvement guidance
+    institution: (academic.institution || '').trim() || null,
+    academic_status: academic.academicStatus || null,
+    graduation_date: (academic.academicStatus === 'graduated' ? academic.graduationDate : academic.expectedGraduationDate) || null,
+    work_experience: (academic.workExperience || '').trim() || null,
   };
 }
 
@@ -219,6 +228,8 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     ...base.personalInfo,
     fullName: fullName,
     email: email,
+    citizenshipCountry: backendProfile.nationality || base.personalInfo.citizenshipCountry || '',
+    dateOfBirth: backendProfile.date_of_birth || base.personalInfo.dateOfBirth || '',
   };
 
   // 2. Academic Background (populated from backend)
@@ -231,6 +242,9 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     gradingScale: backendProfile.cgpa_scale !== null && backendProfile.cgpa_scale !== undefined ? String(backendProfile.cgpa_scale) : (base.academicBackground.gradingScale || '4.00'),
     technicalSkills: backendProfile.skills || base.academicBackground.technicalSkills || '',
     projects: backendProfile.research_interests || base.academicBackground.projects || '',
+    institution: backendProfile.institution || base.academicBackground.institution || '',
+    academicStatus: backendProfile.academic_status || base.academicBackground.academicStatus || '',
+    workExperience: backendProfile.work_experience || base.academicBackground.workExperience || '',
   };
 
   // 3. English Proficiency (populated from backend test scores)

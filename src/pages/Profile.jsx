@@ -1,11 +1,14 @@
 import { useState } from 'react';
+import {
+  CheckCircle2, Compass, GraduationCap, Languages, Mail, Pencil, Sparkles, UserRound,
+} from 'lucide-react';
 import FormLayout01 from '../components/profile/AcademicForm';
-import { Button } from '@/components/ui/button';
 import { EMPTY_PROFILE, mergeProfile } from '@/data/profileModel';
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GlowCard } from '../components/ui/spotlight-card';
+import './Profile.css';
 
 const sectionTitles = [
   'Personal Information',
@@ -14,27 +17,49 @@ const sectionTitles = [
   'Study Preferences',
 ];
 
+const sectionIcons = [UserRound, GraduationCap, Languages, Compass];
+
+const NOT_PROVIDED = 'Not provided';
+
 function displayValue(value) {
-  if (Array.isArray(value)) return value.length ? value.join(', ') : 'Not provided';
-  if (value === null || value === undefined || value === '') return 'Not provided';
+  if (Array.isArray(value)) return value.length ? value.join(', ') : NOT_PROVIDED;
+  if (value === null || value === undefined || value === '') return NOT_PROVIDED;
   if (typeof value === 'object' && 'name' in value) return value.name;
   return String(value);
 }
 
-function ProfileSection({ title, items, onEdit }) {
+function getInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  return parts.slice(0, 2).map((part) => part[0].toUpperCase()).join('');
+}
+
+function ProfileSection({ index, items, onEdit }) {
+  const Icon = sectionIcons[index];
+  const title = sectionTitles[index];
+  const provided = items.filter(([, value]) => displayValue(value) !== NOT_PROVIDED).length;
   return (
-    <GlowCard as="section" customSize className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
-        <Button type="button" variant="outline" size="sm" onClick={onEdit}>Edit</Button>
-      </div>
-      <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
-        {items.map(([label, value]) => (
-          <div key={label} className="min-w-0">
-            <dt className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</dt>
-            <dd className="mt-1 break-words text-sm text-slate-800 dark:text-slate-200">{displayValue(value)}</dd>
-          </div>
-        ))}
+    <GlowCard as="section" customSize className="profile-summary-section" aria-labelledby={`profile-section-${index}`}>
+      <header className="profile-summary-section-header">
+        <span className="profile-summary-section-icon" aria-hidden="true"><Icon size={18} /></span>
+        <div className="profile-summary-section-copy">
+          <h2 id={`profile-section-${index}`}>{title}</h2>
+          <p>{provided} of {items.length} fields provided</p>
+        </div>
+        <button type="button" className="profile-summary-edit" onClick={onEdit} aria-label={`Edit ${title}`}>
+          <Pencil size={14} aria-hidden="true" /> Edit
+        </button>
+      </header>
+      <dl className="profile-summary-fields">
+        {items.map(([label, value]) => {
+          const text = displayValue(value);
+          return (
+            <div key={label} className="profile-summary-field">
+              <dt>{label}</dt>
+              <dd className={text === NOT_PROVIDED ? 'is-empty' : ''}>{text}</dd>
+            </div>
+          );
+        })}
       </dl>
     </GlowCard>
   );
@@ -56,8 +81,8 @@ export default function Profile() {
       if (result?.success) return true;
       setSaveError(result?.error || 'Your profile could not be saved. Please try again.');
       return false;
-    } catch {
-      setSaveError(result?.error || 'Your profile could not be saved. Please try again.');
+    } catch (error) {
+      setSaveError(error?.message || 'Your profile could not be saved. Please try again.');
       return false;
     }
   };
@@ -78,47 +103,83 @@ export default function Profile() {
     const english = completedProfile.englishProficiency || {};
     const preferences = completedProfile.studyPreferences || {};
     const editSection = (index) => navigate(`/profile?edit=1&step=${index}`);
+    const fullName = personal.fullName || user?.name || '';
+    const cgpaText = academic.cgpa && academic.gradingScale ? `${academic.cgpa} / ${academic.gradingScale}` : academic.cgpa;
+    const hasEnglishScore = english.testType && english.testType !== 'No Test / Not Taken' && english.overallScore;
+    const highlights = [
+      ['Current degree', academic.currentDegree],
+      ['CGPA / GPA', cgpaText],
+      ['English test', hasEnglishScore ? `${english.testType} · ${english.overallScore}` : english.testType],
+      ['Preferred countries', [...(preferences.countries || []).filter((country) => country !== 'Other'), preferences.otherCountry].filter(Boolean)],
+    ];
 
     return (
-      <div className="page-container" style={{ maxWidth: '1100px', paddingTop: '32px' }}>
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
+      <div className="page-container profile-summary-page">
+        <header className="page-header profile-summary-header">
+          <div className="page-header-copy">
             <h1 className="page-title">Profile Complete</h1>
             <p className="page-subtitle">Your Master's profile is ready. Review your information or generate recommendations.</p>
           </div>
-          <Button onClick={() => navigate('/recommendations')}>Generate My Recommendations</Button>
-        </div>
-        <div className="mb-6 rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/40">
-          <div className="flex items-center justify-between text-sm font-medium text-emerald-900 dark:text-emerald-200">
-            <span>Profile Completion</span><span>100%</span>
+          <button type="button" className="profile-summary-primary" onClick={() => navigate('/recommendations')}>
+            <Sparkles size={16} aria-hidden="true" /> Generate My Recommendations
+          </button>
+        </header>
+
+        <GlowCard as="section" customSize className="profile-summary-hero" aria-label="Profile overview">
+          <div className="profile-summary-identity">
+            <span className="profile-summary-avatar" aria-hidden="true">{getInitials(fullName)}</span>
+            <div className="profile-summary-identity-copy">
+              <h2>{fullName || NOT_PROVIDED}</h2>
+              <p><Mail size={14} aria-hidden="true" /> {personal.email || user?.email || NOT_PROVIDED}</p>
+              {(academic.degreeTitle || academic.institution) && (
+                <p><GraduationCap size={14} aria-hidden="true" /> {[academic.degreeTitle, academic.institution].filter(Boolean).join(' · ')}</p>
+              )}
+            </div>
+            <div className="profile-summary-progress" aria-label="Profile completion 100%">
+              <div className="profile-summary-progress-label">
+                <span><CheckCircle2 size={15} aria-hidden="true" /> Profile Completion</span>
+                <strong>100%</strong>
+              </div>
+              <div className="profile-summary-progress-track"><div className="profile-summary-progress-fill" /></div>
+            </div>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-emerald-200 dark:bg-emerald-900">
-            <div className="h-full w-full bg-emerald-700 dark:bg-emerald-400" />
-          </div>
-        </div>
-        <div className="space-y-4">
-          <ProfileSection title={sectionTitles[0]} onEdit={() => editSection(0)} items={[
+          <dl className="profile-summary-highlights">
+            {highlights.map(([label, value]) => {
+              const text = displayValue(value);
+              return (
+                <div key={label}>
+                  <dt>{label}</dt>
+                  <dd className={text === NOT_PROVIDED ? 'is-empty' : ''}>{text}</dd>
+                </div>
+              );
+            })}
+          </dl>
+        </GlowCard>
+
+        <div className="profile-summary-sections">
+          <ProfileSection index={0} onEdit={() => editSection(0)} items={[
             ['Full name', personal.fullName], ['Email address', personal.email], ['Date of birth', personal.dateOfBirth],
             ['Gender', personal.gender], ['Country of citizenship', personal.citizenshipCountry], ['Current country', personal.currentCountry],
             ['City', personal.city], ['Phone number', personal.phoneNumber], ['Profile photo', personal.profilePhoto],
           ]} />
-          <ProfileSection title={sectionTitles[1]} onEdit={() => editSection(1)} items={[
+          <ProfileSection index={1} onEdit={() => editSection(1)} items={[
             ['Current degree', academic.currentDegree], ['Degree title', academic.degreeTitle], ['Major / field', academic.major],
             ['University / institution', academic.institution], ['Institution country', academic.institutionCountry],
             ['Study status', academic.academicStatus], ['Current semester / year', academic.currentYear],
-            ['CGPA / GPA', academic.cgpa && academic.gradingScale ? `${academic.cgpa} / ${academic.gradingScale}` : academic.cgpa],
+            ['CGPA / GPA', cgpaText],
             ['Expected graduation', academic.expectedGraduationDate], ['Graduation date', academic.graduationDate],
             ['Relevant coursework', academic.relevantCoursework], ['Technical skills', academic.technicalSkills],
             ['Programming languages', academic.programmingLanguages], ['Certifications', academic.certifications],
-            ['Projects / academic experience', academic.projects], ['Academic transcript', academic.transcript],
+            ['Projects / academic experience', academic.projects], ['Work experience', academic.workExperience],
+            ['Academic transcript', academic.transcript],
           ]} />
-          <ProfileSection title={sectionTitles[2]} onEdit={() => editSection(2)} items={[
+          <ProfileSection index={2} onEdit={() => editSection(2)} items={[
             ['English test', english.testType], ['Test name', english.otherTestName], ['Overall score', english.overallScore],
             ['Listening', english.listening], ['Reading', english.reading], ['Writing', english.writing],
             ['Speaking', english.speaking], ['Test date', english.testDate],
             ["Bachelor's taught in English", english.mediumOfInstruction], ['MOI certificate', english.moiCertificate],
           ]} />
-          <ProfileSection title={sectionTitles[3]} onEdit={() => editSection(3)} items={[
+          <ProfileSection index={3} onEdit={() => editSection(3)} items={[
             ["Preferred Master's fields", [...(preferences.fields || []), preferences.customField].filter(Boolean)],
             ['Preferred countries', [...(preferences.countries || []).filter((country) => country !== 'Other'), preferences.otherCountry].filter(Boolean)],
             ['Preferred regions', preferences.regions], ['Preferred intake', preferences.intake], ['Study mode', preferences.studyMode],

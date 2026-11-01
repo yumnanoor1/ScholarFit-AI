@@ -1,433 +1,545 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  BadgeCheck, CircleDollarSign, GraduationCap, Info, MapPin,
+  AlertTriangle, Award, BadgeCheck, CheckCircle2, Clock, GraduationCap, HeartPulse, Home,
+  Info, Landmark, Loader2, MapPin, PiggyBank, Plane, Receipt, Stamp, Wallet, XCircle,
 } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
 import { getOpportunityTitle } from '../services/opportunityJourney';
-import {
-  calculateFinancialFeasibility,
-  FINANCIAL_COSTS,
-} from '../services/financialFeasibility';
+import { getUniversityLogo } from '../services/programFit';
+import { apiService } from '../services/api';
+import { parseScholarshipId } from '../services/opportunityApi';
 import './FinancialFeasibility.css';
+
+// Rows of the page, in order. `category` is the backend cost category.
+const COST_ROWS = [
+  { category: 'tuition', label: 'Tuition fees', icon: GraduationCap, tone: 'blue' },
+  { category: 'living_costs', label: 'Living costs', icon: Home, tone: 'cyan' },
+  { category: 'university_fees', label: 'University fees', icon: Landmark, tone: 'blue' },
+  { category: 'health_insurance', label: 'Health insurance', icon: HeartPulse, tone: 'green' },
+  { category: 'visa', label: 'Visa and residence permit', icon: Stamp, tone: 'navy' },
+  { category: 'travel', label: 'Travel expenses', icon: Plane, tone: 'sky' },
+  { category: 'application_fees', label: 'Application fees', icon: Receipt, tone: 'navy' },
+  { category: 'other', label: 'Other relevant fees', icon: Receipt, tone: 'amber' },
+];
+
+// One-off costs start as a study total, so a visa fee isn't multiplied by the study years
+const ONE_OFF_COSTS = new Set(['visa', 'travel', 'application_fees']);
+const defaultPeriod = (category) => (ONE_OFF_COSTS.has(category) ? 'total' : 'yearly');
+
+const STATUS_DISPLAY = {
+  feasible: { label: 'Feasible', tone: 'is-covered', icon: CheckCircle2 },
+  partially_feasible: { label: 'Partially feasible', tone: 'is-gap', icon: AlertTriangle },
+  not_feasible: { label: 'Not feasible', tone: 'is-short', icon: XCircle },
+  insufficient_data: { label: 'Insufficient information', tone: 'is-unknown', icon: Info },
+};
 
 function isScholarship(opportunity) {
   return opportunity?.kind === 'scholarship' || opportunity?.id?.startsWith('sch-');
 }
 
-function isLinked(program, scholarship) {
-  return Boolean(
-    program &&
-    scholarship &&
-    (
-      scholarship.programId === program.id ||
-      scholarship.universityId === program.id ||
-      program.scholarshipIds?.includes(scholarship.id)
-    )
-  );
+// Backend programs carry a numeric ID; older sample selections (univ-1 …) don't
+function getBackendProgramId(program) {
+  if (!program || isScholarship(program)) return null;
+  const id = Number(program._numericId ?? program.id);
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-function formatStudyPeriod(period) {
-  if (period === 'total') return 'for the full study period';
-  if (period === 'monthly') return 'per month';
-  if (period === 'yearly') return 'per year';
-  return 'study period not specified';
+function getApiErrorMessage(error) {
+  if (error?.status === 401) return 'Your session has expired. Sign in again to continue.';
+  if (error?.status === 404) return error.message || 'This program or scholarship is no longer available.';
+  if (error?.status === 422) return error.message || 'Some amounts are not valid. Use non-negative numbers.';
+  return 'The request could not be completed right now. Please try again.';
 }
 
-function formatDate(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+function isValidAmount(value) {
+  return value !== '' && value != null && Number.isFinite(Number(value)) && Number(value) >= 0;
 }
 
-function FinancialSource({ item }) {
-  const updated = formatDate(item?.lastUpdated);
-  const sourceUrl = typeof item?.sourceUrl === 'string' && /^https?:\/\//i.test(item.sourceUrl)
-    ? item.sourceUrl
-    : null;
-  return (
-    <span className="financial-item-source">
-      {sourceUrl
-        ? <a href={sourceUrl} target="_blank" rel="noreferrer">{item.source || 'View source'}</a>
-        : item?.source || 'Source not provided'}
-      {updated && <span> · Updated {updated}</span>}
-    </span>
-  );
+/** Student rows that hold a usable number, in the shape the backend stores. */
+function toExpensePayload(drafts) {
+  return Object.fromEntries(Object.entries(drafts)
+    .filter(([, row]) => isValidAmount(row.amount))
+    .map(([category, row]) => [category, {
+      amount: Number(row.amount),
+      currency: row.currency,
+      period: row.period,
+      source: 'student_input',
+    }]));
 }
 
-function displayAmount(item) {
-  return item?.amount !== '' &&
-    item?.amount !== null &&
-    item?.amount !== undefined &&
-    Number.isFinite(Number(item.amount)) &&
-    item?.currency
-    ? `${item.currency} ${Number(item.amount).toLocaleString()} ${formatStudyPeriod(item.period)}`
-    : 'Amount or currency not provided';
-}
-
-function getEstimateDefaults(country, currency) {
-  const isGermany = country === 'Germany' && currency === 'EUR';
-  const values = isGermany
-    ? [3000, 12000, 1200, 100, 600, 1000]
-    : currency === 'EUR'
-      ? [18000, 14000, 1600, 250, 1000, 1500]
-      : [25000, 18000, 2500, 500, 1500, 2000];
-  return Object.fromEntries(FINANCIAL_COSTS.map(({ key }, index) => [
-    key,
-    { amount: String(values[index]), period: index === 3 || index === 4 ? 'total' : 'yearly' },
-  ]));
-}
-
-function getInitialCostDraft(financialData, country, currency) {
-  const estimates = getEstimateDefaults(country, currency);
-  return Object.fromEntries(FINANCIAL_COSTS.map(({ key }) => {
-    const provided = financialData?.costs?.[key];
-    return [key, provided?.amount !== undefined && provided?.amount !== null
-      ? { amount: String(provided.amount), period: provided.period || 'yearly' }
-      : estimates[key]];
-  }));
+function formatRecordRange(line) {
+  const number = (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return `${line.original_currency} ${number(line.original_amount)}–${number(line.original_amount_max)}`;
 }
 
 export default function FinancialFeasibility() {
   const { activeOpportunity, selectedOpportunities } = useProfile();
+  const [planState, setPlanState] = useState({ plan: null, error: '' });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let isCurrent = true;
+    apiService.getFinancialPlan()
+      .then((plan) => { if (isCurrent) setPlanState({ plan, error: '' }); })
+      .catch((error) => {
+        console.error('Unable to load the financial plan.', error);
+        if (isCurrent) setPlanState({ plan: null, error: getApiErrorMessage(error) });
+      });
+    return () => { isCurrent = false; };
+  }, [attempt]);
+
   const stateKey = JSON.stringify([
     activeOpportunity?.id || null,
     ...selectedOpportunities.map((item) => item.id).sort(),
   ]);
 
-  return <FinancialFeasibilityContent key={stateKey} />;
+  if (planState.error) {
+    return (
+      <main className="page-container financial-page">
+        <h1 className="page-title">Financial Feasibility</h1>
+        <section className="fin-card fin-empty" role="alert">
+          <span className="fin-empty-icon" aria-hidden="true"><AlertTriangle size={30} /></span>
+          <h2>Your financial plan could not be loaded</h2>
+          <p>{planState.error}</p>
+          <button className="btn btn-primary" onClick={() => { setPlanState({ plan: null, error: '' }); setAttempt((value) => value + 1); }}>Try again</button>
+        </section>
+      </main>
+    );
+  }
+  if (!planState.plan) {
+    return (
+      <main className="page-container financial-page">
+        <h1 className="page-title">Financial Feasibility</h1>
+        <p className="fin-summary-empty" role="status"><Loader2 size={22} className="fin-spin" aria-hidden="true" /> Loading your financial plan…</p>
+      </main>
+    );
+  }
+  return <FinancialFeasibilityContent key={stateKey} initialPlan={planState.plan} />;
 }
 
-function FinancialFeasibilityContent() {
+function FinancialFeasibilityContent({ initialPlan }) {
   const navigate = useNavigate();
-  const {
-    activeOpportunity,
-    selectedOpportunities,
-    financialBudget,
-    saveFinancialBudget,
-  } = useProfile();
-  const defaultCurrency = activeOpportunity?.country === 'Germany' ? 'EUR' : 'USD';
-  const [budgetDraft, setBudgetDraft] = useState(() => ({
-    amount: financialBudget.amount,
-    currency: financialBudget.currency || defaultCurrency,
-  }));
-  const [budgetError, setBudgetError] = useState('');
-  const [budgetSaved, setBudgetSaved] = useState(false);
+  const { activeOpportunity, selectedOpportunities } = useProfile();
 
-  const activeIsScholarship = isScholarship(activeOpportunity);
-  const linkedProgram = activeIsScholarship
-    ? selectedOpportunities.find((item) => !isScholarship(item) && isLinked(item, activeOpportunity)) || null
+  const program = isScholarship(activeOpportunity)
+    ? selectedOpportunities.find((item) => getBackendProgramId(item)) || null
     : activeOpportunity;
-  const linkedScholarship = activeIsScholarship
-    ? activeOpportunity
-    : selectedOpportunities.find((item) => isScholarship(item) && isLinked(activeOpportunity, item)) || null;
-  const financialData = linkedProgram?.financialData ||
-    (activeIsScholarship ? activeOpportunity?.financialData : null) ||
-    {};
-  const scholarshipFunding = Array.isArray(linkedScholarship?.financialData?.funding)
-    ? linkedScholarship.financialData.funding
-    : [];
-  const [costDraft, setCostDraft] = useState(() => getInitialCostDraft(financialData, activeOpportunity?.country, defaultCurrency));
-  const [costCurrency, setCostCurrency] = useState(defaultCurrency);
-  const calculation = calculateFinancialFeasibility({
-    financialData,
-    budget: financialBudget,
-    funding: scholarshipFunding,
-  });
-  const duration = financialData.studyDuration;
-  const durationLabel = duration?.value && duration?.unit
-    ? `${duration.value} ${duration.unit}`
-    : linkedProgram?.studyDuration || activeOpportunity?.studyDuration || 'Not provided';
-  const costItems = FINANCIAL_COSTS.map(({ key, label }) => ({
-    key,
-    label,
-    ...financialData.costs?.[key],
-    ...costDraft[key],
-    currency: costCurrency,
-  }));
-  const verifiedDurationSource = financialData.studyDuration?.sourceStatus === 'official-verified' ||
-    (!duration && costItems.every((item) => item.period === 'total'));
-  const verifiedCostSources = verifiedDurationSource &&
-    costItems.every((item) => item.amount !== undefined && item.sourceStatus === 'official-verified');
+  const programId = getBackendProgramId(program);
+  const supported = initialPlan.supported_currencies;
+  const defaultCurrency = initialPlan.budget?.currency
+    || (supported.includes(program?.tuitionCurrency) ? program.tuitionCurrency : 'EUR');
 
-  const saveBudget = (event) => {
+  const [plan, setPlan] = useState(initialPlan);
+  const [currency, setCurrency] = useState(defaultCurrency);
+  const [budgetAmount, setBudgetAmount] = useState(initialPlan.budget ? String(initialPlan.budget.amount) : '');
+  const [drafts, setDrafts] = useState(() => Object.fromEntries(
+    Object.entries(initialPlan.expenses?.[String(programId)] || {})
+      .filter(([, row]) => row)
+      .map(([category, row]) => [category, { amount: String(row.amount), currency: row.currency, period: row.period }]),
+  ));
+  const [scholarshipId, setScholarshipId] = useState(() => (
+    parseScholarshipId(activeOpportunity?.id)
+    ?? parseScholarshipId(selectedOpportunities.find((item) => parseScholarshipId(item.id) != null)?.id)
+  ));
+  const [scholarships, setScholarships] = useState([]);
+  const [saveState, setSaveState] = useState({ saving: false, saved: false, error: '' });
+  // key = the payload the stored result or error belongs to
+  const [apiResponse, setApiResponse] = useState({ key: '', result: null, error: '' });
+
+  useEffect(() => {
+    if (!programId) return undefined;
+    let isCurrent = true;
+    const country = String(program?.country || '').toLowerCase();
+    apiService.getMatchedScholarships()
+      .then((items) => {
+        if (!isCurrent) return;
+        // Only scholarships for study in the program's country; the backend still checks
+        // university-specific ones and explains when a scholarship can't be counted
+        setScholarships(items.filter((item) => {
+          const target = String(item.country || '').toLowerCase();
+          return Boolean(country) && target.includes(country) && !target.startsWith('european union');
+        }));
+      })
+      .catch((error) => console.error('Unable to load scholarships for the financial planner.', error));
+    return () => { isCurrent = false; };
+  }, [programId, program?.country]);
+
+  const budgetIsValid = isValidAmount(budgetAmount);
+  const expensePayload = useMemo(() => toExpensePayload(drafts), [drafts]);
+  const invalidRow = Object.values(drafts).some((row) => row.amount !== '' && !isValidAmount(row.amount));
+  const payloadKey = programId ? JSON.stringify({
+    program_id: programId,
+    scholarship_id: scholarshipId ?? null,
+    currency,
+    ...(budgetIsValid ? { budget: { amount: Number(budgetAmount), currency } } : {}),
+    expenses: expensePayload,
+  }) : '';
+
+  // Recalculate shortly after anything changes; identical payloads never reach the backend twice
+  useEffect(() => {
+    if (!payloadKey) return undefined;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      apiService.calculateFinancialFeasibility(JSON.parse(payloadKey), { signal: controller.signal })
+        .then((result) => setApiResponse({ key: payloadKey, result, error: '' }))
+        .catch((error) => {
+          if (error?.name === 'AbortError') return;
+          console.error('Unable to calculate financial feasibility.', error);
+          setApiResponse((current) => ({ key: payloadKey, result: current.result, error: getApiErrorMessage(error) }));
+        });
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [payloadKey]);
+
+  const savePlan = async (event) => {
     event.preventDefault();
-    setBudgetError('');
-    setBudgetSaved(false);
-    if (!/^[A-Z]{3}$/.test(budgetDraft.currency.trim().toUpperCase())) {
-      setBudgetError('Enter a 3-letter currency code, such as USD or EUR.');
+    if (saveState.saving) return;
+    if (!budgetIsValid) {
+      setSaveState({ saving: false, saved: false, error: 'Enter a budget of zero or more.' });
       return;
     }
+    setSaveState({ saving: true, saved: false, error: '' });
     try {
-      saveFinancialBudget({
-        amount: budgetDraft.amount,
-        currency: costCurrency,
-      });
-      setBudgetSaved(true);
+      let next = await apiService.saveFinancialBudget({ amount: Number(budgetAmount), currency });
+      const savedExpenses = JSON.stringify(plan.expenses?.[String(programId)] || {});
+      if (programId && JSON.stringify(expensePayload) !== savedExpenses) {
+        next = await apiService.saveProgramExpenses(programId, expensePayload);
+      }
+      setPlan(next);
+      setSaveState({ saving: false, saved: true, error: '' });
     } catch (error) {
-      console.error('Unable to save the financial budget.', error);
-      setBudgetError('Your budget could not be saved. Please check the amount and try again.');
+      console.error('Unable to save the financial plan.', error);
+      setSaveState({ saving: false, saved: false, error: getApiErrorMessage(error) });
     }
   };
 
-  const estimatedTotals = useMemo(() => {
-    const durationMonths = duration?.value && duration?.unit
-      ? Number(duration.value) * (duration.unit === 'years' ? 12 : 1)
-      : 24;
-    const totals = costItems.map((item) => {
-      const amount = Number(item.amount);
-      if (item.amount === '' || !Number.isFinite(amount) || amount < 0) return null;
-      if (item.period === 'total') return amount;
-      if (item.period === 'monthly') return amount * durationMonths;
-      return amount * durationMonths / 12;
-    });
-    return totals.every((amount) => amount !== null)
-      ? { total: totals.reduce((sum, amount) => sum + amount, 0), items: totals }
-      : null;
-  }, [costItems, duration]);
-
-  const budgetAmount = Number(budgetDraft.amount);
-  const hasBudget = budgetDraft.amount !== '' && Number.isFinite(budgetAmount) && budgetAmount >= 0;
-  const estimatedFunding = calculation.complete && calculation.currency === costCurrency
-    ? calculation.applicableFunding
-    : 0;
-  const budgetContribution = estimatedTotals && hasBudget
-    ? Math.min(budgetAmount, Math.max(0, estimatedTotals.total - estimatedFunding))
-    : 0;
-  const estimatedGap = estimatedTotals && hasBudget
-    ? Math.max(0, estimatedTotals.total - estimatedFunding - budgetContribution)
-    : null;
-
-  if (!activeOpportunity) {
+  if (!activeOpportunity || !programId) {
     return (
       <main className="page-container financial-page">
         <h1 className="page-title">Financial Feasibility</h1>
         <p className="page-subtitle">Review study costs, scholarship support, and your personal budget.</p>
-        <section className="card financial-empty-state">
-          <div className="financial-empty-icon"><CircleDollarSign size={22} /></div>
-          <div>
-            <h2>No opportunity selected</h2>
-            <p>Select a university program or scholarship to review its financial information.</p>
-          </div>
+        <section className="fin-card fin-empty">
+          <span className="fin-empty-icon" aria-hidden="true"><PiggyBank size={30} /></span>
+          <h2>{activeOpportunity ? 'Select a Master’s program' : 'No opportunity selected'}</h2>
+          <p>Select a program from Explore to plan its costs against your budget.</p>
           <button className="btn btn-primary" onClick={() => navigate('/recommendations')}>Browse recommendations</button>
         </section>
       </main>
     );
   }
 
+  const isCurrentResponse = apiResponse.key === payloadKey;
+  const apiState = {
+    status: !isCurrentResponse ? 'loading' : apiResponse.error ? 'error' : 'ok',
+    error: isCurrentResponse ? apiResponse.error : '',
+  };
+  const result = apiResponse.result?.program?.id === programId ? apiResponse.result : null;
+  const lines = Object.fromEntries((result?.costs || []).map((line) => [line.category, line]));
+  const formatMoney = (amount) => `${result?.currency || currency} ${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const logo = getUniversityLogo(program.university);
+  const months = result?.duration_months ?? program.durationMonths;
+  const usesOnlySources = result && result.missing_data.length === 0
+    && result.costs.every((line) => line.amount == null || ['program_record', 'included'].includes(line.source));
+
+  const updateRow = (category, line, change) => {
+    setSaveState((current) => ({ ...current, saved: false }));
+    setDrafts((current) => ({
+      ...current,
+      [category]: {
+        amount: current[category]?.amount ?? String(line?.original_amount_max ?? line?.original_amount ?? ''),
+        currency: current[category]?.currency || line?.original_currency || currency,
+        period: current[category]?.period || line?.period || defaultPeriod(category),
+        ...change,
+      },
+    }));
+  };
+  const resetRow = (category) => {
+    setSaveState((current) => ({ ...current, saved: false }));
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[category];
+      return next;
+    });
+  };
+
   return (
     <main className="page-container financial-page">
       <h1 className="page-title">Financial Feasibility</h1>
-      <p className="page-subtitle">Check whether the selected Master's opportunity fits your study budget.</p>
 
-      <section className="financial-opportunity card">
-        <div className="financial-opportunity-icon"><GraduationCap size={22} /></div>
-        <div className="financial-opportunity-copy">
-          <span className="financial-eyebrow">Selected opportunity</span>
-          <h2>{linkedProgram ? getOpportunityTitle(linkedProgram) : 'University program not linked'}</h2>
-          <p><MapPin size={14} /> {linkedProgram?.university || linkedProgram?.provider || linkedProgram?.country || activeOpportunity.country || 'Country not provided'}</p>
-          <div className="financial-opportunity-meta">
-            {linkedProgram?.program && <span>Program: {linkedProgram.program}</span>}
-            <span>Study duration: {durationLabel}</span>
-            <span>Scholarship: {linkedScholarship ? getOpportunityTitle(linkedScholarship) : 'Not selected or linked'}</span>
+      <section className="fin-hero" aria-label="Selected opportunity">
+        <span className={`fin-hero-mark ${logo ? 'has-logo' : ''}`} aria-hidden="true">
+          {logo ? <img src={logo} alt="" /> : <GraduationCap size={26} />}
+        </span>
+        <div className="fin-hero-copy">
+          <span className="fin-hero-eyebrow">Planning costs for</span>
+          <h2>{getOpportunityTitle(program)}</h2>
+          <p>
+            <MapPin size={14} aria-hidden="true" />
+            {[program.university, program.country].filter(Boolean).join(' · ') || 'Country not provided'}
+          </p>
+          <div className="fin-hero-chips">
+            <span><Clock size={13} aria-hidden="true" /> {months ? `${months} months` : 'Duration not provided'}</span>
+            <span><Award size={13} aria-hidden="true" /> {result?.scholarship?.name || 'No scholarship selected'}</span>
           </div>
         </div>
-        <span className={`financial-source-badge ${verifiedCostSources ? 'is-verified' : ''}`}>
-          {verifiedCostSources
-            ? <><BadgeCheck size={14} /> Verified financial data</>
-            : <><Info size={14} /> Financial data not verified</>}
-        </span>
+        {result && (
+          <span className={`fin-hero-badge ${usesOnlySources ? 'is-verified' : ''}`}>
+            {usesOnlySources
+              ? <><BadgeCheck size={14} aria-hidden="true" /> Costs from official sources</>
+              : <><Info size={14} aria-hidden="true" /> {result.missing_data.length ? 'Some costs are missing' : 'Includes your own figures'}</>}
+          </span>
+        )}
       </section>
 
-      <section className="financial-section financial-budget-step" aria-labelledby="financial-budget-title">
-        <div className="financial-step-heading"><span>Step 1</span><h2 id="financial-budget-title">Your budget and currency</h2></div>
-        <form className="card financial-budget-form" onSubmit={saveBudget}>
-          <label>
-            <span>Total available budget ({costCurrency})</span>
-            <input
-              type="number"
-              min="0"
-              step="any"
-              required
-              value={budgetDraft.amount}
-              onChange={(event) => {
-                setBudgetDraft((current) => ({ ...current, amount: event.target.value }));
-                setBudgetSaved(false);
-              }}
-              placeholder="Enter your budget"
-            />
-          </label>
-          <label className="financial-currency-field">
-            <span>Currency</span>
-            <select
-              value={costCurrency}
-              onChange={(event) => {
-                setCostCurrency(event.target.value);
-                setBudgetDraft((current) => ({ ...current, currency: event.target.value }));
-                setCostDraft(getInitialCostDraft(financialData, linkedProgram?.country || activeOpportunity.country, event.target.value));
-                setBudgetSaved(false);
-              }}
-            >
-              <option value="EUR">EUR (€)</option>
-              <option value="USD">USD ($)</option>
-            </select>
-          </label>
-          <button type="submit" className="btn btn-primary">Save budget</button>
-          {budgetSaved && <span className="financial-form-success" role="status">Budget saved.</span>}
-          {budgetError && <span className="financial-form-error" role="alert">{budgetError}</span>}
-          <p className="financial-currency-note">All budget and cost figures below use {costCurrency}. Switching currency resets the cost rows to estimates in that currency; review your budget after switching.</p>
-        </form>
-      </section>
-
-      <div className="financial-dashboard-grid">
-        <div className="financial-dashboard-main">
-          <section className="financial-section financial-cost-section">
-            <div className="financial-section-heading">
-              <div className="financial-step-heading"><span>Step 2</span><h2>Study cost estimates</h2></div>
-            </div>
-            <div className="financial-cost-table-wrap">
-              <table className="financial-cost-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Expense item</th>
-                    <th scope="col">Amount ({costCurrency})</th>
-                    <th scope="col">Period</th>
-                    <th scope="col">Study-period estimate ({costCurrency})</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {costItems.map((item) => {
-                    const total = estimatedTotals?.items[FINANCIAL_COSTS.findIndex(({ key }) => key === item.key)];
-                    const isEstimate = !financialData.costs?.[item.key]?.amount;
-                    return (
-                      <tr key={item.key}>
-                        <th scope="row">{item.label}</th>
-                        <td>
-                          <label className="financial-cost-input-wrap">
-                            <input
-                              type="number"
-                              aria-label={`${item.label} amount in ${costCurrency}`}
-                              min="0"
-                              step="any"
-                              value={costDraft[item.key]?.amount ?? ''}
-                              onChange={(event) => setCostDraft((current) => ({
-                                ...current,
-                                [item.key]: { ...current[item.key], amount: event.target.value },
-                              }))}
-                            />
-                            {isEstimate && <small>Estimate</small>}
-                          </label>
-                        </td>
-                        <td>
-                          <label className="financial-period-select">
-                            <select
-                              aria-label={`${item.label} cost period`}
-                              value={costDraft[item.key]?.period || 'yearly'}
-                              onChange={(event) => setCostDraft((current) => ({
-                                ...current,
-                                [item.key]: { ...current[item.key], period: event.target.value },
-                              }))}
-                            >
-                              <option value="total">Study total</option>
-                              <option value="yearly">Yearly</option>
-                              <option value="monthly">Monthly</option>
-                            </select>
-                          </label>
-                        </td>
-                        <td>{total != null ? `${costCurrency} ${total.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <p className="financial-table-footnote">Estimates are planning values, not provider quotes. Confirm tuition and living costs with the university. Currency: {costCurrency}. Study duration used: {durationLabel === 'Not provided' ? '24 months (estimate)' : durationLabel}.</p>
-          </section>
-
-          <section className="financial-results-step" aria-labelledby="financial-result-title">
-            <div className="financial-step-heading"><span>Step 3</span><h2 id="financial-result-title">Estimated result</h2></div>
-            {!hasBudget ? (
-              <p className="financial-enter-budget">Enter your budget to see results.</p>
-            ) : estimatedTotals ? (
-              <div className="financial-result-cards">
-                <article className="card"><span>Estimated total costs ({costCurrency})</span><strong>{estimatedTotals.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></article>
-                <article className="card"><span>Verified awarded funding ({costCurrency})</span><strong>{estimatedFunding.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></article>
-                <article className="card"><span>Estimated remaining gap ({costCurrency})</span><strong>{estimatedGap.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></article>
+      <div className="fin-layout">
+        <div className="fin-main">
+          <section className="fin-card" aria-labelledby="financial-budget-title">
+            <header className="fin-card-head">
+              <span className="fin-step">1</span>
+              <div>
+                <h2 id="financial-budget-title">Your budget</h2>
+                <p>Everything you can put towards the full study period.</p>
               </div>
-            ) : <p className="financial-enter-budget">Enter valid non-negative amounts for each cost to calculate an estimate.</p>}
-          </section>
-
-          {hasBudget && estimatedTotals && (
-            <section className="financial-chart-step" aria-labelledby="financial-chart-title">
-              <div className="financial-step-heading"><span>Step 4</span><h2 id="financial-chart-title">Costs vs budget and funding</h2></div>
-              <div className="card financial-cost-chart">
-                <div
-                  className="financial-donut"
-                  role="img"
-                  aria-label={`Estimated costs ${costCurrency} ${estimatedTotals.total.toLocaleString()}, budget ${costCurrency} ${budgetContribution.toLocaleString()}, verified funding ${costCurrency} ${estimatedFunding.toLocaleString()}, remaining gap ${costCurrency} ${estimatedGap.toLocaleString()}`}
-                  style={{
-                    '--budget-share': `${estimatedTotals.total ? budgetContribution / estimatedTotals.total * 100 : 0}%`,
-                    '--funding-share': `${estimatedTotals.total ? estimatedFunding / estimatedTotals.total * 100 : 0}%`,
+            </header>
+            <form className="fin-budget-form" onSubmit={savePlan}>
+              <label className="fin-budget-amount">
+                <span>Total available budget</span>
+                <span className="fin-money-input">
+                  <Wallet size={18} aria-hidden="true" />
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={budgetAmount}
+                    onChange={(event) => {
+                      setBudgetAmount(event.target.value);
+                      setSaveState({ saving: false, saved: false, error: '' });
+                    }}
+                    placeholder="Enter your budget"
+                  />
+                  <em>{currency}</em>
+                </span>
+              </label>
+              <label className="fin-budget-currency">
+                <span>Currency</span>
+                <select
+                  value={currency}
+                  onChange={(event) => {
+                    setCurrency(event.target.value);
+                    setSaveState({ saving: false, saved: false, error: '' });
                   }}
                 >
-                  <strong>{costCurrency}</strong>
-                  <span>Estimated costs</span>
-                </div>
-                <ul className="financial-chart-legend">
-                  <li><span className="budget-key" />Budget used <strong>{costCurrency} {budgetContribution.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></li>
-                  <li><span className="funding-key" />Verified funding <strong>{costCurrency} {estimatedFunding.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></li>
-                  <li><span className="gap-key" />Remaining gap <strong>{costCurrency} {estimatedGap.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></li>
-                </ul>
-              </div>
-            </section>
-          )}
+                  {supported.map((code) => <option key={code} value={code}>{code}</option>)}
+                </select>
+              </label>
+              <button type="submit" className="btn btn-primary" disabled={saveState.saving}>
+                {saveState.saving ? 'Saving…' : 'Save plan'}
+              </button>
+              <label className="fin-budget-scholarship">
+                <span>Scholarship</span>
+                <select
+                  value={scholarshipId ?? ''}
+                  onChange={(event) => setScholarshipId(event.target.value ? Number(event.target.value) : null)}
+                >
+                  <option value="">No scholarship</option>
+                  {scholarships.map((item) => (
+                    <option key={item.id} value={item._numericId}>{item.name}</option>
+                  ))}
+                </select>
+              </label>
+              {saveState.saved && <span className="fin-form-success" role="status"><CheckCircle2 size={14} aria-hidden="true" /> Your plan is saved to your account.</span>}
+              {saveState.error && <span className="fin-form-error" role="alert">{saveState.error}</span>}
+            </form>
+            <p className="fin-note">Changing the currency doesn’t convert your budget: the amount above is read in the chosen currency.</p>
+          </section>
 
-          {linkedScholarship && (
-            <section className="financial-section">
-              <div className="financial-section-heading">
-                <div>
-                  <span className="financial-eyebrow">Scholarship support</span>
-                  <h2>Scholarship funding</h2>
-                </div>
+          <section className="fin-card" aria-labelledby="financial-cost-title">
+            <header className="fin-card-head">
+              <span className="fin-step">2</span>
+              <div>
+                <h2 id="financial-cost-title">Study costs</h2>
+                <p>{months ? `Totals cover ${months} months.` : 'Totals can’t be calculated without the program duration.'} Enter your own figure for any cost.</p>
               </div>
-              <div className="card financial-funding-card">
-                <>
-                  <div className="financial-funding-title">
-                    <GraduationCap size={18} />
-                    <strong>{getOpportunityTitle(linkedScholarship)}</strong>
-                  </div>
-                  {linkedScholarship.coverage && (
-                    <div className="financial-listed-coverage">
-                      <span>Listed terms (not confirmed)</span>
-                      <strong>{linkedScholarship.coverage}</strong>
-                      <FinancialSource item={linkedScholarship} />
+            </header>
+            <ul className="fin-cost-list">
+              {COST_ROWS.map(({ category, label, icon: CostIcon, tone }) => {
+                const line = lines[category];
+                const draft = drafts[category];
+                const isTuition = category === 'tuition';
+                const fromRecord = line?.source === 'program_record' && !draft;
+                const isIncluded = line?.source === 'included' && !draft;
+                const isMissing = result && !draft && !isIncluded && line?.amount == null;
+                const share = result?.total_estimated_cost && line?.amount != null
+                  ? line.amount / result.total_estimated_cost * 100
+                  : 0;
+                const rowCurrency = draft?.currency || line?.original_currency || currency;
+                const shownAmount = draft?.amount ?? line?.original_amount_max ?? line?.original_amount ?? '';
+                return (
+                  <li key={category} className={`fin-cost-row tone-${tone}`}>
+                    <span className="fin-cost-icon" aria-hidden="true"><CostIcon size={18} /></span>
+                    <div className="fin-cost-label">
+                      <strong>{label}</strong>
+                      {draft && <small className="is-record">Your figure</small>}
+                      {fromRecord && !line.is_estimate && <small className="is-record">From program record</small>}
+                      {fromRecord && line.is_estimate && <small>Published estimate</small>}
+                      {isIncluded && <small className="is-record">{line.note}</small>}
+                      {isMissing && <small className="is-missing">Missing · verify manually</small>}
                     </div>
-                  )}
-                  {scholarshipFunding.length > 0 ? (
-                    <ul className="financial-funding-list">
-                      {scholarshipFunding.map((item, index) => (
-                        <li key={item.id || `${item.kind || 'funding'}-${index}`}>
-                          <div>
-                            <strong>{item.label || item.kind || 'Scholarship benefit'}</strong>
-                            <span className={item.status === 'awarded' || item.status === 'confirmed' ? 'financial-award-confirmed' : 'financial-award-potential'}>
-                              {item.status === 'awarded' || item.status === 'confirmed' ? 'Awarded / confirmed' : 'Potential · not counted'}
-                            </span>
-                          </div>
-                          <strong>{displayAmount(item)}</strong>
-                          <FinancialSource item={item} />
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="financial-muted-copy">No structured scholarship benefits are available to calculate funding from.</p>
-                  )}
-                </>
-              </div>
-            </section>
-          )}
+                    <span className="fin-money-input is-compact">
+                      <input
+                        type="number"
+                        aria-label={`${label} amount in ${rowCurrency}`}
+                        min="0"
+                        step="any"
+                        value={shownAmount}
+                        placeholder={isIncluded ? 'Included' : 'Amount'}
+                        readOnly={isTuition}
+                        disabled={isTuition}
+                        onChange={(event) => updateRow(category, line, { amount: event.target.value })}
+                      />
+                      <em>{rowCurrency}</em>
+                    </span>
+                    <select
+                      className="fin-period"
+                      aria-label={`${label} cost period`}
+                      value={draft?.period || line?.period || defaultPeriod(category)}
+                      disabled={isTuition}
+                      onChange={(event) => updateRow(category, line, { period: event.target.value })}
+                    >
+                      <option value="total">Study total</option>
+                      <option value="yearly">Yearly</option>
+                      <option value="semester">Per semester</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                    <strong className="fin-cost-total">{line?.amount != null ? formatMoney(line.amount) : result ? 'Unknown' : '—'}</strong>
+                    <span className="fin-cost-share" aria-hidden="true"><span style={{ width: `${share}%` }} /></span>
+                    {fromRecord && !isTuition && (
+                      <p className="fin-cost-source">
+                        {line.original_amount_max != null && <>{formatRecordRange(line)}; the upper end is used. </>}
+                        {line.note && <>{line.note} </>}
+                        {line.source_url
+                          ? <a href={line.source_url} target="_blank" rel="noreferrer">{line.source_name || 'Source'}</a>
+                          : line.source_name}
+                        {line.last_verified && <> · checked {line.last_verified}</>}
+                      </p>
+                    )}
+                    {draft && (
+                      <button type="button" className="fin-cost-reset" onClick={() => resetRow(category)}>Remove my figure</button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {invalidRow && <p className="fin-form-error" role="alert">Rows with a negative or invalid amount are ignored.</p>}
+            <p className="fin-note">Published estimates come from each university. Rows marked missing have no official figure; enter your own to include them.</p>
+          </section>
         </div>
 
+        <aside className="fin-card fin-summary" aria-labelledby="financial-result-title">
+          <header className="fin-card-head">
+            <span className="fin-step">3</span>
+            <div>
+              <h2 id="financial-result-title">Your result</h2>
+              <p>Calculated by FitScholars from your plan and the program’s costs.</p>
+            </div>
+          </header>
+          <BackendResult state={apiState} result={result} formatMoney={formatMoney} />
+        </aside>
       </div>
     </main>
+  );
+}
+
+/** Result panel driven by POST /financial-feasibility/calculate */
+function BackendResult({ state, result, formatMoney }) {
+  const { status, error } = state;
+  if (!result) {
+    if (status === 'error') {
+      return <p className="fin-summary-empty is-error" role="alert"><AlertTriangle size={22} aria-hidden="true" /> {error}</p>;
+    }
+    return <p className="fin-summary-empty" role="status"><Loader2 size={22} className="fin-spin" aria-hidden="true" /> Calculating…</p>;
+  }
+
+  const display = STATUS_DISPLAY[result.status] || STATUS_DISPLAY.insufficient_data;
+  const total = result.total_estimated_cost;
+  const remaining = result.remaining_cost;
+  const budget = result.budget.amount;
+  const budgetUsed = remaining != null && budget != null ? Math.min(budget, remaining) : 0;
+  const counted = result.funding.filter((line) => line.counted);
+  const potential = result.funding.filter((line) => line.potential);
+  const money = (value) => (value != null ? formatMoney(value) : 'Unknown');
+
+  return (
+    <div className={`fin-result ${status === 'loading' ? 'is-refreshing' : ''}`} aria-busy={status === 'loading'}>
+      {status === 'error' && <p className="fin-result-error" role="alert"><AlertTriangle size={15} aria-hidden="true" /> {error} Showing the last result.</p>}
+      <p className={`fin-status ${display.tone}`} role="status">
+        <display.icon size={16} aria-hidden="true" /> {display.label}
+      </p>
+
+      {total != null && (
+        <div
+          className="financial-donut"
+          role="img"
+          aria-label={`Estimated costs ${formatMoney(total)}, budget used ${formatMoney(budgetUsed)}, scholarship coverage ${formatMoney(result.confirmed_funding)}`}
+          style={{
+            '--budget-share': `${total ? budgetUsed / total * 100 : 0}%`,
+            '--funding-share': `${total ? result.confirmed_funding / total * 100 : 0}%`,
+          }}
+        >
+          <span>Total costs</span>
+          <strong>{formatMoney(total)}</strong>
+        </div>
+      )}
+
+      <ul className="fin-legend">
+        <li className="is-total"><span /> Total estimated expenses <strong>{money(total)}</strong></li>
+        <li className="is-total"><span /> Tuition fees <strong>{money(result.tuition_cost)}</strong></li>
+        <li className="is-remaining"><span /> Living expenses <strong>{money(result.living_cost)}</strong></li>
+        <li className="is-total"><span /> Other known costs <strong>{money(result.other_costs)}</strong></li>
+        <li className="is-funding"><span /> Scholarship coverage <strong>{formatMoney(result.confirmed_funding)}{result.coverage_percent != null ? ` · ${Math.round(result.coverage_percent)}%` : ''}</strong></li>
+        <li className="is-remaining"><span /> Remaining to pay <strong>{money(remaining)}</strong></li>
+        <li className="is-budget"><span /> Your budget <strong>{budget != null ? formatMoney(budget) : 'Not entered'}</strong></li>
+        <li className="is-gap"><span /> {result.surplus ? 'Surplus' : 'Funding gap'} <strong>{money(result.funding_gap == null ? null : result.surplus || result.funding_gap)}</strong></li>
+      </ul>
+
+      {result.explanation.map((line) => <p key={line} className="fin-explain">{line}</p>)}
+
+      {counted.length > 0 && (
+        <div className="fin-detail-list">
+          <strong>Funding counted</strong>
+          <ul>{counted.map((line) => <li key={line.label}>{line.label}: {formatMoney(line.amount)} <em>{line.reason}</em></li>)}</ul>
+        </div>
+      )}
+      {potential.length > 0 && (
+        <div className="fin-detail-list is-uncertain">
+          <strong>Possible funding, not counted · {result.scholarship.match_label}</strong>
+          <ul>{potential.map((line) => <li key={line.label}>{line.label}: {formatMoney(line.amount)}</li>)}</ul>
+        </div>
+      )}
+      {result.scholarship?.match_outcome === 'confirmed' && (
+        <p className="fin-explain">{result.scholarship.match_label}: {result.scholarship.match_explanation}</p>
+      )}
+      {result.missing_data.length > 0 && (
+        <div className="fin-detail-list is-missing">
+          <strong>Missing information</strong>
+          <ul>{result.missing_data.map((line) => <li key={line}>{line}</li>)}</ul>
+        </div>
+      )}
+      {result.uncertainties.length > 0 && (
+        <div className="fin-detail-list is-uncertain">
+          <strong>Uncertain or not counted</strong>
+          <ul>{result.uncertainties.map((line) => <li key={line}>{line}</li>)}</ul>
+        </div>
+      )}
+      <p className="fin-note">
+        All amounts in {result.currency}.
+        {result.exchange_rates.used && ` Converted with ${result.exchange_rates.source} of ${result.exchange_rates.date}.`}
+        {result.exchange_rates.used && result.exchange_rates.stale && ' These rates are out of date.'}
+      </p>
+    </div>
   );
 }

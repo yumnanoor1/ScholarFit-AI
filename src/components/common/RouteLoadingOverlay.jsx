@@ -1,5 +1,5 @@
-import { GraduationCap } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import BrandLogo from './BrandLogo';
 import './RouteLoadingOverlay.css';
 
 export default function RouteLoadingOverlay() {
@@ -14,11 +14,8 @@ export default function RouteLoadingOverlay() {
       aria-label="Loading page"
     >
       <div className="route-loading-card">
-        <span className="route-loading-mark" aria-hidden="true">
-          <GraduationCap size={22} />
-        </span>
+        <BrandLogo height={48} alt="FitScholars" />
         <span className="route-loading-spinner" aria-hidden="true" />
-        <span className="route-loading-title">FitScholars</span>
         <span className="route-loading-message">Preparing your study journey…</span>
       </div>
     </div>

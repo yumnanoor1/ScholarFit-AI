@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import StudentFinancialPlan, StudentProfile, User
 from app.models.opportunity import Program, Scholarship
-from app.routers.auth import get_current_user
+from app.core.permissions import require_complete_profile
 from app.schemas.eligibility import EligibilityResult, ProfileImprovementResult, ScholarshipEligibilityResult
 from app.services.eligibility_engine import check_program_eligibility
 from app.services.profile_improvement import build_guidance, in_preferred_countries
@@ -37,7 +37,7 @@ def _get_profile(db: Session, user: User) -> StudentProfile:
 def check_all_programs(
     eligible_only: bool = Query(False, description="Show only programs you are eligible for"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Check your profile against every program. Eligible programs come first."""
     profile = _get_profile(db, current_user)
@@ -55,7 +55,7 @@ def check_all_programs(
 def check_one_program(
     program_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Check your profile against one program."""
     profile = _get_profile(db, current_user)
@@ -70,7 +70,7 @@ def check_all_scholarships(
     eligible_only: bool = Query(False, description="Only scholarships whose stated requirements you meet"),
     include_unverified: bool = Query(False, description="Also evaluate unverified records (never marked eligible)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Check your profile against every scholarship. Same visibility rule as GET /scholarships/:
     unverified records are left out unless include_unverified=true."""
@@ -89,7 +89,7 @@ def check_all_scholarships(
 def check_one_scholarship(
     scholarship_id: int = Path(..., gt=0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Check your profile against one scholarship (verified or not)."""
     profile = _get_profile(db, current_user)
@@ -104,7 +104,7 @@ def profile_improvements(
     program_id: Optional[int] = Query(None, gt=0, description="Only this program"),
     scholarship_id: Optional[int] = Query(None, gt=0, description="Only this scholarship"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Personal guidance from your own profile and eligibility results. Covers the selected opportunity,
     or else verified opportunities in your preferred countries, or else all of them."""

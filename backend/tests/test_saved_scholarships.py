@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Response
+from fastapi.dependencies.utils import get_dependant
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -18,6 +19,7 @@ from app.models.opportunity import Scholarship
 from app.models.user import SavedScholarship, User
 from app.routers import saved_scholarships as api
 from app.routers import scholarships as scholarships_api
+from app.core.permissions import require_complete_profile
 from app.routers.auth import get_current_user
 from app.schemas.opportunity import SavedScholarshipResponse
 
@@ -158,7 +160,8 @@ class SavedScholarshipTests(unittest.TestCase):
     def test_every_route_requires_the_signed_in_user(self):
         self.assertEqual(len(api.router.routes), 3)
         for route in api.router.routes:
-            self.assertIn(get_current_user, [dependency.call for dependency in route.dependant.dependencies], route.path)
+            self.assertIn(require_complete_profile, [dependency.call for dependency in route.dependant.dependencies], route.path)
+        self.assertIn(get_current_user, [dependency.call for dependency in get_dependant(path="", call=require_complete_profile).dependencies])
 
     def test_invalid_token_is_rejected(self):
         with self.assertRaises(HTTPException) as error:

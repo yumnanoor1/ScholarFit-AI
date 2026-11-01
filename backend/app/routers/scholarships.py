@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.core.permissions import require_admin
+from app.core.permissions import profile_incomplete_error, require_admin
 from app.models.opportunity import Program, Scholarship, ScholarshipProgramLink
 from app.models.user import StudentProfile, User
 from app.routers.auth import get_optional_user
@@ -19,6 +19,7 @@ from app.schemas.search import (
     BenefitFilter, ConditionFilter, DeadlineFilter, EligibilityFilter, FundingFilter, ScholarshipFilterOptions,
     ScholarshipSearchResult, ScopeFilter, SortOption, VerificationFilter,
 )
+from app.services.profile_completion import profile_completion
 from app.services.scholarship_matching import coverage_counts, evaluate_match, get_link, programs_for_scholarship
 from app.services.scholarship_quality import create_record, delete_record, field_changes, record_audit, update_record, write_result
 from app.services.scholarship_search import filter_options, search_scholarships
@@ -91,18 +92,26 @@ def search(
         raise HTTPException(status_code=422, detail="Choose a program to filter by relationship")
     if current_user is None and (eligibility or sort == "recommendation"):
         raise HTTPException(status_code=401, detail="Log in to use your eligibility or recommendation score")
+    personal = current_user is not None
+    if personal:
+        completion = profile_completion(db, current_user)
+        if completion.required and not completion.complete:
+            if eligibility or sort == "recommendation":
+                raise profile_incomplete_error(completion)
+            # Browsing stays open to everyone, so an unfinished profile sees what a visitor sees
+            personal = False
     program = None
     if program_id is not None:
         program = db.query(Program).filter(Program.id == program_id).first()
         if not program:
             raise HTTPException(status_code=404, detail="Program not found")
     profile = None
-    if current_user is not None:
+    if personal:
         profile = db.query(StudentProfile).filter(StudentProfile.user_id == current_user.id).first()
     filters = dict(q=q, host_country=host_country, nationality=nationality, nationality_scope=nationality_scope, degree=degree,
                    discipline=discipline, academic_condition=academic_condition, funding=funding, benefit=benefit, deadline=deadline,
                    verification=verification, match=match, eligibility=eligibility)
-    return search_scholarships(db, filters, profile, current_user is not None, program, sort, skip, limit)
+    return search_scholarships(db, filters, profile, personal, program, sort, skip, limit)
 
 
 @router.get("/program-coverage", response_model=List[ScholarshipCoverageCounts])

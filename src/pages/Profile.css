@@ -313,6 +313,67 @@
   }
 }
 
+.profile-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.profile-summary-actions .profile-summary-edit {
+  min-height: 40px;
+  padding: 10px 18px;
+}
+
+.settings-profile-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.settings-profile-row > p {
+  flex: 1 1 280px;
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.profile-completed-page {
+  display: grid;
+  place-items: center;
+  min-height: calc(100vh - 160px);
+}
+
+.profile-completed-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 480px;
+  text-align: center;
+}
+
+.profile-completed-message > svg {
+  margin-bottom: 20px;
+  color: #16a34a;
+}
+
+.profile-completed-message > h1 {
+  margin: 0;
+  color: var(--color-text, #0f172a);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.app-container .profile-completed-page .profile-completed-message > p {
+  margin: 12px 0 28px;
+  color: #5b789c;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
 @media (max-width: 420px) {
   .profile-summary-highlights {
     grid-template-columns: minmax(0, 1fr);

@@ -5,8 +5,7 @@ from app.core.cors import allowed_origins
 from app.core.http_security import install_http_security
 from app.database import Base, engine
 from app import models  # noqa: F401
-from app.routers import auth, profile, universities, programs, scholarships, saved_scholarships, eligibility, financial_feasibility, recommendations, admin_scholarships
-
+from app.routers import auth, profile, universities, programs, scholarships, saved_scholarships, eligibility, financial_feasibility, recommendations, admin_scholarships, assistant
 # Unsafe production settings stop the API here, before anything else runs
 validate_settings()
 
@@ -47,6 +46,7 @@ app.include_router(eligibility.router)
 app.include_router(financial_feasibility.router)
 app.include_router(recommendations.router)
 app.include_router(admin_scholarships.router)
+app.include_router(assistant.router)
 
 
 @app.get("/")

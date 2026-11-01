@@ -4,6 +4,8 @@ Run from the backend folder:  python -m unittest discover -s tests -v
 """
 import unittest
 from datetime import date
+from types import SimpleNamespace
+from unittest import mock
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event
@@ -251,8 +253,11 @@ class SearchTests(unittest.TestCase):
 
     def test_route_uses_the_token_user(self):
         names = lambda user: [item["scholarship"].name for item in self.route(user, eligibility=["eligible"])["items"]]  # noqa: E731
-        self.assertIn("Eta Original", names(self.alice))
-        self.assertNotIn("Eta Original", names(self.bob))
+        # These fixtures only hold what eligibility reads. test_profile_access covers the completion rule
+        finished = SimpleNamespace(required=True, complete=True, missing=[])
+        with mock.patch.object(api, "profile_completion", return_value=finished):
+            self.assertIn("Eta Original", names(self.alice))
+            self.assertNotIn("Eta Original", names(self.bob))
 
     def test_route_has_no_user_parameter(self):
         route = next(item for item in api.router.routes if item.path == "/scholarships/search")

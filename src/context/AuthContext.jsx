@@ -4,6 +4,8 @@ import {
   loginUser,
   registerUser,
   getCurrentUser,
+  googleSignIn,
+  linkGoogleAccount,
 } from '../services/authApi';
 import {
   clearStoredSession, getTokenExpiry, isSessionChange, readStoredSession, watchRejectedSessions,
@@ -17,11 +19,13 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(readStoredSession);
   const [loading, setLoading] = useState(() => Boolean(session.token));
   const { user, token } = session;
+  const [initialToken] = useState(() => session.token);
 
   // Removing the stored sign-in is what tells every other tab
   const endSession = useCallback(() => {
     clearStoredSession();
     setSession({ user: null, token: null });
+    setLoading(false);
   }, []);
 
   useEffect(() => watchRejectedSessions(endSession), [endSession]);
@@ -29,18 +33,15 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let isCurrent = true;
 
-    if (!session.token) {
-      setLoading(false);
-      return;
-    }
+    if (!initialToken) return undefined;
 
     // A reply that arrives after logout or a new login must not touch the current session
-    const isSessionUnchanged = () => isCurrent && localStorage.getItem('fitscholar_token') === session.token;
+    const isSessionUnchanged = () => isCurrent && localStorage.getItem('fitscholar_token') === initialToken;
 
-    getCurrentUser(session.token)
+    getCurrentUser(initialToken)
       .then((verifiedUser) => {
         if (!isSessionUnchanged()) return;
-        setSession({ user: verifiedUser, token: session.token });
+        setSession({ user: verifiedUser, token: initialToken });
         localStorage.setItem('fitscholar_user', JSON.stringify(verifiedUser));
       })
       .catch((error) => {
@@ -57,11 +58,15 @@ export function AuthProvider({ children }) {
     return () => {
       isCurrent = false;
     };
-  }, []);
+  }, [initialToken, endSession]);
 
   // Other tabs, and pages restored by the browser's back button, follow the stored session
   useEffect(() => {
-    const syncSession = () => setSession(readStoredSession());
+    const syncSession = () => {
+      const nextSession = readStoredSession();
+      setSession(nextSession);
+      if (!nextSession.token) setLoading(false);
+    };
     const handleStorage = (event) => {
       if (isSessionChange(event)) syncSession();
     };
@@ -164,9 +169,43 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // The same session as a password login: the API's token, stored the same way, which every tab follows
+  const startGoogleSession = async (requestToken) => {
+    setLoading(true);
+
+    try {
+      const tokenData = await requestToken();
+      const accessToken = tokenData.access_token;
+      const verifiedUser = await getCurrentUser(accessToken);
+
+      localStorage.setItem('fitscholar_token', accessToken);
+      localStorage.setItem('fitscholar_user', JSON.stringify(verifiedUser));
+
+      setSession({ user: verifiedUser, token: accessToken });
+
+      return {
+        success: true,
+        user: verifiedUser,
+        token: accessToken,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        code: err?.code,
+        error: err?.message || 'Google sign-in failed. Please try again.',
+      };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loginWithGoogle = (credential) => startGoogleSession(() => googleSignIn(credential));
+
+  const linkGoogle = (credential, password) => startGoogleSession(() => linkGoogleAccount(credential, password));
+
   const logout = () => {
     setSession({ user: null, token: null });
-
+    setLoading(false);
     clearStoredSession();
   };
 
@@ -179,6 +218,8 @@ export function AuthProvider({ children }) {
         loading,
         login,
         register,
+        loginWithGoogle,
+        linkGoogle,
         logout,
       }}
     >

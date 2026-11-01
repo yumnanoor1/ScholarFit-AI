@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight, Award, Bookmark, Briefcase, Building2, CalendarDays, Check, Clock, DollarSign,
@@ -46,6 +46,7 @@ function formatDeadline(item) {
 const ROWS = [
   {
     id: 'cost',
+    group: 'Cost and timeline',
     label: 'Tuition / funding',
     icon: DollarSign,
     better: 'lower',
@@ -60,15 +61,17 @@ const ROWS = [
         number: parseTuitionUsd(item),
       }),
   },
-  { id: 'deadline', label: 'Application deadline', icon: CalendarDays, value: formatDeadline },
+  { id: 'deadline', group: 'Cost and timeline', label: 'Application deadline', icon: CalendarDays, value: formatDeadline },
   {
     id: 'duration',
+    group: 'Cost and timeline',
     label: 'Duration',
     icon: Clock,
     value: (item) => ({ text: item.duration || (item.durationMonths ? `${item.durationMonths} months` : null) }),
   },
   {
     id: 'academic',
+    group: 'Requirements',
     label: 'Academic requirement',
     icon: GraduationCap,
     better: 'lower',
@@ -79,6 +82,7 @@ const ROWS = [
   },
   {
     id: 'english',
+    group: 'Requirements',
     label: 'English requirement',
     icon: Languages,
     better: 'lower',
@@ -89,13 +93,16 @@ const ROWS = [
   },
   {
     id: 'audience',
+    group: 'Requirements',
     label: 'Who can apply',
     icon: Award,
+    longText: true,
     value: (item) => (item.kind === 'scholarship'
       ? { text: item.audienceSummary || item.eligibleNationalities }
       : { text: item.requiredDegree || item.fieldOfStudy, note: item.degree }),
   },
 ];
+const ROW_GROUPS = ['Cost and timeline', 'Requirements'];
 
 // Index of the opportunity with the better number, or -1 when they can't be compared fairly
 function betterIndex(row, values) {
@@ -164,6 +171,15 @@ export default function Compare() {
   const detailsRoute = (item) => (item.kind === 'scholarship' ? `/scholarships/${item.id}` : `/universities/${item.id}`);
   const isComplete = opportunities.length === 2;
   const usesSampleData = opportunities.some((item) => item.sourceStatus === 'unverified-sample');
+  const rowGroups = !isComplete ? [] : ROW_GROUPS
+    .map((title) => ({
+      title,
+      rows: ROWS
+        .filter((row) => row.group === title)
+        .map((row) => ({ ...row, values: opportunities.map((item) => row.value(item)) }))
+        .filter((row) => row.values.some((value) => value.text)),
+    }))
+    .filter((group) => group.rows.length);
 
   return (
     <div className={`page-container cmp-page ${isComplete ? '' : 'is-waiting'}`}>
@@ -189,8 +205,8 @@ export default function Compare() {
         <p className="cmp-status" role="status">Loading your comparison...</p>
       ) : (
         <>
-          {/* The two opportunities facing each other; empty slots invite a pick */}
-          <section className="cmp-versus" aria-label="Opportunities being compared">
+          {/* Until two are picked, empty slots invite a choice; after that the table carries them */}
+          {!isComplete && <section className="cmp-versus" aria-label="Opportunities being compared">
             {[0, 1].map((slot) => {
               const item = opportunities[slot];
               if (!item) {
@@ -223,11 +239,29 @@ export default function Compare() {
               );
             })}
             <span className="cmp-vs" aria-hidden="true">VS</span>
-          </section>
+          </section>}
 
           {isComplete && (
             <>
               <section className="cmp-table" aria-label="Comparison details">
+                <div className="cmp-row is-head">
+                  <div className="cmp-row-label cmp-legend">
+                    <strong>Side by side</strong>
+                  </div>
+                  {opportunities.map((item) => (
+                    <article key={item.id} className={`cmp-head is-${item.kind}`}>
+                      <OpportunityMark item={item} size={44} />
+                      <div className="cmp-head-copy">
+                        <span className="cmp-kind">{item.kind === 'scholarship' ? 'Scholarship' : "Master's program"}</span>
+                        <h2>{item.title}</h2>
+                        <p><MapPin size={13} aria-hidden="true" /> {[item.organization, item.country].filter(Boolean).join(' · ')}</p>
+                      </div>
+                      <button type="button" className="cmp-remove" onClick={() => removeOpportunity(item.id)} aria-label={`Remove ${item.title} from comparison`}>
+                        <X size={15} aria-hidden="true" />
+                      </button>
+                    </article>
+                  ))}
+                </div>
                 <div className="cmp-row is-eligibility">
                   <div className="cmp-row-label"><ShieldCheck size={17} aria-hidden="true" /> Your eligibility</div>
                   {opportunities.map((item) => (
@@ -237,23 +271,26 @@ export default function Compare() {
                     </div>
                   ))}
                 </div>
-                {ROWS.map((row) => {
-                  const values = opportunities.map((item) => row.value(item));
-                  if (values.every((value) => !value.text)) return null;
-                  const winner = betterIndex(row, values);
-                  return (
-                    <div key={row.id} className="cmp-row">
-                      <div className="cmp-row-label"><row.icon size={17} aria-hidden="true" /> {row.label}</div>
-                      {values.map((value, index) => (
-                        <div key={opportunities[index].id} className={`cmp-cell ${winner === index ? 'is-better' : ''}`}>
-                          <strong className={value.text ? '' : 'is-missing'}>{value.text || 'Not listed'}</strong>
-                          {value.note && <small>{value.note}</small>}
-                          {winner === index && <span className="cmp-better"><Trophy size={12} aria-hidden="true" /> {row.betterLabel}</span>}
+                {rowGroups.map((group) => (
+                  <Fragment key={group.title}>
+                    <h3 className="cmp-group">{group.title}</h3>
+                    {group.rows.map((row) => {
+                      const winner = betterIndex(row, row.values);
+                      return (
+                        <div key={row.id} className={`cmp-row ${row.longText ? 'is-long' : ''}`}>
+                          <div className="cmp-row-label"><row.icon size={17} aria-hidden="true" /> {row.label}</div>
+                          {row.values.map((value, index) => (
+                            <div key={opportunities[index].id} className={`cmp-cell ${winner === index ? 'is-better' : ''}`}>
+                              <strong className={value.text ? '' : 'is-missing'}>{value.text || 'Not listed'}</strong>
+                              {value.note && <small>{value.note}</small>}
+                              {winner === index && <span className="cmp-better"><Trophy size={12} aria-hidden="true" /> {row.betterLabel}</span>}
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </Fragment>
+                ))}
                 <div className="cmp-row is-actions">
                   <div className="cmp-row-label" aria-hidden="true" />
                   {opportunities.map((item) => {

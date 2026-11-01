@@ -1,0 +1,134 @@
+.settings-page {
+  max-width: 1040px;
+}
+
+.settings-page-header {
+  margin-bottom: 24px;
+}
+
+.settings-page-header .page-subtitle {
+  margin-bottom: 0;
+}
+
+.settings-sections {
+  display: grid;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.settings-page .settings-card {
+  width: 100%;
+  padding: 24px;
+  margin: 0;
+  border-radius: 16px;
+}
+
+.settings-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 20px;
+}
+
+.settings-section-title {
+  margin: 0;
+  color: var(--color-dark);
+  font-family: var(--font-family-heading);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.settings-section-copy {
+  margin: 5px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.settings-completion {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 999px;
+  background: var(--brand-surface);
+  color: var(--brand-navy);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.settings-page .settings-profile-row {
+  align-items: center;
+  margin: 18px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+.settings-page .settings-profile-row > p {
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.settings-preference {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 10px;
+  background: var(--brand-surface);
+  cursor: pointer;
+}
+
+.settings-preference input {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+  accent-color: var(--brand-blue);
+}
+
+.settings-preference > span,
+.settings-preference-title,
+.settings-preference-description {
+  display: block;
+}
+
+.settings-preference-title {
+  color: var(--color-dark);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.settings-preference-description {
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.settings-security-note {
+  margin: 18px 0 0;
+  padding: 14px 16px;
+  border-left: 3px solid var(--color-secondary);
+  border-radius: 0 8px 8px 0;
+  background: var(--brand-surface);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 560px) {
+  .settings-page .settings-card {
+    padding: 20px 16px;
+  }
+
+  .settings-page .settings-profile-row {
+    align-items: stretch;
+  }
+
+  .settings-page .settings-profile-row .profile-summary-primary {
+    width: 100%;
+  }
+}

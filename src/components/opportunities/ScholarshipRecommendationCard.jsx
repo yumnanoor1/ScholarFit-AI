@@ -7,12 +7,12 @@ const LIST_LENGTH = 4;
 function ReasonList({ title, items }) {
   if (items.length === 0) return null;
   return (
-    <>
+    <div className="sd-reasons">
       <strong>{title}</strong>
-      <ul style={{ margin: '4px 0 12px', paddingLeft: '20px', fontSize: '0.86rem' }}>
+      <ul>
         {items.slice(0, LIST_LENGTH).map((item) => <li key={item}>{item}</li>)}
       </ul>
-    </>
+    </div>
   );
 }
 

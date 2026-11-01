@@ -775,6 +775,25 @@ export async function fetchProfileImprovements(token, query = {}) {
   return fetchEligibility(`/eligibility/improvements${params ? `?${params}` : ''}`, token);
 }
 
+/**
+ * Ask the FitScholar AI Assistant. POST /assistant/chat -> AssistantReply
+ * Throws an error with `.status` (401 signed out, 403 profile incomplete or admin, 429 too many messages).
+ */
+export async function askAssistant(token, message, context = {}) {
+  const response = await fetch(`${API_BASE_URL}/assistant/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({ message, context }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(extractErrorMessage(data, `The assistant could not answer (${response.status})`));
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
 /** Query for one selected opportunity. Older sample selections (univ-1, sch-1) have no backend record. */
 export function getImprovementQuery(opportunity) {
   if (!opportunity) return null;

@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { FileText, LockKeyhole, UserRound } from 'lucide-react';
 import { ChevronSmallRightIcon } from '../components/ui/ChevronSmallRightIcon';
 import { GlowCard } from '../components/ui/spotlight-card';
+import { ProfileMissingNotice } from '../components/profile/ProfileNotices';
 
 export default function ProfileSetupChoice() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export default function ProfileSetupChoice() {
   return (
     <div className="profile-method-choice-page flex min-h-[calc(100vh-120px)] w-full items-start justify-center bg-slate-50 dark:bg-slate-950">
       <main className="mx-auto w-full max-w-3xl">
+        <ProfileMissingNotice />
         <header className="profile-method-choice-heading text-center">
           <h1 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
             Build your FitScholars profile

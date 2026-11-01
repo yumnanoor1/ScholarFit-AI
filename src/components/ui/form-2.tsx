@@ -1,9 +1,8 @@
 import * as React from "react";
 import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown, GraduationCap, Globe2, Lightbulb, Save, AlertCircle, WalletCards, FileText, Info, type LucideIcon } from "lucide-react";
 import { Button } from "./button";
-import { EMPTY_PROFILE, mergeProfile, type StudentProfile } from "../../data/profileModel";
+import { EMPTY_PROFILE, LAST_PROFILE_STEP, PROFILE_STEPS as STEPS, mergeProfile, type StudentProfile } from "../../data/profileModel";
 
-const STEPS = ["About You", "Academic Background", "Study Goals", "Funding & Documents"];
 const FIELDS = ["Computer Science", "Software Engineering", "Artificial Intelligence", "Data Science", "Cybersecurity", "Machine Learning", "Information Technology", "Other"];
 const COUNTRIES = ["Pakistan", "Germany", "Netherlands", "Sweden", "Canada", "United States", "United Kingdom", "Australia", "New Zealand", "Other"];
 const REGIONS = ["Europe", "North America", "Asia-Pacific", "Global"];
@@ -66,16 +65,31 @@ function Control(props: ControlProps) {
   return <input className={controlClassName} aria-invalid={Boolean(error)} {...inputProps} />;
 }
 
-function MultiSelect({ label, options, value, onChange, placeholder = "Search or select..." }: {
+export function addTypedOption(value: string[], options: string[], typed: string) {
+  const text = typed.trim().replace(/\s+/g, " ");
+  if (!text) return value;
+  const sameText = (item: string) => item.toLowerCase() === text.toLowerCase();
+  return value.some(sameText) ? value : [...value, options.find(sameText) || text];
+}
+
+function MultiSelect({ label, options, value, onChange, placeholder = "Search or select...", allowTyped = false }: {
   label: string;
   options: string[];
   value: string[];
   onChange: (value: string[]) => void;
   placeholder?: string;
+  allowTyped?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
-  const filteredOptions = options.filter((option) => option.toLowerCase().includes(query.toLowerCase()));
+  const typedValues = value.filter((item) => !options.includes(item)); // listed too, or they could never be removed
+  const filteredOptions = [...typedValues, ...options].filter((option) => option.toLowerCase().includes(query.toLowerCase()));
+  const typedText = query.trim();
+  const canAddTyped = allowTyped && typedText !== "" && ![...value, ...options].some((item) => item.toLowerCase() === typedText.toLowerCase());
+  const addTyped = () => {
+    onChange(addTypedOption(value, options, query));
+    setQuery("");
+  };
 
   return (
     <div className="profile-multi-select">
@@ -97,15 +111,20 @@ function MultiSelect({ label, options, value, onChange, placeholder = "Search or
             type="search"
             value={query}
             aria-label={`Search ${label}`}
-            placeholder="Search options..."
+            placeholder={allowTyped ? "Search, or type your own and press Enter" : "Search options..."}
+            maxLength={100}
             onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setOpen(false);
+              if (event.key === "Enter" && allowTyped) { event.preventDefault(); addTyped(); }
+            }}
           />
           <div className="profile-multi-select-options">
+            {canAddTyped && <button type="button" onClick={addTyped}><span>Add “{typedText}”</span></button>}
             {filteredOptions.length ? filteredOptions.map((option) => {
               const selected = value.includes(option);
               return <button key={option} type="button" aria-pressed={selected} onClick={() => onChange(selected ? value.filter((item) => item !== option) : [...value, option])}><span>{option}</span>{selected && <Check size={12} aria-hidden="true" />}</button>;
-            }) : <span className="profile-multi-select-empty">No matching options</span>}
+            }) : !canAddTyped && <span className="profile-multi-select-empty">No matching options</span>}
           </div>
         </div>
       )}
@@ -122,7 +141,7 @@ function Section({ title, description, className = "", children }: {
   return <section className={`rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6 ${className}`}><h2 className="text-lg font-bold text-slate-900 dark:text-white">{title}</h2>{description && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{description}</p>}<div className="mt-5">{children}</div></section>;
 }
 
-function validateStep(step: number, values: StudentProfile) {
+export function validateStep(step: number, values: StudentProfile) {
   const personal = values.personalInfo;
   const academic = values.academicBackground;
   const goals = values.studyPreferences;
@@ -154,7 +173,8 @@ function validateStep(step: number, values: StudentProfile) {
   }
   if (step === 2) {
     if (!goals.fields.length) errors.fields = "Select at least one preferred study field.";
-    if (!goals.countries.length && !goals.regions.length) errors.countries = "Select at least one country or region.";
+    // Recommendations and the profile status work from countries, so a region alone isn't enough
+    if (!goals.countries.some((country) => country !== "Other") && !goals.otherCountry.trim()) errors.countries = "Select at least one preferred country.";
     if (!goals.intake) errors.intake = "Select an intended intake.";
     if (!goals.admissionYear) errors.admissionYear = "Select an admission year.";
     if (!goals.programPreference) errors.programPreference = "Select a program type.";
@@ -170,6 +190,10 @@ function validateStep(step: number, values: StudentProfile) {
     if (!values.studyPreferences.fundingPreferences.length) errors.fundingPreferences = "Select at least one preferred funding type.";
     if (!values.englishProficiency.willingToTest) errors.willingToTest = "Choose whether you are willing to take an English proficiency test.";
     if (!values.englishProficiency.testStatus) errors.testStatus = "Select your English test status.";
+    if (values.englishProficiency.testStatus === "Completed") {
+      if (!values.englishProficiency.testType) errors.testType = "Select the English test you took.";
+      if (!values.englishProficiency.overallScore) errors.overallScore = "Enter your overall score.";
+    }
     if (values.englishProficiency.overallScore && (!Number.isFinite(Number(values.englishProficiency.overallScore)) || Number(values.englishProficiency.overallScore) < 0)) {
       errors.overallScore = "Enter a valid non-negative score.";
     }
@@ -177,32 +201,70 @@ function validateStep(step: number, values: StudentProfile) {
   return errors;
 }
 
+/** The first step with a problem, for when the review finds something the form didn't catch. */
+export function firstInvalidStep(values: StudentProfile) {
+  for (let step = 0; step < LAST_PROFILE_STEP; step += 1) {
+    const errors = validateStep(step, values);
+    if (Object.keys(errors).length) return { step, errors };
+  }
+  return null;
+}
+
+function reviewList(items: (string | undefined)[]) {
+  return items.filter((item) => item && item !== "Other").join(", ");
+}
+
+function reviewSections(values: StudentProfile): [string, [string, string][]][] {
+  const { personalInfo: personal, academicBackground: academic, studyPreferences: goals, englishProficiency: english } = values;
+  const scale = academic.gradingScale === "Other" ? academic.customGradingScale : academic.gradingScale;
+  return [
+    ["About You", [["Full name", personal.fullName], ["Email", personal.email], ["Nationality", personal.citizenshipCountry], ["Country of residence", personal.currentCountry], ["Date of birth", personal.dateOfBirth]]],
+    ["Academic Background", [["Degree", academic.currentDegree], ["Degree title / major", academic.degreeTitle], ["University", academic.institution], ["Current semester / year", academic.currentYear], ["CGPA", academic.cgpa && `${academic.cgpa} / ${scale}`], ["Graduation", academic.academicStatus === "graduated" ? academic.graduationDate : academic.expectedGraduationDate]]],
+    ["Study Goals", [["Preferred fields", reviewList([...goals.fields, goals.customField])], ["Preferred destinations", reviewList([...goals.countries, goals.otherCountry, ...goals.regions])], ["Intake", reviewList([goals.intake, goals.admissionYear])]]],
+    ["Language & Funding", [["English test status", english.testStatus], ["English test", english.testType], ["Overall score", english.overallScore], ["Funding preference", goals.fundingPreference]]],
+  ];
+}
+
 export default function FormLayout01({
   onSave,
   onComplete,
+  onCancel,
   onStepChange,
   initialValues,
   initialStep = 0,
   isSaving = false,
   saveError = "",
-  finalButtonLabel = "Create My Profile",
+  finalButtonLabel = "Complete My Profile",
+  requiresReviewConfirmation = false,
+  editing = false,
+  completionPercent = 0,
+  notice = null,
 }: {
   onSave?: (values: any, progress: { step: number; complete: boolean }) => Promise<boolean> | boolean;
   onComplete?: () => void;
+  onCancel?: () => void;
   onStepChange?: (step: number) => void;
   initialValues?: any;
   initialStep?: number;
   isSaving?: boolean;
   saveError?: string;
   finalButtonLabel?: string;
+  requiresReviewConfirmation?: boolean;
+  editing?: boolean;
+  completionPercent?: number;
+  notice?: React.ReactNode;
+  [key: string]: any;
 }) {
   const [values, setValues] = React.useState(() => mergeProfile(initialValues || EMPTY_PROFILE));
-  const [step, setStep] = React.useState(Math.min(Math.max(initialStep, 0), 3));
+  const [step, setStep] = React.useState(Math.min(Math.max(initialStep, 0), LAST_PROFILE_STEP));
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [feedback, setFeedback] = React.useState("");
+  const [reviewConfirmed, setReviewConfirmed] = React.useState(false);
+  const progressPercent = editing ? completionPercent : Math.round(((step + 1) / STEPS.length) * 100);
+  const cancel = () => (onCancel ? onCancel() : window.history.back());
 
   React.useEffect(() => {
-    setStep(Math.min(Math.max(initialStep, 0), 3));
+    setStep(Math.min(Math.max(initialStep, 0), LAST_PROFILE_STEP));
   }, [initialStep]);
 
   const update = (section, field, value) => {
@@ -222,12 +284,24 @@ export default function FormLayout01({
     return result !== false;
   };
   const continueStep = async () => {
-    const nextErrors = validateStep(step, values);
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length) return;
-    if (step < 3) {
+    if (step < LAST_PROFILE_STEP && !editing) {
+      const nextErrors = validateStep(step, values);
+      setErrors(nextErrors);
+      if (Object.keys(nextErrors).length) return;
       if (await save(false)) goTo(step + 1);
-    } else if (await save(true)) onComplete?.();
+      return;
+    }
+    const problem = firstInvalidStep(values);
+    if (problem) {
+      setErrors(problem.errors);
+      goTo(problem.step);
+      return;
+    }
+    if (requiresReviewConfirmation && !reviewConfirmed) {
+      setErrors({ reviewConfirmed: "Confirm that you have checked the details taken from your CV." });
+      return;
+    }
+    if (await save(true)) onComplete?.();
   };
 
   const personal = values.personalInfo;
@@ -281,19 +355,24 @@ export default function FormLayout01({
     update("studyPreferences", "regions", destinations.filter((destination) => REGIONS.includes(destination)));
   };
 
-  const footerActions = <footer className={`profile-wizard-actions mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800${step === 1 ? " is-academic-sticky" : ""}`}><Button type="button" variant="outline" size="sm" onClick={() => save(false)} disabled={isSaving}><Save size={12} className="mr-1.5" />Save Draft</Button><div className="ml-auto flex gap-2">{step === 0 && <Button type="button" variant="outline" size="sm" onClick={() => window.history.back()} disabled={isSaving}>Cancel</Button>}{step > 0 && <Button type="button" variant="outline" size="sm" onClick={() => goTo(step - 1)} disabled={isSaving}><ArrowLeft size={12} className="mr-1" />Back</Button>}<Button type="button" size="sm" onClick={continueStep} disabled={isSaving}>{isSaving ? "Saving..." : step === 3 ? finalButtonLabel : "Continue"}{step === 3 ? <Check size={12} className="ml-1.5" /> : <ArrowRight size={12} className="ml-1.5" />}</Button></div></footer>;
+  const footerActions = <footer className={`profile-wizard-actions mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800${step === 1 ? " is-academic-sticky" : ""}`}>{!editing && <Button type="button" variant="outline" size="sm" onClick={() => save(false)} disabled={isSaving}><Save size={12} className="mr-1.5" />Save Draft</Button>}<div className="ml-auto flex gap-2">{(step === 0 || editing) && <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={isSaving}>Cancel</Button>}{step > 0 && !editing && <Button type="button" variant="outline" size="sm" onClick={() => goTo(step - 1)} disabled={isSaving}><ArrowLeft size={12} className="mr-1" />Back</Button>}<Button type="button" size="sm" onClick={continueStep} disabled={isSaving}>{isSaving ? "Saving..." : editing ? "Save Changes" : step === LAST_PROFILE_STEP ? finalButtonLabel : "Continue"}{step === LAST_PROFILE_STEP || editing ? <Check size={12} className="ml-1.5" /> : <ArrowRight size={12} className="ml-1.5" />}</Button></div></footer>;
 
   return <div className="profile-wizard-root min-h-[calc(100vh-48px)] w-full bg-slate-50 dark:bg-slate-950">
-    <div className="profile-wizard-content mx-auto w-full max-w-5xl" style={{ maxWidth: "1260px" }}>
+    <div className="profile-wizard-content w-full">
     <header className="profile-wizard-header mb-6">
       <div className="profile-wizard-heading flex flex-wrap items-end justify-between gap-3">
-        <div className="flex items-start gap-2"><button type="button" onClick={() => window.history.back()} className="mt-0.5 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Go back"><ArrowLeft size={16} /></button><div><h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-[26px]">Build your Master's profile</h1><p className="mt-1 text-xs text-slate-500 dark:text-slate-400 sm:text-sm">Complete your profile in 4 simple steps. You can save a draft and come back anytime.</p></div></div>
+        <div className="flex items-start gap-2"><button type="button" onClick={cancel} className="mt-0.5 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Go back"><ArrowLeft size={16} /></button><div><h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-[26px]">{editing ? "Edit your profile" : "Build your Master's profile"}</h1></div></div>
       </div>
-      <div className="profile-wizard-stepper mt-5 flex items-center" aria-label="Profile progress">{STEPS.map((title, index) => <React.Fragment key={title}><button type="button" onClick={() => index <= step && goTo(index)} className="flex min-w-0 items-center gap-2 text-left" aria-label={`Go to ${title}`}><span className={`profile-wizard-step-number flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${index <= step ? "border-sky-600 bg-sky-600 text-white" : "border-slate-200 bg-slate-100 text-slate-500 dark:border-slate-700 dark:bg-slate-900"}`}>{index < step ? <Check size={12} strokeWidth={3} /> : index + 1}</span><span className={`profile-wizard-step-label hidden truncate text-[11px] sm:inline ${index === step ? "font-semibold text-sky-700 dark:text-sky-300" : "text-slate-500"}`}>{title}</span></button>{index < STEPS.length - 1 && <span className={`profile-wizard-step-line mx-2 h-px min-w-5 flex-1 ${index < step ? "bg-sky-300" : "bg-slate-200 dark:bg-slate-700"}`} />}</React.Fragment>)}</div>
+      <div className="mt-4">
+        <p className="text-xs font-semibold text-sky-700 dark:text-sky-300">{editing ? <>Profile {progressPercent}% complete</> : <>Step {step + 1} of {STEPS.length} · {progressPercent}% complete</>}</p>
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800" role="progressbar" aria-label="Profile setup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><div className="h-full rounded-full bg-sky-600 transition-all" style={{ width: `${progressPercent}%` }} /></div>
+      </div>
+      <div className="profile-wizard-stepper mt-5 flex items-center" aria-label="Profile progress">{STEPS.map((title, index) => <React.Fragment key={title}><button type="button" onClick={() => (index <= step || editing) && goTo(index)} className="flex min-w-0 items-center gap-2 text-left" aria-label={`Go to ${title}`}><span className={`profile-wizard-step-number flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${index <= step ? "border-sky-600 bg-sky-600 text-white" : "border-slate-200 bg-slate-100 text-slate-500 dark:border-slate-700 dark:bg-slate-900"}`}>{index < step ? <Check size={12} strokeWidth={3} /> : index + 1}</span><span className={`profile-wizard-step-label hidden truncate text-[11px] sm:inline ${index === step ? "font-semibold text-sky-700 dark:text-sky-300" : "text-slate-500"}`}>{title}</span></button>{index < STEPS.length - 1 && <span className={`profile-wizard-step-line mx-2 h-px min-w-5 flex-1 ${index < step ? "bg-sky-300" : "bg-slate-200 dark:bg-slate-700"}`} />}</React.Fragment>)}</div>
     </header>
 
-    {saveError && <p role="alert" className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{saveError}</p>}
-    {feedback && <p role="status" className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{feedback}</p>}
+    {notice}
+    {saveError && <p role="alert" className="profile-wizard-notice border border-red-200 bg-red-50 text-red-700"><AlertCircle size={16} aria-hidden="true" />{saveError}</p>}
+    {feedback && <p role="status" className="profile-wizard-notice border border-emerald-200 bg-emerald-50 text-emerald-700"><Check size={16} aria-hidden="true" />{feedback}</p>}
 
     {step === 0 && <Section title="About You" description="Let's start with your basic information." className="profile-about-panel"><div className="profile-about-fields grid gap-4 sm:grid-cols-2">
       <Field label="Full Name" required error={errors.fullName}>{input("personalInfo", "fullName", { autoComplete: "name" })}</Field>
@@ -382,7 +461,7 @@ export default function FormLayout01({
           <span className="profile-goal-icon-control"><GraduationCap size={12} aria-hidden="true" /><Control as="select" value={goals.intendedDegree || "Master's"} onChange={(event) => update("studyPreferences", "intendedDegree", event.target.value)}><option value="Master's">Master's (MSc/MS)</option></Control></span>
         </Field>
         <GroupField label="Preferred Study Fields" required error={errors.fields} className="profile-goal-fields">
-          <MultiSelect label="Preferred Study Fields" options={FIELDS} value={selectedFields} onChange={(fields) => { update("studyPreferences", "fields", fields); if (!fields.includes("Other")) update("studyPreferences", "customField", ""); }} placeholder="Search or select fields..." />
+          <MultiSelect label="Preferred Study Fields" options={FIELDS} value={selectedFields} onChange={(fields) => { update("studyPreferences", "fields", fields); if (!fields.includes("Other")) update("studyPreferences", "customField", ""); }} placeholder="Search, select or type a field..." allowTyped />
           <span className="profile-goal-helper">Select multiple options</span>
         </GroupField>
         <GroupField label="Preferred Countries / Regions" required error={errors.countries} className="profile-goal-destinations">
@@ -444,7 +523,7 @@ export default function FormLayout01({
         <Field label="English Test Status" required error={errors.testStatus} className="profile-funding-test-status">
           {select("englishProficiency", "testStatus", ["Not taken", "Booked", "Completed", "Not sure"])}
         </Field>
-        <Field label="English Test Type" className="profile-funding-test-type">
+        <Field label="English Test Type" error={errors.testType} className="profile-funding-test-type">
           {select("englishProficiency", "testType", ["IELTS", "TOEFL iBT", "PTE", "Duolingo English Test", "Other", "No Test / Not Taken"], { "aria-label": "English test type (optional)" })}
         </Field>
         <Field label="Expected Test Score (Overall)" error={errors.overallScore} className="profile-funding-score">
@@ -472,6 +551,23 @@ export default function FormLayout01({
       </section>
       {footerActions}
     </section>}
+
+    {step === LAST_PROFILE_STEP && <Section title="Review & Complete" description="Check your details. Use Back or the steps above to change anything.">
+      <div className="grid gap-6 sm:grid-cols-2">
+        {reviewSections(values).map(([title, rows]) => <section key={title} aria-label={title}>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h3>
+          <dl className="mt-2 space-y-1.5 text-sm">
+            {rows.map(([label, value]) => <div key={label} className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400">{label}</dt><dd className="text-right font-medium text-slate-900 dark:text-slate-100">{value || "Not provided"}</dd></div>)}
+          </dl>
+        </section>)}
+      </div>
+      {requiresReviewConfirmation && <label className="mt-5 flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
+        <input type="checkbox" className="mt-0.5" aria-invalid={Boolean(errors.reviewConfirmed)} checked={reviewConfirmed} onChange={(event) => { setReviewConfirmed(event.target.checked); setErrors((current) => ({ ...current, reviewConfirmed: undefined })); }} />
+        <span>I have checked the details taken from my CV, and they are correct.</span>
+      </label>}
+      {errors.reviewConfirmed && <span role="alert" className="mt-1 flex items-center gap-1 text-xs text-red-600 dark:text-red-300"><AlertCircle size={12} />{errors.reviewConfirmed}</span>}
+      {footerActions}
+    </Section>}
     </div>
   </div>;
 }

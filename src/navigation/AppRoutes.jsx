@@ -8,6 +8,7 @@ import { ProfileProvider } from '../context/ProfileContext';
 // Route Protection
 import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
+import ProfileGate from './ProfileGate';
 
 // Layout Components
 import Sidebar from '../components/layout/Sidebar';
@@ -30,6 +31,7 @@ const Profile = lazy(() => import('../pages/Profile'));
 const ProfileSetupChoice = lazy(() => import('../pages/ProfileSetupChoice'));
 const CvUpload = lazy(() => import('../pages/CvUpload'));
 const ProfileVerification = lazy(() => import('../pages/ProfileVerification'));
+const ProfileCompleted = lazy(() => import('../pages/ProfileCompleted'));
 const Documents = lazy(() => import('../pages/Documents'));
 const Universities = lazy(() => import('../pages/Universities'));
 const UniversityDetails = lazy(() => import('../pages/UniversityDetails'));
@@ -99,33 +101,53 @@ export default function AppRoutes() {
                       <Routes>
 
                         {/* Profile Onboarding */}
-                        <Route
-                          path="/profile-setup"
-                          element={<ProfileSetupChoice />}
-                        />
+                        <Route element={<ProfileGate gate="onboarding" />}>
+                          <Route
+                            path="/profile-setup"
+                            element={<ProfileSetupChoice />}
+                          />
 
-                        <Route
-                          path="/profile-setup/cv"
-                          element={<CvUpload />}
-                        />
+                          <Route
+                            path="/profile-setup/cv"
+                            element={<CvUpload />}
+                          />
+                        </Route>
 
-                        <Route
-                          path="/profile/verify"
-                          element={<ProfileVerification />}
-                        />
 
+                        {/* Profile */}
+                        <Route element={<ProfileGate gate="any" />}>
+                          <Route
+                            path="/profile/verify"
+                            element={<ProfileVerification />}
+                          />
+
+                          <Route
+                            path="/profile-setup/complete"
+                            element={<ProfileCompleted />}
+                          />
+
+                          <Route
+                            path="/profile"
+                            element={<Profile />}
+                          />
+                        </Route>
+
+
+                        {/* Administration */}
+                        <Route element={<AdminRoute />}>
+                          <Route path="/admin/scholarships" element={<AdminScholarships />} />
+                          <Route path="/admin/scholarships/new" element={<AdminScholarshipEdit />} />
+                          <Route path="/admin/scholarships/:id" element={<AdminScholarshipEdit />} />
+                        </Route>
+
+
+                        {/* Everything else needs a finished profile */}
+                        <Route element={<ProfileGate gate="complete" />}>
 
                         {/* Dashboard */}
                         <Route
                           path="/dashboard"
                           element={<Dashboard />}
-                        />
-
-
-                        {/* Profile */}
-                        <Route
-                          path="/profile"
-                          element={<Profile />}
                         />
 
 
@@ -158,14 +180,6 @@ export default function AppRoutes() {
                           path="/scholarships/:id"
                           element={<ScholarshipDetails />}
                         />
-
-
-                        {/* Administration */}
-                        <Route element={<AdminRoute />}>
-                          <Route path="/admin/scholarships" element={<AdminScholarships />} />
-                          <Route path="/admin/scholarships/new" element={<AdminScholarshipEdit />} />
-                          <Route path="/admin/scholarships/:id" element={<AdminScholarshipEdit />} />
-                        </Route>
 
 
                         {/* Decision Support */}
@@ -216,6 +230,8 @@ export default function AppRoutes() {
                           element={<Navigate to="/dashboard" replace />}
                         />
 
+                        </Route>
+
                       </Routes>
                       </Suspense>
                       </RouteErrorBoundary>
@@ -223,6 +239,7 @@ export default function AppRoutes() {
                     </main>
 
                   </div>
+
                 </div>
               }
             />

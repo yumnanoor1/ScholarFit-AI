@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models.opportunity import Scholarship
 from app.models.user import SavedScholarship, User
-from app.routers.auth import get_current_user
+from app.core.permissions import require_complete_profile
 from app.schemas.opportunity import SavedScholarshipResponse
 
 router = APIRouter(prefix="/saved-scholarships", tags=["Saved Scholarships"])
@@ -25,7 +25,7 @@ def _find_saved(db: Session, user: User, scholarship_id: int) -> Optional[SavedS
 @router.get("/", response_model=List[SavedScholarshipResponse])
 def list_saved_scholarships(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Your saved scholarships, oldest first."""
     return (
@@ -42,7 +42,7 @@ def save_scholarship(
     response: Response,
     scholarship_id: int = Path(..., gt=0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Save a scholarship. Saving one you already saved returns the existing record (200)."""
     existing = _find_saved(db, current_user, scholarship_id)
@@ -76,7 +76,7 @@ def save_scholarship(
 def remove_saved_scholarship(
     scholarship_id: int = Path(..., gt=0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Remove a scholarship from your saved list. Nothing happens if it wasn't saved."""
     saved = _find_saved(db, current_user, scholarship_id)

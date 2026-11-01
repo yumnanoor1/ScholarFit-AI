@@ -5058,29 +5058,6 @@ p {
   color: var(--color-dark);
 }
 
-/* Settings */
-.settings-page .page-subtitle {
-  margin-bottom: 20px;
-}
-
-.settings-page .settings-card {
-  padding: 24px;
-  border-radius: 16px;
-}
-
-.settings-page .settings-card h3 {
-  color: var(--color-dark);
-  font-family: var(--font-family-heading);
-  font-size: 1.05rem;
-  font-weight: 700;
-}
-
-.settings-page .settings-card .settings-section-gap {
-  margin-top: 8px;
-  padding-top: 20px;
-  border-top: 1px solid var(--color-border-light);
-}
-
 /* Saved cards: equal height, buttons pinned to the bottom on one row */
 .saved-opportunity-card {
   display: flex;
@@ -5153,10 +5130,6 @@ p {
 }
 
 .scholarship-detail-page > .official-application {
-  margin-top: 20px;
-}
-
-.page-container.settings-page > .settings-card {
   margin-top: 20px;
 }
 

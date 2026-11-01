@@ -646,7 +646,27 @@
   text-underline-offset: 2px;
 }
 
-/* No opportunity selected */
+/* No opportunity selected: the card sits in the middle of the free space */
+.financial-page.is-empty {
+  display: flex;
+  flex-direction: column;
+}
+
+.financial-page.is-empty .fin-empty {
+  width: min(100%, 640px);
+  margin: 20px auto 0;
+}
+
+@media (min-width: 769px) {
+  .financial-page.is-empty {
+    min-height: calc(100dvh - 150px);
+  }
+
+  .financial-page.is-empty .fin-empty {
+    margin: auto;
+  }
+}
+
 .fin-empty {
   display: grid;
   justify-items: center;
@@ -895,5 +915,202 @@
   .fin-cost-source,
   .fin-cost-reset {
     grid-column: 1 / -1;
+  }
+}
+
+.fin-picker-list {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 320px;
+  margin: 8px 0 16px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.fin-picker-list button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--brand-line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--brand-navy);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.fin-picker-list button:hover {
+  border-color: var(--brand-blue);
+  background: var(--brand-tint);
+}
+
+.fin-picker-list span {
+  color: var(--text-muted, #64748b);
+  font-size: 13px;
+}
+
+/* ---- Structured layout: flat cards, table-like rows, grouped result ---- */
+.fin-card {
+  background: #fff;
+}
+
+.fin-card::before {
+  height: 3px;
+}
+
+.fin-card .fin-card-head {
+  margin: -20px -20px 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--color-border-light);
+  background: none;
+}
+
+.fin-card .fin-step {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 14px;
+}
+
+/* Budget form: amount, currency, save on one row; scholarship on its own row */
+.fin-budget-form {
+  row-gap: 14px;
+}
+
+.fin-budget-form .fin-budget-scholarship {
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-light);
+}
+
+/* Cost rows read as one list with dividers */
+.fin-cost-list {
+  gap: 0;
+  border: 1px solid var(--color-border-light);
+  border-radius: 12px;
+}
+
+.fin-cost-row {
+  grid-template-columns: 32px minmax(0, 1fr) 150px 130px 110px;
+  padding: 14px 16px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+}
+
+.fin-cost-row + .fin-cost-row {
+  border-top: 1px solid var(--color-border-light);
+}
+
+.fin-cost-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--tone) 12%, #fff);
+  box-shadow: none;
+  color: var(--tone);
+}
+
+.fin-cost-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.fin-cost-share {
+  height: 3px;
+}
+
+.fin-cost-source,
+.fin-cost-reset {
+  grid-column: 2 / -1;
+}
+
+/* Result panel: status, chart, then two labelled groups */
+.fin-result {
+  gap: 16px;
+}
+
+.fin-group {
+  display: grid;
+  gap: 6px;
+}
+
+.fin-group h3 {
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fin-legend {
+  gap: 0;
+}
+
+.fin-legend li {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--color-border-light);
+  border-radius: 0;
+  background: none;
+}
+
+.fin-legend li > span {
+  display: none;
+}
+
+.fin-legend li {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.fin-legend li.is-sum {
+  border-bottom: 0;
+}
+
+.fin-legend li.is-sum,
+.fin-legend li.is-sum strong {
+  color: var(--color-dark);
+  font-weight: 700;
+}
+
+.fin-explain {
+  padding: 12px 14px;
+  border-left: 3px solid var(--brand-blue);
+  border-radius: 0 8px 8px 0;
+  background: var(--brand-surface);
+}
+
+.fin-detail-list {
+  border: 1px solid var(--color-border-light);
+  background: #fff;
+}
+
+.fin-detail-list.is-missing {
+  border-left: 3px solid var(--color-warning);
+  background: #fff;
+}
+
+.fin-detail-list.is-uncertain {
+  border-left: 3px solid var(--brand-blue);
+  background: #fff;
+}
+
+.fin-picker-list span {
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 760px) {
+  .fin-cost-row {
+    grid-template-columns: 32px minmax(0, 1fr) 130px;
+  }
+}
+
+@media (max-width: 480px) {
+  .fin-cost-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
   }
 }

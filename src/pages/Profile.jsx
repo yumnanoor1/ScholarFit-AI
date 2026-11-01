@@ -3,11 +3,13 @@ import {
   CheckCircle2, Compass, GraduationCap, Languages, Mail, Pencil, Sparkles, UserRound,
 } from 'lucide-react';
 import FormLayout01 from '../components/profile/AcademicForm';
-import { EMPTY_PROFILE, mergeProfile } from '@/data/profileModel';
+import { EMPTY_PROFILE, LAST_PROFILE_STEP, mergeProfile } from '@/data/profileModel';
+import { ONBOARDING_PATH, PROFILE_DONE_PATH } from '../services/profileAccess';
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { GlowCard } from '../components/ui/spotlight-card';
+import { ProfileMissingNotice, ProfileSavedNotice } from '../components/profile/ProfileNotices';
 import './Profile.css';
 
 const sectionTitles = [
@@ -67,11 +69,15 @@ function ProfileSection({ index, items, onEdit }) {
 
 export default function Profile() {
   const { user } = useAuth();
-  const { profile, updateProfile, loading } = useProfile();
+  const { completion, profile, updateProfile, loading } = useProfile();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [saveError, setSaveError] = useState('');
+  // Decided on arrival: a draft saved during onboarding can finish the profile on the server
+  const [isFirstCompletion] = useState(() => !completion.complete);
   const isEditing = searchParams.get('edit') === '1';
+  const returnTo = location.state?.returnTo || '/profile';
   const isCvEdit = searchParams.get('method') !== 'manual' && profile.profileMethod === 'cv';
 
   const handleSaveProfile = async (formData, progress) => {
@@ -79,6 +85,11 @@ export default function Profile() {
     try {
       const result = await updateProfile(formData, progress);
       if (result?.success) return true;
+      // An edit that left the profile unfinished: onboarding explains what's missing
+      if (result?.incomplete && !isFirstCompletion) {
+        navigate(ONBOARDING_PATH, { replace: true });
+        return false;
+      }
       setSaveError(result?.error || 'Your profile could not be saved. Please try again.');
       return false;
     } catch (error) {
@@ -115,14 +126,20 @@ export default function Profile() {
 
     return (
       <div className="page-container profile-summary-page">
+        <ProfileSavedNotice />
         <header className="page-header profile-summary-header">
           <div className="page-header-copy">
             <h1 className="page-title">Profile Complete</h1>
             <p className="page-subtitle">Your Master's profile is ready. Review your information or generate recommendations.</p>
           </div>
-          <button type="button" className="profile-summary-primary" onClick={() => navigate('/recommendations')}>
-            <Sparkles size={16} aria-hidden="true" /> Generate My Recommendations
-          </button>
+          <div className="profile-summary-actions">
+            <button type="button" className="profile-summary-edit" onClick={() => navigate('/profile?edit=1')}>
+              <Pencil size={14} aria-hidden="true" /> Edit Profile
+            </button>
+            <button type="button" className="profile-summary-primary" onClick={() => navigate('/recommendations')}>
+              <Sparkles size={16} aria-hidden="true" /> Generate My Recommendations
+            </button>
+          </div>
         </header>
 
         <GlowCard as="section" customSize className="profile-summary-hero" aria-label="Profile overview">
@@ -196,25 +213,27 @@ export default function Profile() {
   const stepParam = searchParams.get('step');
   const requestedStep = stepParam === null ? null : Number(stepParam);
   const initialStep = requestedStep !== null && Number.isInteger(requestedStep)
-    ? Math.min(Math.max(requestedStep, 0), 3)
-    : profile.profileSetupStep || 0;
+    ? Math.min(Math.max(requestedStep, 0), LAST_PROFILE_STEP)
+    : isFirstCompletion ? profile.profileSetupStep || 0 : 0;
 
   return (
     <div style={{ backgroundColor: 'var(--color-bg)', minHeight: '0', padding: '0' }}>
-      {saveError && (
-        <p role="alert" style={{ maxWidth: '640px', margin: '0 auto 0.5rem', padding: '0 1.5rem', color: '#b42318' }}>
-          {saveError}
-        </p>
-      )}
       <FormLayout01
         onSave={handleSaveProfile}
-        onComplete={() => navigate('/profile')}
+        onComplete={() => {
+          if (isFirstCompletion) navigate(PROFILE_DONE_PATH, { replace: true, state: { justCompleted: true } });
+          else navigate(returnTo, { replace: true, state: { profileSaved: true } });
+        }}
+        onCancel={isFirstCompletion ? undefined : () => navigate(returnTo, { replace: true })}
         onStepChange={(step) => {
           const nextParams = new URLSearchParams(searchParams);
           nextParams.set('edit', '1');
           nextParams.set('step', String(step));
-          setSearchParams(nextParams, { replace: true });
+          setSearchParams(nextParams, { replace: true, state: location.state });
         }}
+        editing={!isFirstCompletion}
+        completionPercent={completion.percent}
+        notice={isFirstCompletion && <ProfileMissingNotice />}
         onGenerateRecommendations={() => navigate('/recommendations')}
         initialValues={initialValues}
         initialStep={initialStep}

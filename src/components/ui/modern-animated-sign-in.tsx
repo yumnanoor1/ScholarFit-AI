@@ -23,6 +23,7 @@ import {
 } from 'framer-motion';
 import { Eye, EyeOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import GoogleIcon from '@/components/auth/GoogleIcon';
 
 // ==================== Input Component ====================
 
@@ -353,6 +354,8 @@ type AnimatedFormProps = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   googleLogin?: string;
   onGoogleLogin?: () => void;
+  /** Replaces the default Google button, in the same place */
+  googleButton?: ReactNode;
   goTo?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   footer?: ReactNode;
   /** Rendered inside the form, just above the submit button (e.g. a terms checkbox) */
@@ -366,15 +369,6 @@ type Errors = {
   [key: string]: string;
 };
 
-const GoogleIcon = () => (
-  <svg width='20' height='20' viewBox='0 0 24 24' aria-hidden='true'>
-    <path fill='#4285F4' d='M21.35 12.27c0-.78-.07-1.53-.22-2.27H12v4.3h5.24a4.48 4.48 0 0 1-1.94 2.94v2.45h3.14c1.84-1.7 2.91-4.2 2.91-7.42z' />
-    <path fill='#34A853' d='M12 21.6c2.63 0 4.84-.87 6.45-2.35l-3.14-2.45c-.87.58-1.98.92-3.31.92-2.54 0-4.69-1.72-5.46-4.03H3.3v2.53A9.74 9.74 0 0 0 12 21.6z' />
-    <path fill='#FBBC05' d='M6.54 13.69A5.84 5.84 0 0 1 6.23 12c0-.59.1-1.16.31-1.69V7.78H3.3A9.74 9.74 0 0 0 2.25 12c0 1.57.38 3.05 1.05 4.22l3.24-2.53z' />
-    <path fill='#EA4335' d='M12 6.28c1.43 0 2.72.49 3.73 1.45l2.8-2.8C16.83 3.39 14.63 2.4 12 2.4a9.74 9.74 0 0 0-8.7 5.38l3.24 2.53C7.31 8 9.46 6.28 12 6.28z' />
-  </svg>
-);
-
 const AnimatedForm = memo(function AnimatedForm({
   header,
   subHeader,
@@ -387,6 +381,7 @@ const AnimatedForm = memo(function AnimatedForm({
   onSubmit,
   googleLogin,
   onGoogleLogin,
+  googleButton,
   goTo,
   footer,
   beforeSubmit,
@@ -439,20 +434,22 @@ const AnimatedForm = memo(function AnimatedForm({
         </BoxReveal>
       )}
 
-      {googleLogin && onGoogleLogin && (
+      {(googleButton || (googleLogin && onGoogleLogin)) && (
         <>
           <BoxReveal boxColor={revealColor} duration={0.3} overflow='visible' width='unset'>
-            <button
-              className='group/btn relative h-11 w-full rounded-md border border-(--color-border-light) bg-white font-medium outline-hidden hover:cursor-pointer'
-              type='button'
-              onClick={onGoogleLogin}
-            >
-              <span className='flex h-full w-full items-center justify-center gap-3'>
-                <GoogleIcon />
-                {googleLogin}
-              </span>
-              <BottomGradient />
-            </button>
+            {googleButton || (
+              <button
+                className='group/btn relative h-11 w-full rounded-md border border-(--color-border-light) bg-white font-medium outline-hidden hover:cursor-pointer'
+                type='button'
+                onClick={onGoogleLogin}
+              >
+                <span className='flex h-full w-full items-center justify-center gap-3'>
+                  <GoogleIcon />
+                  {googleLogin}
+                </span>
+                <BottomGradient />
+              </button>
+            )}
           </BoxReveal>
 
           <BoxReveal boxColor={revealColor} duration={0.3} width='100%'>

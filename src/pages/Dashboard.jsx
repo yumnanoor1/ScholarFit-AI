@@ -1,21 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowRight, CalendarDays, Check, Clock3, Coins, GraduationCap, ListChecks, MapPin,
+  ArrowRight, CalendarDays, Check, Clock3, Coins, GraduationCap, MapPin,
   Scale, ShieldCheck, Star, Wallet,
 } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
-import { getOpportunityProgress, getOpportunityTitle } from '../services/opportunityJourney';
+import { getOpportunityTitle } from '../services/opportunityJourney';
 import { apiService } from '../services/api';
-import { useAuth } from '../context/AuthContext';
-import { getSelectedApplicationStrategy } from '../services/applicationWorkflow';
 import { getProgramImage, getUniversityLogo } from '../services/programFit';
 import { useProgramEligibility, useScholarshipEligibility, useScholarshipRecommendations } from '../hooks/useProgramEligibility';
 import { ELIGIBILITY_SORT_ORDER } from '../services/eligibilityBadges';
 import RetryButton from '../components/common/RetryButton';
 import './Dashboard.css';
 
-const EMPTY_TASK_STATUSES = {};
 const NOT_LOADED = 'Couldn’t load right now';
 
 // University logo for a match card; falls back to a campus photo, then the cap icon
@@ -57,16 +54,9 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const {
     profile,
-    activeOpportunity,
-    opportunityTaskStatuses,
     comparisonOpportunityIds,
     toggleComparisonOpportunity,
   } = useProfile();
-  const { user } = useAuth();
-  const userId = user?.id;
-  const activeOpportunityId = activeOpportunity?.id;
-  const activeOpportunityKind = activeOpportunity?.kind;
-  const [pathwayResult, setPathwayResult] = useState(null);
   const [universities, setUniversities] = useState([]);
   const [scholarships, setScholarships] = useState([]);
   const [matchesError, setMatchesError] = useState('');
@@ -75,12 +65,6 @@ export default function Dashboard() {
   const recommendations = useScholarshipRecommendations();
   const firstName = profile.firstName || (profile.name || '').trim().split(/\s+/)[0] || 'there';
   const profileCompletion = Math.max(0, Math.min(100, Number(profile.profileCompletionPercentage) || 0));
-  const statuses = activeOpportunity
-    ? opportunityTaskStatuses[activeOpportunity.id] || EMPTY_TASK_STATUSES
-    : EMPTY_TASK_STATUSES;
-  const pathway = pathwayResult && pathwayResult.opportunityId === activeOpportunityId
-    ? pathwayResult.value
-    : null;
 
   useEffect(() => {
     let current = true;
@@ -96,25 +80,6 @@ export default function Dashboard() {
       });
     return () => { current = false; };
   }, []);
-
-  useEffect(() => {
-    if (!activeOpportunityId || activeOpportunityKind !== 'program') return undefined;
-    let current = true;
-    apiService.getApplicationPathway(
-      activeOpportunityId,
-      getSelectedApplicationStrategy(userId, activeOpportunityId),
-    ).then((result) => {
-      if (current) setPathwayResult({ opportunityId: activeOpportunityId, value: result });
-    }).catch((error) => {
-      console.error('Unable to load selected opportunity pathway for dashboard.', error);
-    });
-    return () => { current = false; };
-  }, [userId, activeOpportunityId, activeOpportunityKind]);
-
-  const progress = useMemo(() => activeOpportunity
-    ? getOpportunityProgress(activeOpportunity, statuses, pathway, profile)
-    : { tasks: [], percentage: 0, completed: 0, nextTask: null },
-  [activeOpportunity, statuses, pathway, profile]);
 
   const preferredCountries = useMemo(
     () => (Array.isArray(profile.preferredCountries) ? profile.preferredCountries : String(profile.preferredCountries || '').split(','))
@@ -177,11 +142,6 @@ export default function Dashboard() {
     () => getUpcomingDeadlines([...universities, ...scholarships]),
     [universities, scholarships],
   );
-  const nextTasks = progress.tasks
-    .filter((task) => (statuses[task.id] || task.status) !== 'done')
-    .sort((first, second) => Number((statuses[second.id] || second.status) === 'in-progress')
-      - Number((statuses[first.id] || first.status) === 'in-progress'))
-    .slice(0, 3);
 
   const handleCompare = (universityId) => {
     if (!comparisonOpportunityIds.includes(universityId) && comparisonOpportunityIds.length < 2) {
@@ -318,32 +278,6 @@ export default function Dashboard() {
             </div>
             <p>{profile.profileComplete ? 'Keep it up to date so your matches stay accurate.' : 'Complete your profile to get more relevant matches.'}</p>
             <button type="button" onClick={() => navigate('/profile')}>{profile.profileComplete ? 'Review profile' : 'Complete profile'} <ArrowRight size={14} /></button>
-          </section>
-
-          <section className="dashboard-next-tasks" aria-labelledby="dashboard-next-tasks-title">
-            <div className="dashboard-rail-heading">
-              <h2 id="dashboard-next-tasks-title"><span className="dashboard-rail-icon is-blue" aria-hidden="true"><ListChecks size={15} /></span>Next 3 tasks</h2>
-              <button type="button" onClick={() => navigate('/timeline')}>Timeline <ArrowRight size={13} /></button>
-            </div>
-            {activeOpportunity ? (
-              nextTasks.length ? (
-                <ol>
-                  {nextTasks.map((task) => (
-                    <li key={task.id}>
-                      <button type="button" onClick={() => navigate('/timeline')}>
-                        <span>{task.title}</span>
-                        <ArrowRight size={14} aria-hidden="true" />
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              ) : <p>All listed tasks are complete.</p>
-            ) : (
-              <div className="dashboard-rail-empty">
-                <p>Select an opportunity to see its preparation tasks.</p>
-                <button type="button" onClick={() => navigate('/recommendations')}>Explore matches</button>
-              </div>
-            )}
           </section>
 
           <section className="dashboard-upcoming-deadlines" aria-labelledby="dashboard-deadlines-title">

@@ -14,6 +14,8 @@ class User(Base):
     role = Column(String, default="student")  # student | admin
     is_active = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Google's `sub` claim: the stable identity of a linked Google account
+    google_sub = Column(String, unique=True, index=True, nullable=True)
 
     # Relation: ek user ka ek profile
     profile = relationship("StudentProfile", back_populates="user", uselist=False)

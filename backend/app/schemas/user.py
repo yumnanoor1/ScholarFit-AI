@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import List, Optional
 from datetime import date, datetime
 
 
@@ -38,6 +38,15 @@ class ResetPasswordRequest(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+# ---------- GOOGLE SIGN-IN ----------
+class GoogleCredential(BaseModel):
+    credential: str = Field(..., min_length=20, max_length=4096)
+
+
+class GoogleLinkRequest(GoogleCredential):
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 # ---------- TOKEN ----------
@@ -83,6 +92,13 @@ class ProfileUpdate(BaseModel):
     academic_status: Optional[str] = Field(None, max_length=30)
     graduation_date: Optional[str] = Field(None, max_length=10)
     work_experience: Optional[str] = Field(None, max_length=2000)
+
+
+class ProfileStatus(BaseModel):
+    required: bool
+    complete: bool
+    percent: int
+    missing: List[str]
 
 
 class ProfileResponse(BaseModel):

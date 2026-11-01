@@ -604,7 +604,6 @@
   font-weight: 650;
 }
 
-.dashboard-next-tasks,
 .dashboard-upcoming-deadlines {
   display: grid;
   min-width: 0;
@@ -617,7 +616,6 @@
   box-shadow: 0 2px 8px rgba(30, 87, 138, .035);
 }
 
-.dashboard-next-tasks ol,
 .dashboard-upcoming-deadlines ul {
   display: grid;
   gap: 7px;
@@ -626,7 +624,6 @@
   list-style: none;
 }
 
-.dashboard-next-tasks li,
 .dashboard-upcoming-deadlines li {
   min-width: 0;
   padding: 8px;
@@ -636,54 +633,10 @@
   background: #fff;
 }
 
-.dashboard-next-tasks li > button {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 7px;
-  padding: 0;
-  border: 0;
-  color: #315577;
-  background: transparent;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.dashboard-next-tasks li > button > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dashboard-next-tasks li > button > svg {
-  flex: 0 0 auto;
-  color: #3989c9;
-}
-
-.dashboard-next-tasks > p,
-.dashboard-rail-empty p,
 .dashboard-upcoming-deadlines > p {
   margin: 0;
   color: #7088a7;
   font-size: 12px;
-}
-
-.dashboard-rail-empty {
-  display: grid;
-  gap: 8px;
-}
-
-.dashboard-rail-empty button {
-  justify-self: start;
-  padding: 6px 9px;
-  border: 1px solid #1261c2;
-  border-radius: 6px;
-  color: #1261c2;
-  background: #fff;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 650;
 }
 
 .dashboard-upcoming-deadlines li {
@@ -875,7 +828,6 @@
 /* Shared card look for the big panels */
 .dashboard-page .dashboard-matches,
 .dashboard-page .dashboard-profile-card,
-.dashboard-page .dashboard-next-tasks,
 .dashboard-page .dashboard-upcoming-deadlines {
   border-color: var(--color-border-light);
   border-radius: 16px;
@@ -958,47 +910,7 @@
   color: #fff;
 }
 
-.dashboard-rail-icon.is-blue { background: linear-gradient(135deg, var(--brand-blue), var(--brand-cyan)); }
 .dashboard-rail-icon.is-amber { background: linear-gradient(135deg, var(--color-warning), #F59E0B); }
-
-/* Next tasks: numbered steps */
-.dashboard-page .dashboard-next-tasks ol {
-  counter-reset: dashboard-task;
-}
-
-.dashboard-page .dashboard-next-tasks li {
-  counter-increment: dashboard-task;
-  border-color: var(--color-border-light);
-  border-radius: 10px;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.dashboard-page .dashboard-next-tasks li:hover {
-  border-color: var(--brand-line);
-  background: var(--brand-surface);
-}
-
-.dashboard-page .dashboard-next-tasks li > button {
-  color: var(--color-dark);
-}
-
-.dashboard-page .dashboard-next-tasks li > button::before {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--brand-tint);
-  color: var(--brand-blue);
-  content: counter(dashboard-task);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.dashboard-page .dashboard-next-tasks li > button > span {
-  flex: 1;
-}
 
 /* Deadlines: amber edge like a calendar tab */
 .dashboard-page .dashboard-upcoming-deadlines li {

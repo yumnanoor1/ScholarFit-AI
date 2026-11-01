@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.opportunity import Program, Scholarship
 from app.models.user import StudentProfile, User
-from app.routers.auth import get_current_user
+from app.core.permissions import require_complete_profile
 from app.schemas.recommendation import RecommendationList, ScholarshipRecommendation
 from app.services.scholarship_recommendations import recommend_for_student, recommend_one
 
@@ -29,7 +29,7 @@ def scholarship_recommendations(
     program_id: Optional[int] = Query(None, gt=0, description="Rank for this program"),
     include_unverified: bool = Query(False, description="Also rank unverified records (always Needs Verification)"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Scholarships ranked for the signed-in student, with hard exclusions listed apart."""
     profile, program = _context(db, current_user, program_id)
@@ -41,7 +41,7 @@ def scholarship_recommendation(
     scholarship_id: int = Path(..., gt=0),
     program_id: Optional[int] = Query(None, gt=0, description="Score for this program"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """The signed-in student's result for one scholarship, verified or not."""
     scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()

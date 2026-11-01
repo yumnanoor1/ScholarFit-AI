@@ -5,6 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000
 function extractErrorMessage(data, fallback = 'Request failed') {
   if (!data) return fallback;
   if (typeof data.detail === 'string') return data.detail;
+  if (typeof data.detail?.message === 'string') return data.detail.message;
   if (Array.isArray(data.detail) && data.detail.length > 0) {
     const first = data.detail[0];
     return first?.msg || fallback;
@@ -109,9 +110,20 @@ async function postJson(path, body, fallback) {
   if (!response.ok) {
     const error = new Error(extractErrorMessage(data, fallback));
     error.status = response.status;
+    error.code = data?.detail?.code;
     throw error;
   }
   return data;
+}
+
+/** POST /auth/google -> { access_token, token_type }. Fails with code 'link_required' for an unlinked existing account. */
+export function googleSignIn(credential) {
+  return postJson('/auth/google', { credential }, 'Google sign-in failed. Please try again.');
+}
+
+/** POST /auth/google/link -> { access_token, token_type } */
+export function linkGoogleAccount(credential, password) {
+  return postJson('/auth/google/link', { credential, password }, 'Could not link your Google account. Please try again.');
 }
 
 /** POST /auth/forgot-password -> { message } (same reply whether or not the account exists) */

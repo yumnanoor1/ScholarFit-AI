@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { MotionConfig } from 'framer-motion';
 import { ArrowLeft } from 'lucide-react';
@@ -6,22 +6,15 @@ import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/common/BrandLogo';
 import { AnimatedForm } from '../components/ui/modern-animated-sign-in';
 import AuthBrandPanel from '../components/auth/AuthBrandPanel';
-import { getProfileApi } from '../services/profileApi';
+import GoogleSignInButton from '../components/auth/GoogleSignInButton';
+import { getHomePath } from '../services/homePath';
 
-// Only someone with no profile yet needs the setup page
-async function getHomePath({ user, token }) {
-  if (user?.role === 'admin') return '/admin/scholarships';
-  try {
-    return (await getProfileApi(token)).exists ? '/dashboard' : '/profile-setup';
-  } catch {
-    return '/dashboard';
-  }
-}
+const LINK_NOTICE = 'An account already uses this email. Enter its password once to link your Google account.';
 
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuth();
+  const { login, loginWithGoogle, linkGoogle } = useAuth();
   const requestedPath = location.state?.from?.pathname;
   const destination = typeof requestedPath === 'string' &&
     requestedPath.startsWith('/') &&
@@ -33,16 +26,23 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  // Set while waiting for the password that links this Google sign-in to an existing account
+  const [linkCredential, setLinkCredential] = useState(location.state?.googleLink || null);
+  const [notice, setNotice] = useState(linkCredential ? LINK_NOTICE : '');
+
+  // A credential sent over from the register page must not stay in the browser's history
+  useEffect(() => {
+    if (location.state?.googleLink) navigate(location.pathname, { replace: true, state: null });
+  }, [location, navigate]);
 
   // AnimatedForm has already checked required fields, email format and password length
   const handleSubmit = async () => {
     setLoading(true);
     setError('');
-    setNotice('');
+    if (!linkCredential) setNotice('');
 
     try {
-      const res = await login(email.trim(), password);
+      const res = linkCredential ? await linkGoogle(linkCredential, password) : await login(email.trim(), password);
       if (res.success) {
         navigate(destination || await getHomePath(res), { replace: true });
       } else {
@@ -55,10 +55,35 @@ export default function Login() {
     }
   };
 
-  // Google sign-in needs a Google OAuth client and a backend endpoint; until then say so plainly
-  const handleGoogleLogin = () => {
+  const handleGoogleCredential = async (credential) => {
+    setLoading(true);
     setError('');
-    setNotice('Google sign-in isn’t available yet. Please sign in with your email and password, or create an account.');
+    setNotice('Signing in with Google…');
+
+    const res = await loginWithGoogle(credential);
+    if (res.success) {
+      navigate(destination || await getHomePath(res), { replace: true });
+      return;
+    }
+    setLoading(false);
+    if (res.code === 'link_required') {
+      setLinkCredential(credential);
+      setNotice(LINK_NOTICE);
+    } else {
+      setNotice('');
+      setError(res.error);
+    }
+  };
+
+  const handleGoogleUnavailable = () => {
+    setError('');
+    setNotice('Google sign-in isn’t available right now. Please sign in with your email and password.');
+  };
+
+  const cancelLink = () => {
+    setLinkCredential(null);
+    setError('');
+    setNotice('');
   };
 
   const handleForgotPassword = (event) => {
@@ -99,13 +124,18 @@ export default function Login() {
           </Link>
 
           <AnimatedForm
-            header="Welcome back"
+            header={linkCredential ? 'Link your Google account' : 'Welcome back'}
             centerHeader
-            fields={fields}
-            googleLogin="Continue with Google"
-            onGoogleLogin={handleGoogleLogin}
-            submitButton="Sign in"
-            submittingButton="Signing in…"
+            fields={linkCredential ? fields.filter((field) => field.name === 'password') : fields}
+            googleButton={linkCredential ? null : (
+              <GoogleSignInButton
+                label="Continue with Google"
+                onCredential={handleGoogleCredential}
+                onUnavailable={handleGoogleUnavailable}
+              />
+            )}
+            submitButton={linkCredential ? 'Link and sign in' : 'Sign in'}
+            submittingButton={linkCredential ? 'Linking…' : 'Signing in…'}
             isSubmitting={loading}
             errorField={error}
             onSubmit={handleSubmit}
@@ -118,10 +148,16 @@ export default function Login() {
                     {notice}
                   </p>
                 )}
-                <p className="text-(--color-text-muted)">
-                  New to FitScholars?{' '}
-                  <Link to="/register" className="font-semibold text-(--brand-blue) hover:underline">Create an account</Link>
-                </p>
+                {linkCredential ? (
+                  <button type="button" className="font-semibold text-(--brand-blue) hover:cursor-pointer hover:underline" onClick={cancelLink}>
+                    Cancel and sign in another way
+                  </button>
+                ) : (
+                  <p className="text-(--color-text-muted)">
+                    New to FitScholars?{' '}
+                    <Link to="/register" className="font-semibold text-(--brand-blue) hover:underline">Create an account</Link>
+                  </p>
+                )}
                 <Link to="/" className="inline-flex items-center gap-1.5 text-(--color-text-muted) hover:text-(--color-dark)">
                   <ArrowLeft size={15} aria-hidden="true" /> Back to home
                 </Link>

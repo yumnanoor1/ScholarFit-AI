@@ -299,7 +299,7 @@
 
 /* Comparison table */
 .cmp-table {
-  overflow: hidden;
+  overflow: clip;
   border: 1px solid var(--color-border-light);
   border-radius: 16px;
   background: #fff;
@@ -316,8 +316,114 @@
   border-bottom: 0;
 }
 
-.cmp-row:nth-child(even):not(.is-actions) {
+/* The two opportunities head their own columns, and stay in view on a long comparison */
+.cmp-row.is-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  gap: 1px;
+  border-bottom: 0;
+  background: #fff;
+  box-shadow: 0 6px 14px -12px rgba(9, 38, 74, 0.6);
+}
+
+.cmp-row-label.cmp-legend {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+}
+
+.cmp-legend strong {
+  color: var(--color-dark);
+  font-family: var(--font-family-heading);
+  font-size: 15px;
+}
+
+.cmp-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px 48px 16px 18px;
+  background: linear-gradient(140deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%);
+  color: #fff;
+}
+
+.cmp-head.is-scholarship {
+  background: linear-gradient(140deg, var(--brand-navy) 0%, #0e4d6e 100%);
+}
+
+.cmp-head .university-logo-tile.has-logo {
+  flex: 0 0 auto;
+  border-color: transparent;
+}
+
+.cmp-head-copy {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cmp-head .cmp-kind {
+  margin: 0;
+  padding: 0;
+  background: none;
+  font-size: 11px;
+}
+
+.cmp-head h2 {
+  color: #fff;
+  font-family: var(--font-family-heading);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.cmp-head p {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12.5px;
+}
+
+.cmp-head p svg {
+  flex: 0 0 auto;
+}
+
+.cmp-head .cmp-remove {
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+}
+
+.cmp-group {
+  margin: 0;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--color-border-light);
   background: var(--brand-surface);
+  color: var(--brand-blue);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cmp-row.is-long .cmp-row-label {
+  align-items: flex-start;
+}
+
+.cmp-row.is-long .cmp-cell {
+  align-content: start;
+}
+
+.cmp-row.is-long .cmp-cell strong {
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 1.55;
 }
 
 .cmp-row-label {
@@ -364,8 +470,7 @@
 }
 
 .cmp-cell.is-better {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--color-success) 9%, transparent), transparent 80%);
-  box-shadow: inset 3px 0 0 var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 6%, transparent);
 }
 
 .cmp-better {
@@ -420,8 +525,17 @@
     padding: 12px 16px 4px;
   }
 
-  .cmp-row.is-actions .cmp-row-label {
+  .cmp-row.is-actions .cmp-row-label,
+  .cmp-row.is-head .cmp-row-label {
     display: none;
+  }
+
+  .cmp-head {
+    padding: 14px 40px 14px 14px;
+  }
+
+  .cmp-group {
+    padding-inline: 16px;
   }
 
   .cmp-cell {
@@ -430,6 +544,23 @@
 
   .cmp-cell:nth-child(2) {
     border-left: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .cmp-head {
+    display: grid;
+    gap: 8px;
+    padding: 12px 10px;
+  }
+
+  .cmp-head h2 {
+    font-size: 14px;
+  }
+
+  .cmp-head .cmp-remove {
+    top: 8px;
+    right: 8px;
   }
 }
 

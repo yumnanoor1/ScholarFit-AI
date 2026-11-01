@@ -13,6 +13,7 @@ import {
   parseScholarshipId,
   postFinancialFeasibility,
   fetchProfileImprovements,
+  askAssistant,
   fetchFinancialPlan,
   putFinancialBudget,
   putProgramExpenses,
@@ -196,6 +197,19 @@ export const apiService = {
       console.warn('apiService.getProfileImprovements backend error:', err?.message);
       return { state: getEligibilityErrorState(err), data: null };
     }
+  },
+
+  /**
+   * FitScholar AI Assistant. FastAPI Endpoint: POST /assistant/chat
+   * Rejects with an error carrying `.status`; the chat shows the message and offers a retry.
+   */
+  askAssistant: (message, context, token = readStoredToken()) => {
+    if (!token) {
+      const error = new Error('Please sign in again to use the assistant.');
+      error.status = 401;
+      return Promise.reject(error);
+    }
+    return askAssistant(token, message, context);
   },
 
   // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.opportunity import Program, Scholarship
 from app.models.user import StudentFinancialPlan, StudentProfile, User
-from app.routers.auth import get_current_user
+from app.core.permissions import require_complete_profile
 from app.schemas.financial import (
     BudgetUpdate,
     CompareRequest,
@@ -88,7 +88,7 @@ def _run(db: Session, user: User, request: FeasibilityRequest) -> dict:
 @router.get("/plan", response_model=FinancialPlanResponse)
 def get_plan(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """The signed-in student's saved budget and expense estimates."""
     return _plan_response(_get_plan(db, current_user))
@@ -98,7 +98,7 @@ def get_plan(
 def save_budget(
     data: BudgetUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Create or update the signed-in student's budget."""
     if data.currency not in EUR_RATES:
@@ -116,7 +116,7 @@ def save_expenses(
     program_id: int,
     data: ExpenseInputs,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Save the signed-in student's own expense estimates for one program."""
     _load(db, program_id, None)
@@ -132,7 +132,7 @@ def save_expenses(
 def calculate(
     request: FeasibilityRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Estimate whether a program (optionally with a scholarship) fits the student's budget."""
     return _run(db, current_user, request)
@@ -142,7 +142,7 @@ def calculate(
 def compare(
     request: CompareRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Run up to six program / funding scenarios side by side."""
     return [_run(db, current_user, scenario) for scenario in request.scenarios]
@@ -156,7 +156,7 @@ def feasibility_for_program(
     budget_amount: Optional[float] = Query(None, ge=0),
     budget_currency: Optional[str] = Query(None, min_length=3, max_length=3),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_complete_profile),
 ):
     """Feasibility from stored data only: program and scholarship records plus the student's saved plan.
     Expenses nobody has stored are reported as missing."""

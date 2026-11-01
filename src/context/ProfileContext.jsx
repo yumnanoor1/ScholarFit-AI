@@ -31,13 +31,15 @@ import {
 } from '../services/savedScholarshipsApi';
 import {
   getProfileApi,
+  getProfileStatusApi,
   createProfileApi,
   updateProfileApi,
   mapFrontendToBackendProfile,
   mapBackendToFrontendProfile,
 } from '../services/profileApi';
+import { FAILED_COMPLETION, LOADING_COMPLETION, canUseApp } from '../services/profileAccess';
 
-const ProfileContext = createContext(null);
+export const ProfileContext = createContext(null);
 
 const DEFAULT_PROFILE = {
   ...EMPTY_PROFILE,
@@ -65,6 +67,17 @@ const DEFAULT_PROFILE = {
 function readSavedProfile(userId) {
   const savedProfile = readUserProfile(userId);
   return savedProfile ? { ...DEFAULT_PROFILE, ...savedProfile } : DEFAULT_PROFILE;
+}
+
+/** The saved profile with the API's status applied, which replaces whatever the browser had stored. */
+function withCompletion(profile, status) {
+  return {
+    ...profile,
+    profileComplete: status.complete,
+    profileStatus: status.complete ? 'complete' : 'draft',
+    profileCompletionPercentage: status.percent,
+    verifiedProfile: status.complete ? profile.verifiedProfile : null,
+  };
 }
 
 function getPreferredCountries(value) {
@@ -137,8 +150,15 @@ function calculateMatchStatistics(profile) {
 export function ProfileProvider({ children }) {
   const { user, token } = useAuth();
   const userId = user?.id;
+  const userName = user?.name || '';
+  const userFullName = user?.full_name || '';
+  const userEmail = user?.email || '';
   const [profile, setProfile] = useState(() => readSavedProfile(user?.id));
   const [hasBackendProfile, setHasBackendProfile] = useState(false);
+  // Kept with the sign-in it belongs to, so a new sign-in is never judged by the previous one's status
+  const [knownCompletion, setKnownCompletion] = useState({ token: null, value: LOADING_COMPLETION });
+  const completion = knownCompletion.token === token ? knownCompletion.value : LOADING_COMPLETION;
+  const appUnlocked = canUseApp(completion);
   const [initialData] = useState(() => readOpportunityData(userId));
   const [dataOwnerId, setDataOwnerId] = useState(userId);
   const [savedOpportunities, setSavedOpportunities] = useState(initialData.savedOpportunities);
@@ -193,7 +213,8 @@ export function ProfileProvider({ children }) {
     return savedSync.current;
   };
   useEffect(() => {
-    if (!token || userId == null) return undefined;
+    // The API refuses this until the profile is finished
+    if (!token || userId == null || !appUnlocked) return undefined;
     let isCurrent = true;
     getSavedSync(userId).enqueue(() => loadSavedOpportunities(token, userId))
       .then(({ ids, records, removed }) => {
@@ -211,7 +232,7 @@ export function ProfileProvider({ children }) {
     return () => {
       isCurrent = false;
     };
-  }, [userId, token, savedReloadCount]);
+  }, [userId, token, savedReloadCount, appUnlocked]);
 
   useEffect(() => {
     if (!saveError) return undefined;
@@ -234,53 +255,65 @@ export function ProfileProvider({ children }) {
   useEffect(() => {
     let isCurrent = true;
 
-    if (!token || !user) {
-      setHasBackendProfile(false);
-      return;
-    }
+    if (!token || userId == null) return;
 
-    const cachedDraft = readSavedProfile(user.id);
+    const cachedDraft = readSavedProfile(userId);
+    const profileUser = { id: userId, name: userName, full_name: userFullName, email: userEmail };
 
-    getProfileApi(token)
-      .then(({ exists, data }) => {
+    Promise.all([getProfileApi(token), getProfileStatusApi(token)])
+      .then(([{ exists, data }, status]) => {
         if (!isCurrent) return;
+
+        setKnownCompletion({ token, value: { ...status, status: 'ready' } });
 
         if (exists && data) {
           setHasBackendProfile(true);
-          const mappedProfile = mapBackendToFrontendProfile(data, user, cachedDraft);
-          setProfile(mappedProfile);
-          writeUserProfile(user.id, mappedProfile);
+          const mappedProfile = mapBackendToFrontendProfile(data, profileUser, cachedDraft);
+          const nextProfile = withCompletion({
+            ...mappedProfile,
+            // Unfinished work in this browser is still the student's latest draft
+            profileDraft: cachedDraft.profileDraft?.personalInfo ? cachedDraft.profileDraft : mappedProfile.verifiedProfile,
+          }, status);
+          setProfile(nextProfile);
+          writeUserProfile(userId, nextProfile);
         } else {
           // 404: Profile not yet created in PostgreSQL
           setHasBackendProfile(false);
 
           // Populate with user identity or existing in-progress local draft
           if (cachedDraft && (cachedDraft.profileComplete || cachedDraft.profileSetupStep > 0 || cachedDraft.extractedProfile)) {
-            setProfile(cachedDraft);
+            setProfile(withCompletion(cachedDraft, status));
           } else {
             const initial = {
               ...DEFAULT_PROFILE,
-              name: user.name || user.full_name || '',
-              email: user.email || '',
+              name: userName || userFullName,
+              email: userEmail,
               personalInfo: {
                 ...DEFAULT_PROFILE.personalInfo,
-                fullName: user.name || user.full_name || '',
-                email: user.email || '',
+                fullName: userName || userFullName,
+                email: userEmail,
               },
             };
             setProfile(initial);
-            writeUserProfile(user.id, initial);
+            writeUserProfile(userId, initial);
           }
         }
       })
       .catch((err) => {
         console.warn('Unable to reach backend profile endpoint:', err?.message);
+        if (isCurrent) setKnownCompletion({ token, value: FAILED_COMPLETION });
       });
 
     return () => {
       isCurrent = false;
     };
-  }, [user?.id, token]);
+  }, [userId, userName, userFullName, userEmail, token]);
+
+  const refreshCompletion = async () => {
+    const status = await getProfileStatusApi(token);
+    if (isStillSignedIn()) setKnownCompletion({ token, value: { ...status, status: 'ready' } });
+    return status;
+  };
 
   const saveCvUpload = (fileInfo) => {
     if (!isStillSignedIn()) return;
@@ -361,17 +394,17 @@ export function ProfileProvider({ children }) {
         preferredDegree: "Master's",
         fundingPreference: chosenFunding.join(', ') || profile.fundingPreference,
         approximateBudget,
-        profileCompletionPercentage: progress.complete ? 100 : Math.round(((progress.step + 1) / 4) * 100),
-        profileSetupStep: progress.complete ? 4 : progress.step + 1,
-        profileComplete: Boolean(progress.complete),
-        profileStatus: progress.complete ? 'complete' : 'draft',
+        profileCompletionPercentage: profile.profileCompletionPercentage,
+        profileSetupStep: progress.complete ? 0 : progress.step + 1,
+        profileComplete: profile.profileComplete,
+        profileStatus: profile.profileStatus,
         profileMethod: isCvSource ? 'cv' : 'manual',
         cvUpload: isCvSource ? profile.cvUpload || null : null,
         extractedProfile: isCvSource ? profile.extractedProfile || null : null,
         extractionFieldStatuses: isCvSource ? profile.extractionFieldStatuses || {} : {},
         profileDraft: updatedData,
         fieldStatuses: progress.fieldStatuses || (isCvSource ? profile.fieldStatuses || {} : {}),
-        verifiedProfile: progress.complete ? updatedData : null,
+        verifiedProfile: progress.complete ? updatedData : profile.verifiedProfile,
       };
 
       // When the student submits their completed profile, persist to the real backend
@@ -397,12 +430,25 @@ export function ProfileProvider({ children }) {
           }
 
           finalProfile.hasBackendProfile = true;
+          // Finishing is the API's decision, made from what it stored
+          const status = await refreshCompletion();
+          Object.assign(finalProfile, withCompletion(finalProfile, status));
+          if (status.required && !status.complete) {
+            writeUserProfile(userId, finalProfile);
+            if (isStillSignedIn()) setProfile(finalProfile);
+            return {
+              success: false,
+              incomplete: true,
+              error: `Your profile was saved, but still needs: ${status.missing.join(', ')}.`,
+            };
+          }
         }
       } else if (hasBackendProfile && token) {
         // If profile was already created in database, perform a best-effort update for drafts
         try {
           const backendPayload = mapFrontendToBackendProfile(updatedData, profile);
           await updateProfileApi(token, backendPayload);
+          Object.assign(finalProfile, withCompletion(finalProfile, await refreshCompletion()));
         } catch {
           // Non-blocking for intermediate step drafts
         }
@@ -580,6 +626,7 @@ export function ProfileProvider({ children }) {
       saveDocumentRecord,
       removeDocumentRecord,
       profile: profileWithAccount,
+      completion,
       loading,
       hasBackendProfile,
       updateProfile,

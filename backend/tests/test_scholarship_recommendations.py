@@ -7,6 +7,7 @@ from datetime import date
 from types import SimpleNamespace
 
 from fastapi import HTTPException
+from fastapi.dependencies.utils import get_dependant
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -15,6 +16,7 @@ from app.database import Base
 from app.models.opportunity import Program, Scholarship, ScholarshipProgramLink, University
 from app.models.user import StudentProfile, User
 from app.routers import recommendations as api
+from app.core.permissions import require_complete_profile
 from app.routers.auth import get_current_user
 from app.schemas.recommendation import RecommendationList, ScholarshipRecommendation
 from app.services import scholarship_recommendations as engine
@@ -330,7 +332,8 @@ class ApiTests(unittest.TestCase):
     def test_student_comes_from_the_token_only(self):
         for route in api.router.routes:
             self.assertNotIn("user_id", [item.name for item in route.dependant.query_params])
-            self.assertIn(get_current_user, [item.call for item in route.dependant.dependencies])
+            self.assertIn(require_complete_profile, [item.call for item in route.dependant.dependencies])
+        self.assertIn(get_current_user, [item.call for item in get_dependant(path="", call=require_complete_profile).dependencies])
 
     def test_invalid_token(self):
         with self.assertRaises(HTTPException) as error:

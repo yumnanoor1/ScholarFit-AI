@@ -47,6 +47,28 @@ export async function getProfileApi(token) {
 }
 
 /**
+ * Whether the signed-in student has finished their profile, worked out by the API from stored data.
+ * Returns { required, complete, percent, missing }
+ */
+export async function getProfileStatusApi(token) {
+  const response = await fetch(`${API_BASE_URL}/profile/status`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const error = new Error(extractErrorMessage(data, 'Failed to check your profile'));
+    error.status = response.status;
+    throw error;
+  }
+
+  return data;
+}
+
+/**
  * Create a new student profile in FastAPI
  */
 export async function createProfileApi(token, payload) {
@@ -109,16 +131,16 @@ export function mapFrontendToBackendProfile(data, fallback = {}) {
   const degreeLevel = academic.currentDegree || academic.degreeTitle || fallback.degreeLevel || "Bachelor's";
 
   // 2. field_of_study (Required by backend ProfileCreate)
-  let fieldOfStudy = academic.major || '';
-  if (!fieldOfStudy && Array.isArray(preferences.fields) && preferences.fields.length > 0) {
-    fieldOfStudy = preferences.fields.filter((f) => f !== 'Other').join(', ') || preferences.customField || '';
-  }
+  // The chosen fields come first: major is filled from this column on load, so it would hide every later edit
+  const chosenFields = Array.isArray(preferences.fields) ? preferences.fields.filter((f) => f !== 'Other') : [];
+  let fieldOfStudy = [...chosenFields, ...(preferences.customField ? [preferences.customField] : [])].join(', ');
   if (!fieldOfStudy) {
-    fieldOfStudy = fallback.fieldOfInterest || fallback.field_of_study || 'General';
+    fieldOfStudy = academic.major || fallback.fieldOfInterest || fallback.field_of_study || 'General';
   }
 
   // 3. cgpa & cgpa_scale (Required by backend ProfileCreate)
-  let rawScale = academic.gradingScale ? Number.parseFloat(academic.gradingScale) : null;
+  const chosenScale = academic.gradingScale === 'Other' ? academic.customGradingScale : academic.gradingScale;
+  let rawScale = chosenScale ? Number.parseFloat(chosenScale) : null;
   if (rawScale === null || !Number.isFinite(rawScale) || rawScale <= 0) {
     rawScale = fallback.cgpa_scale ? Number.parseFloat(fallback.cgpa_scale) : 4.0;
   }
@@ -155,14 +177,15 @@ export function mapFrontendToBackendProfile(data, fallback = {}) {
 
   // 5. skills (comma-separated string)
   const skillsList = [academic.technicalSkills, academic.programmingLanguages].filter(Boolean);
-  let skills = skillsList.length > 0
+  // A submitted form has the last word, so an optional field can be cleared
+  const submittedAcademic = Boolean(data.academicBackground);
+  let skills = skillsList.length > 0 || submittedAcademic
     ? skillsList.join(', ')
     : (Array.isArray(fallback.skills) ? fallback.skills.join(', ') : fallback.skills || null);
 
   // 6. research_interests (string)
   const researchInterests = academic.projects
-    || fallback.researchExperience
-    || fallback.research_interests
+    || (submittedAcademic ? null : fallback.researchExperience || fallback.research_interests)
     || null;
 
   // 7. preferred_countries (comma-separated string)
@@ -236,7 +259,7 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
   base.academicBackground = {
     ...base.academicBackground,
     currentDegree: backendProfile.degree_level || base.academicBackground.currentDegree || "Bachelor's",
-    degreeTitle: backendProfile.degree_level || base.academicBackground.degreeTitle || "Bachelor's",
+    degreeTitle: base.academicBackground.degreeTitle || backendProfile.degree_level || "Bachelor's",
     major: backendProfile.field_of_study || base.academicBackground.major || '',
     cgpa: backendProfile.cgpa !== null && backendProfile.cgpa !== undefined ? String(backendProfile.cgpa) : base.academicBackground.cgpa,
     gradingScale: backendProfile.cgpa_scale !== null && backendProfile.cgpa_scale !== undefined ? String(backendProfile.cgpa_scale) : (base.academicBackground.gradingScale || '4.00'),
@@ -246,6 +269,10 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     academicStatus: backendProfile.academic_status || base.academicBackground.academicStatus || '',
     workExperience: backendProfile.work_experience || base.academicBackground.workExperience || '',
   };
+  if (backendProfile.graduation_date) {
+    const dateField = base.academicBackground.academicStatus === 'graduated' ? 'graduationDate' : 'expectedGraduationDate';
+    base.academicBackground[dateField] = backendProfile.graduation_date;
+  }
 
   // 3. English Proficiency (populated from backend test scores)
   if (backendProfile.ielts_score !== null && backendProfile.ielts_score !== undefined) {
@@ -268,7 +295,7 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     : (base.studyPreferences.countries || []);
 
   const fieldsArray = backendProfile.field_of_study
-    ? [backendProfile.field_of_study]
+    ? backendProfile.field_of_study.split(',').map((f) => f.trim()).filter(Boolean)
     : (base.studyPreferences.fields || []);
 
   base.studyPreferences = {
@@ -306,10 +333,9 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     approximateBudget: backendProfile.budget_usd
       ? `$${backendProfile.budget_usd.toLocaleString()} / year`
       : base.approximateBudget,
-    profileComplete: true,
-    profileStatus: 'complete',
-    profileCompletionPercentage: 100,
-    profileSetupStep: 4,
+    // A stored row isn't a finished profile: the API's status decides that, in ProfileContext
+    profileComplete: false,
+    profileStatus: 'draft',
     verifiedProfile: base,
     hasBackendProfile: true,
   };

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Bookmark } from 'lucide-react';
+import {
+  ArrowLeft, Bookmark, CalendarDays, CircleCheck, Clock, Gauge, Layers, Wallet,
+} from 'lucide-react';
 import { apiService } from '../services/api';
 import { evaluateOpportunityEligibility, getOpportunityTitle } from '../services/opportunityJourney';
 import { useProfile } from '../context/ProfileContext';
@@ -28,6 +30,28 @@ const UNAVAILABLE_NOTICES = {
   'logged-out': ['Log in to check your eligibility for this scholarship.', '/login', 'Log in'],
   'no-profile': ['Complete your profile to check your eligibility for this scholarship.', '/profile', 'Complete profile'],
 };
+
+function InfoList({ rows }) {
+  return (
+    <dl className="sd-info">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <section className="sd-section">
+      <h2>{title}</h2>
+      {children}
+    </section>
+  );
+}
 
 export default function ScholarshipDetails() {
   const { id } = useParams();
@@ -97,167 +121,31 @@ export default function ScholarshipDetails() {
     ['Notes', data.notes],
   ].filter(([, value]) => value);
 
+  const benefitRows = (data.benefits || []).map((benefit) => [benefit.label, benefit.value]);
+  const facts = [
+    { label: 'Funding type', icon: Wallet, value: data.type || 'Not available' },
+    { label: 'Funding scope', icon: Layers, value: data.coverage || 'Not available' },
+    {
+      label: 'Application deadline',
+      icon: CalendarDays,
+      value: `${data.deadline || 'Not available'}${isBackend ? '' : ' (unverified sample)'}`,
+      note: deadline?.note,
+    },
+    data.duration && { label: 'Duration', icon: Clock, value: data.duration },
+    !isBackend && { label: 'Profile fit', icon: Gauge, value: `${data.matchScore ?? 'Unavailable'}% (mock match)` },
+    !isBackendId && { label: 'Eligibility', icon: CircleCheck, value: eligibility.message || 'Awaiting verification' },
+  ].filter(Boolean);
+
   return (
     <div className="page-container scholarship-detail-page">
-      <button className="btn btn-outline" onClick={() => navigate('/scholarships')} style={{ marginBottom: '16px' }}>
-        Back to Scholarships
+      <button type="button" className="sd-back" onClick={() => navigate('/scholarships')}>
+        <ArrowLeft size={16} aria-hidden="true" /> Back to Scholarships
       </button>
-      <section className="card scholarship-detail-card">
-        <h1 style={{ fontSize: '1.5rem', marginBottom: '4px' }}>{getOpportunityTitle(data)}</h1>
-        <p style={{ color: 'var(--color-primary)', fontWeight: '600', marginBottom: '16px' }}>
-          {data.provider || 'Provider not listed'} · {data.country || 'Country not listed'}
-        </p>
-        {data.archived && <p className="saved-unverified-warning">This scholarship is no longer listed, so its details may be out of date.</p>}
-        {data.sourceStatus === 'unverified' && (
-          <p className="saved-unverified-warning">This scholarship is currently unverified.</p>
-        )}
-        <div className="grid-2" style={{ fontSize: '0.9rem', marginBottom: '20px' }}>
-          <div><strong>Funding type:</strong> {data.type || 'Not available'}</div>
-          <div><strong>Funding scope:</strong> {data.coverage || 'Not available'}</div>
-          <div>
-            <strong>Application deadline:</strong> {data.deadline || 'Not available'}
-            {isBackend ? '' : ' (unverified sample)'}
-            {deadline && <> · <strong>{deadline.note}</strong></>}
-          </div>
-          {data.duration && <div><strong>Duration:</strong> {data.duration}</div>}
-          {!isBackend && <div><strong>Profile fit:</strong> {data.matchScore ?? 'Unavailable'}% (mock match)</div>}
-          {!isBackendId && <div><strong>Eligibility:</strong> {eligibility.message || 'Awaiting verification'}</div>}
-        </div>
 
-        {isBackendId && (
-          <section className="scholarship-eligibility-result" aria-live="polite">
-            <h2>Your eligibility</h2>
-            {backendEligibility.loading ? (
-              <p role="status">Checking your profile against this scholarship...</p>
-            ) : eligibilityState !== 'ok' ? (
-              <p className="university-notice" role="status">
-                <span>{UNAVAILABLE_NOTICES[eligibilityState]?.[0] || eligibility?.message || 'Eligibility could not be checked right now.'}</span>
-                {UNAVAILABLE_NOTICES[eligibilityState] && (
-                  <Link to={UNAVAILABLE_NOTICES[eligibilityState][1]}>{UNAVAILABLE_NOTICES[eligibilityState][2]}</Link>
-                )}
-              </p>
-            ) : (
-              <>
-                <div className="scholarship-eligibility-summary">
-                  <EligibilityBadge status={eligibility.status} />
-                  <span>{eligibility.summary}</span>
-                </div>
-                <ul className="scholarship-requirement-list">
-                  {eligibility.requirements.map((item) => {
-                    const badge = REQUIREMENT_LABELS[item.status] || REQUIREMENT_LABELS['awaiting-verification'];
-                    return (
-                      <li key={item.id}>
-                        <span className={`program-status is-${badge.tone}`}>{badge.label}</span>
-                        <div>
-                          <strong>{item.label}</strong>
-                          <p>{item.message}{item.scope === 'admission' ? ' (checked by the university during admission)' : ''}</p>
-                          {item.sourceText && <small>Record says: {item.sourceText}</small>}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-                {eligibility.deadline?.message && eligibility.deadline.status !== 'closed' && (
-                  <p className="scholarship-eligibility-note"><strong>Deadline:</strong> {eligibility.deadline.message}</p>
-                )}
-                {eligibility.notes.map((note) => <p key={note} className="scholarship-eligibility-note">{note}</p>)}
-              </>
-            )}
-          </section>
-        )}
-
-        {isBackendId && <ScholarshipRecommendationCard scholarshipId={id} programId={getSelectedProgramId(activeOpportunityId)} />}
-
-        {isBackendId && (
-          <section className="scholarship-eligibility-result">
-            <h2>Linked programs</h2>
-            <ScholarshipProgramMatches load={fetchScholarshipPrograms} recordId={id} side="program" />
-          </section>
-        )}
-
-        {data.duplicateOf && (
-          <p className="scholarship-eligibility-note">
-            This looks like the same scholarship as <Link to={`/scholarships/${data.duplicateOf}`}>another listing</Link>, which has fuller details.
-          </p>
-        )}
-
-        {data.requirementSummaryRows && (
-          <>
-            <h2>Requirements at a glance</h2>
-            <ul style={{ margin: '8px 0 20px', paddingLeft: '20px', fontSize: '0.9rem' }}>
-              {data.requirementSummaryRows.map(([label, value]) => <li key={label}><strong>{label}:</strong> {value}</li>)}
-            </ul>
-          </>
-        )}
-
-        {(data.fundingRows || data.benefits?.length > 0) && <h2>What it covers</h2>}
-        {data.fundingRows && (
-          <ul style={{ margin: '8px 0 20px', paddingLeft: '20px', fontSize: '0.9rem' }}>
-            {data.fundingRows.map(([label, value]) => <li key={label}><strong>{label}:</strong> {value}</li>)}
-          </ul>
-        )}
-        {data.benefits?.length > 0 && (data.fundingRows ? (
-          <details style={{ margin: '0 0 20px', fontSize: '0.9rem' }}>
-            <summary>Original funding wording</summary>
-            <ul style={{ margin: '8px 0 0', paddingLeft: '20px' }}>
-              {data.benefits.map((benefit) => (
-                <li key={benefit.label}><strong>{benefit.label}:</strong> {benefit.value}</li>
-              ))}
-            </ul>
-          </details>
-        ) : (
-          <ul style={{ margin: '8px 0 20px', paddingLeft: '20px', fontSize: '0.9rem' }}>
-            {data.benefits.map((benefit) => (
-              <li key={benefit.label}><strong>{benefit.label}:</strong> {benefit.value}</li>
-            ))}
-          </ul>
-        ))}
-
-        {(!isBackendId || eligibilityState !== 'ok') && <h2>Requirements</h2>}
-        {isBackendId && eligibilityState === 'ok' ? null : requirementRows.length > 0 ? (
-          <ul style={{ margin: '8px 0 20px', paddingLeft: '20px', fontSize: '0.9rem' }}>
-            {requirementRows.map(([label, value]) => <li key={label}><strong>{label}:</strong> {value}</li>)}
-          </ul>
-        ) : (
-          <p>{eligibility.message || 'No structured scholarship requirements are available. Verify eligibility directly with the provider.'}</p>
-        )}
-
-        {applicationRows.length > 0 && (
-          <>
-            <h2>Applying</h2>
-            <ul style={{ margin: '8px 0 20px', paddingLeft: '20px', fontSize: '0.9rem' }}>
-              {applicationRows.map(([label, value]) => <li key={label}><strong>{label}:</strong> {value}</li>)}
-            </ul>
-          </>
-        )}
-
-        {data.officialLinks?.length > 0 && (
-          <>
-            <h2>Official links</h2>
-            <ul style={{ margin: '8px 0 20px', paddingLeft: '20px', fontSize: '0.9rem' }}>
-              {data.officialLinks.map((link) => (
-                <li key={link.url}>
-                  <strong>{link.label}:</strong> <a href={link.url} target="_blank" rel="noopener noreferrer">{link.url}</a>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        {isBackend ? (
-          <>
-            <p>
-              {data.verificationText || (isVerified ? 'Recorded from the official source' : 'Not yet verified against the official source')}
-              {data.sourceName ? ` (${data.sourceName})` : ''}
-              {data.lastVerified ? `, last verified ${data.lastVerified}` : ''}.
-              {' '}Confirm current terms and dates with the provider before applying.
-            </p>
-            {data.verificationNotes && <p>{data.verificationNotes}</p>}
-          </>
-        ) : (
-          <p>Funding values and dates are sample listing data, not confirmed awards or official deadlines.</p>
-        )}
-        <div className="program-detail-actions">
+      <header className="sd-hero">
+        <h1 className="sd-title">{getOpportunityTitle(data)}</h1>
+        <p className="sd-subtitle">{data.provider || 'Provider not listed'} · {data.country || 'Country not listed'}</p>
+        <div className="sd-hero-actions">
           <button type="button" className="btn btn-primary" onClick={() => selectOpportunity({ ...data, kind: 'scholarship' })}>
             {isActive ? 'Currently in your journey' : 'Select this scholarship'}
           </button>
@@ -274,13 +162,147 @@ export default function ScholarshipDetails() {
           )}
           {!data.archived && <OpportunityCompareCheckbox opportunity={{ ...data, title: data.name }} />}
         </div>
-        <SavedStatusNotice />
-      </section>
-      <OfficialApplicationLink
-        opportunity={data}
-        applied={appliedOpportunityIds.includes(data.id)}
-        onToggleApplied={(value) => markOpportunityApplied(data.id, value)}
-      />
+      </header>
+
+      <SavedStatusNotice />
+      {data.archived && <p className="saved-unverified-warning">This scholarship is no longer listed, so its details may be out of date.</p>}
+      {data.sourceStatus === 'unverified' && (
+        <p className="saved-unverified-warning">This scholarship is currently unverified.</p>
+      )}
+      {data.duplicateOf && (
+        <p className="scholarship-eligibility-note">
+          This looks like the same scholarship as <Link to={`/scholarships/${data.duplicateOf}`}>another listing</Link>, which has fuller details.
+        </p>
+      )}
+
+      <dl className="sd-facts">
+        {facts.map(({ label, icon: Icon, value, note }) => (
+          <div key={label}>
+            <span className="sd-fact-icon" aria-hidden="true"><Icon size={18} /></span>
+            <div>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+              {note && <dd className="sd-fact-note">{note}</dd>}
+            </div>
+          </div>
+        ))}
+      </dl>
+
+      <div className="sd-layout">
+        <div className="sd-main">
+          {isBackendId && (
+            <section className="sd-section" aria-live="polite">
+              <h2>Your eligibility</h2>
+              {backendEligibility.loading ? (
+                <p role="status">Checking your profile against this scholarship...</p>
+              ) : eligibilityState !== 'ok' ? (
+                <p className="university-notice" role="status">
+                  <span>{UNAVAILABLE_NOTICES[eligibilityState]?.[0] || eligibility?.message || 'Eligibility could not be checked right now.'}</span>
+                  {UNAVAILABLE_NOTICES[eligibilityState] && (
+                    <Link to={UNAVAILABLE_NOTICES[eligibilityState][1]}>{UNAVAILABLE_NOTICES[eligibilityState][2]}</Link>
+                  )}
+                </p>
+              ) : (
+                <>
+                  <div className="scholarship-eligibility-summary">
+                    <EligibilityBadge status={eligibility.status} />
+                    <span>{eligibility.summary}</span>
+                  </div>
+                  <ul className="scholarship-requirement-list">
+                    {eligibility.requirements.map((item) => {
+                      const badge = REQUIREMENT_LABELS[item.status] || REQUIREMENT_LABELS['awaiting-verification'];
+                      return (
+                        <li key={item.id}>
+                          <span className={`program-status is-${badge.tone}`}>{badge.label}</span>
+                          <div>
+                            <strong>{item.label}</strong>
+                            <p>{item.message}{item.scope === 'admission' ? ' (checked by the university during admission)' : ''}</p>
+                            {item.sourceText && <small>Record says: {item.sourceText}</small>}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {eligibility.deadline?.message && eligibility.deadline.status !== 'closed' && (
+                    <p className="scholarship-eligibility-note"><strong>Deadline:</strong> {eligibility.deadline.message}</p>
+                  )}
+                  {eligibility.notes.map((note) => <p key={note} className="scholarship-eligibility-note">{note}</p>)}
+                </>
+              )}
+            </section>
+          )}
+
+          {isBackendId && <ScholarshipRecommendationCard scholarshipId={id} programId={getSelectedProgramId(activeOpportunityId)} />}
+
+          {data.requirementSummaryRows && (
+            <Section title="Requirements at a glance"><InfoList rows={data.requirementSummaryRows} /></Section>
+          )}
+
+          {(data.fundingRows || benefitRows.length > 0) && (
+            <Section title="What it covers">
+              <InfoList rows={data.fundingRows || benefitRows} />
+              {data.fundingRows && benefitRows.length > 0 && (
+                <details className="sd-details">
+                  <summary>Original funding wording</summary>
+                  <InfoList rows={benefitRows} />
+                </details>
+              )}
+            </Section>
+          )}
+
+          {(!isBackendId || eligibilityState !== 'ok') && (
+            <Section title="Requirements">
+              {requirementRows.length > 0
+                ? <InfoList rows={requirementRows} />
+                : <p>{eligibility?.message || 'No structured scholarship requirements are available. Verify eligibility directly with the provider.'}</p>}
+            </Section>
+          )}
+
+          {applicationRows.length > 0 && <Section title="Applying"><InfoList rows={applicationRows} /></Section>}
+
+          {isBackendId && (
+            <Section title="Linked programs">
+              <ScholarshipProgramMatches load={fetchScholarshipPrograms} recordId={id} side="program" />
+            </Section>
+          )}
+        </div>
+
+        <aside className="sd-aside">
+          <OfficialApplicationLink
+            opportunity={data}
+            applied={appliedOpportunityIds.includes(data.id)}
+            onToggleApplied={(value) => markOpportunityApplied(data.id, value)}
+          />
+
+          {data.officialLinks?.length > 0 && (
+            <Section title="Official links">
+              <ul className="sd-links">
+                {data.officialLinks.map((link) => (
+                  <li key={link.url}>
+                    <a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          <Section title="Source">
+            {isBackend ? (
+              <>
+                <p>
+                  {data.verificationText || (isVerified ? 'Recorded from the official source' : 'Not yet verified against the official source')}
+                  {data.sourceName ? ` (${data.sourceName})` : ''}
+                  {data.lastVerified ? `, last verified ${data.lastVerified}` : ''}.
+                  {' '}Confirm current terms and dates with the provider before applying.
+                </p>
+                {data.verificationNotes && <p>{data.verificationNotes}</p>}
+              </>
+            ) : (
+              <p>Funding values and dates are sample listing data, not confirmed awards or official deadlines.</p>
+            )}
+          </Section>
+        </aside>
+      </div>
     </div>
   );
 }

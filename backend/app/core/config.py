@@ -38,6 +38,9 @@ def _production_problems() -> list:
         problems.append("SMTP_HOST and SMTP_FROM must be set so password reset emails can be sent")
     if os.getenv("SMTP_USE_TLS", "true").strip().lower() == "false":
         problems.append("SMTP_USE_TLS must stay on")
+
+    if not os.getenv("GOOGLE_CLIENT_ID", "").strip():
+        problems.append("GOOGLE_CLIENT_ID must be set so Google sign-in tokens can be verified")
     return problems
 
 

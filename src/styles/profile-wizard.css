@@ -1171,6 +1171,233 @@
   font-size: 12px;
 }
 
+.profile-wizard-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.profile-wizard-notice > svg {
+  flex: 0 0 auto;
+}
+
+/* Centred column: needs this specificity to beat the shared .app-container reset */
+.app-container .profile-wizard-root .profile-wizard-content {
+  --wizard-panel-x: 32px;
+  max-width: 900px;
+  margin-inline: auto;
+  padding: 8px 0 32px;
+}
+
+.app-container .profile-wizard-root .profile-wizard-header {
+  display: block;
+  margin-bottom: 24px;
+}
+
+@media (min-width: 1025px) {
+  .profile-wizard-content .profile-funding-test-type,
+  .profile-wizard-content .profile-funding-score,
+  .profile-wizard-content .profile-funding-moi {
+    grid-column: span 4;
+  }
+}
+
+.profile-wizard-content .profile-funding-moi > .mb-1\.5 {
+  white-space: normal;
+}
+
+.profile-wizard-root .profile-wizard-header > div + div {
+  margin-top: 16px;
+}
+
+.profile-wizard-root .profile-wizard-heading > div {
+  align-items: center;
+}
+
+.profile-wizard-root .profile-wizard-heading button {
+  display: inline-flex;
+}
+
+.profile-wizard-content textarea {
+  padding: 8px 10px;
+}
+
+.profile-wizard-root .profile-wizard-stepper {
+  margin-top: 20px;
+}
+
+.profile-wizard-content > section {
+  margin-top: 0;
+  padding: 28px var(--wizard-panel-x) 0;
+}
+
+.profile-wizard-content > section > h2 {
+  font-size: 18px;
+}
+
+.profile-wizard-content > section > p {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.profile-wizard-content > section > h2 ~ div:first-of-type {
+  margin-top: 24px;
+}
+
+.profile-wizard-content .profile-funding-grid {
+  margin-top: 20px;
+}
+
+.profile-wizard-content .profile-previous-degree {
+  margin-top: 20px;
+  padding: 16px;
+}
+
+.profile-wizard-content .profile-previous-degree > div:first-child {
+  margin-bottom: 12px;
+}
+
+.profile-wizard-content .profile-previous-degree input,
+.profile-wizard-content .profile-previous-degree .profile-month-picker {
+  height: 36px;
+  min-height: 36px;
+  font-size: 14px;
+}
+
+.profile-wizard-content .profile-previous-degree .profile-month-control > svg {
+  top: 11px;
+}
+
+.profile-wizard-content .profile-about-fields,
+.profile-wizard-content .profile-academic-fields,
+.profile-wizard-content .profile-academic-group .profile-academic-fields,
+.profile-wizard-content .profile-study-goals-grid,
+.profile-wizard-content .profile-funding-grid {
+  gap: 20px;
+}
+
+.profile-wizard-content .profile-academic-group {
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.profile-wizard-content .profile-academic-group:first-of-type {
+  margin-top: 0;
+}
+
+.profile-wizard-content .profile-about-fields > label > span:first-child,
+.profile-wizard-content .profile-study-goals-grid > label > span:first-child,
+.profile-wizard-content .profile-choice-label,
+.profile-wizard-content .profile-funding-grid > label > span:first-child,
+.profile-wizard-content .profile-funding-grid > .profile-choice-field > .profile-choice-label {
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.profile-wizard-content .profile-about-fields > label > input,
+.profile-wizard-content .profile-about-fields > label > select,
+.profile-wizard-content .profile-goal-icon-control > select,
+.profile-wizard-content .profile-goal-other-field input,
+.profile-wizard-content .profile-goal-other-country input,
+.profile-wizard-content .profile-funding-grid input:not([type="checkbox"]):not([type="radio"]),
+.profile-wizard-content .profile-funding-grid select,
+.profile-wizard-content .profile-program-options > button {
+  height: 38px;
+  min-height: 38px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.profile-wizard-content .profile-multi-select-trigger {
+  min-height: 38px;
+  border-radius: 6px;
+}
+
+.profile-wizard-content .profile-goal-icon-control > svg {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.profile-wizard-content .profile-money-control {
+  height: 38px;
+  border-radius: 6px;
+}
+
+.profile-wizard-content .profile-funding-grid .profile-money-control input {
+  height: 36px;
+  min-height: 36px;
+}
+
+.profile-wizard-content .profile-funding-radio-options {
+  min-height: 38px;
+}
+
+.profile-wizard-content .profile-study-tip {
+  padding: 10px 12px;
+}
+
+.profile-wizard-content .profile-document-section {
+  margin-top: 24px;
+  padding-top: 20px;
+}
+
+.profile-wizard-content .profile-document-tip {
+  margin-top: 12px;
+  padding: 8px 12px;
+}
+
+.profile-wizard-content .profile-document-grid {
+  gap: 10px 20px;
+  margin-top: 12px;
+}
+
+.profile-wizard-content .profile-document-row {
+  min-height: 40px;
+  padding: 4px 8px;
+}
+
+.profile-wizard-content .profile-document-row > select {
+  height: 30px;
+}
+
+.profile-wizard-content section .profile-wizard-actions {
+  margin-top: 28px;
+  padding-top: 16px;
+  padding-bottom: 20px;
+}
+
+.profile-wizard-content section .profile-wizard-actions.is-academic-sticky {
+  margin-inline: calc(var(--wizard-panel-x) * -1);
+  padding-inline: var(--wizard-panel-x);
+}
+
+.profile-wizard-content section .profile-wizard-actions > button,
+.profile-wizard-content section .profile-wizard-actions > div > button {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .app-container .profile-wizard-root .profile-wizard-content {
+    --wizard-panel-x: 18px;
+    padding-bottom: 20px;
+  }
+
+  .profile-wizard-content > section {
+    padding-top: 20px;
+  }
+}
+
 @media (min-width: 769px) and (max-width: 1024px) {
   .profile-wizard-content {
     padding-right: 14px;

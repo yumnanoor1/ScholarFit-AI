@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Award, BadgeCheck, CheckCircle2, Clock, GraduationCap, HeartPulse, Home,
   Info, Landmark, Loader2, MapPin, PiggyBank, Plane, Receipt, Stamp, Wallet, XCircle,
@@ -8,7 +8,7 @@ import { useProfile } from '../context/ProfileContext';
 import { getOpportunityTitle } from '../services/opportunityJourney';
 import { getUniversityLogo } from '../services/programFit';
 import { apiService } from '../services/api';
-import { parseScholarshipId } from '../services/opportunityApi';
+import { buildFinancialRouteState, getBackendProgramId, resolveFinancialSelection } from '../services/financialSelection';
 import './FinancialFeasibility.css';
 
 // Rows of the page, in order. `category` is the backend cost category.
@@ -33,17 +33,6 @@ const STATUS_DISPLAY = {
   not_feasible: { label: 'Not feasible', tone: 'is-short', icon: XCircle },
   insufficient_data: { label: 'Insufficient information', tone: 'is-unknown', icon: Info },
 };
-
-function isScholarship(opportunity) {
-  return opportunity?.kind === 'scholarship' || opportunity?.id?.startsWith('sch-');
-}
-
-// Backend programs carry a numeric ID; older sample selections (univ-1 …) don't
-function getBackendProgramId(program) {
-  if (!program || isScholarship(program)) return null;
-  const id = Number(program._numericId ?? program.id);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
 
 function getApiErrorMessage(error) {
   if (error?.status === 401) return 'Your session has expired. Sign in again to continue.';
@@ -73,10 +62,93 @@ function formatRecordRange(line) {
   return `${line.original_currency} ${number(line.original_amount)}–${number(line.original_amount_max)}`;
 }
 
+/** Shown when no program is selected: pick one instead of reaching a dead end. */
+function ProgramPicker({ scholarshipId }) {
+  const navigate = useNavigate();
+  const { selectOpportunity } = useProfile();
+  const [state, setState] = useState({ status: 'loading', programs: [] });
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let isCurrent = true;
+    apiService.getMatchedUniversities()
+      .then((programs) => { if (isCurrent) setState({ status: 'ready', programs }); })
+      .catch((error) => {
+        console.error('Unable to load programs for the financial planner.', error);
+        if (isCurrent) setState({ status: 'error', programs: [] });
+      });
+    return () => { isCurrent = false; };
+  }, [attempt]);
+
+  const choose = (program) => {
+    selectOpportunity({ ...program, kind: 'program' });
+    navigate('/financial', {
+      replace: true,
+      state: buildFinancialRouteState({ programId: program._numericId ?? program.id, scholarshipId }),
+    });
+  };
+
+  return (
+    <main className="page-container financial-page is-empty">
+      <h1 className="page-title">Financial Feasibility</h1>
+      <p className="page-subtitle">Review study costs, scholarship support, and your personal budget.</p>
+      <section className="fin-card fin-empty" aria-labelledby="financial-picker-title">
+        <span className="fin-empty-icon" aria-hidden="true"><PiggyBank size={30} /></span>
+        <h2 id="financial-picker-title">Select a Master’s program</h2>
+        <p>
+          {scholarshipId != null
+            ? 'A scholarship is checked against a program’s costs. Choose the program you would study.'
+            : 'Choose a program to compare its costs with your budget. You can add a scholarship afterwards.'}
+        </p>
+        {state.status === 'loading' && <p className="fin-summary-empty" role="status"><Loader2 size={22} className="fin-spin" aria-hidden="true" /> Loading programs…</p>}
+        {state.status === 'error' && (
+          <>
+            <p className="fin-form-error" role="alert">Programs could not be loaded right now.</p>
+            <button type="button" className="btn btn-primary" onClick={() => { setState({ status: 'loading', programs: [] }); setAttempt((value) => value + 1); }}>Try again</button>
+          </>
+        )}
+        {state.status === 'ready' && state.programs.length === 0 && <p>No programs are available yet.</p>}
+        {state.status === 'ready' && state.programs.length > 0 && (
+          <ul className="fin-picker-list">
+            {state.programs.map((program) => (
+              <li key={program.id}>
+                <button type="button" onClick={() => choose(program)}>
+                  <strong>{getOpportunityTitle(program)}</strong>
+                  <span>{[program.university, program.country].filter(Boolean).join(' · ')}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button type="button" className="btn btn-outline" onClick={() => navigate('/recommendations')}>Browse recommendations</button>
+      </section>
+    </main>
+  );
+}
+
 export default function FinancialFeasibility() {
   const { activeOpportunity, selectedOpportunities } = useProfile();
+  const routeState = useLocation().state;
   const [planState, setPlanState] = useState({ plan: null, error: '' });
   const [attempt, setAttempt] = useState(0);
+  const [lookup, setLookup] = useState({ programId: null, program: null, error: false });
+  const [lookupAttempt, setLookupAttempt] = useState(0);
+
+  const selection = resolveFinancialSelection({ routeState, activeOpportunity, selectedOpportunities });
+  const needsLookup = Boolean(selection.programId) && !selection.program;
+
+  // The program may not be in the saved selection (e.g. opened from a card); load it from the backend
+  useEffect(() => {
+    if (!needsLookup) return undefined;
+    let isCurrent = true;
+    apiService.getUniversityById(selection.programId)
+      .then((program) => { if (isCurrent) setLookup({ programId: selection.programId, program, error: !program }); })
+      .catch((error) => {
+        console.error('Unable to load the selected program.', error);
+        if (isCurrent) setLookup({ programId: selection.programId, program: null, error: true });
+      });
+    return () => { isCurrent = false; };
+  }, [needsLookup, selection.programId, lookupAttempt]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -89,10 +161,9 @@ export default function FinancialFeasibility() {
     return () => { isCurrent = false; };
   }, [attempt]);
 
-  const stateKey = JSON.stringify([
-    activeOpportunity?.id || null,
-    ...selectedOpportunities.map((item) => item.id).sort(),
-  ]);
+  const loaded = lookup.programId === selection.programId ? lookup : null;
+  const program = selection.program || (loaded?.program ? { ...loaded.program, kind: 'program' } : null);
+  const stateKey = JSON.stringify([selection.programId, selection.scholarshipId]);
 
   if (planState.error) {
     return (
@@ -115,16 +186,41 @@ export default function FinancialFeasibility() {
       </main>
     );
   }
-  return <FinancialFeasibilityContent key={stateKey} initialPlan={planState.plan} />;
+  if (!selection.programId) {
+    return <ProgramPicker scholarshipId={selection.scholarshipId} />;
+  }
+  if (needsLookup && !program) {
+    if (loaded?.error) {
+      return (
+        <main className="page-container financial-page">
+          <h1 className="page-title">Financial Feasibility</h1>
+          <section className="fin-card fin-empty" role="alert">
+            <span className="fin-empty-icon" aria-hidden="true"><AlertTriangle size={30} /></span>
+            <h2>The selected program could not be loaded</h2>
+            <p>It may no longer be available, or the connection failed.</p>
+            <button className="btn btn-primary" onClick={() => { setLookup({ programId: null, program: null, error: false }); setLookupAttempt((value) => value + 1); }}>Try again</button>
+          </section>
+        </main>
+      );
+    }
+    return (
+      <main className="page-container financial-page">
+        <h1 className="page-title">Financial Feasibility</h1>
+        <p className="fin-summary-empty" role="status"><Loader2 size={22} className="fin-spin" aria-hidden="true" /> Loading the selected program…</p>
+      </main>
+    );
+  }
+  return (
+    <FinancialFeasibilityContent
+      key={stateKey}
+      initialPlan={planState.plan}
+      program={program}
+      initialScholarshipId={selection.scholarshipId}
+    />
+  );
 }
 
-function FinancialFeasibilityContent({ initialPlan }) {
-  const navigate = useNavigate();
-  const { activeOpportunity, selectedOpportunities } = useProfile();
-
-  const program = isScholarship(activeOpportunity)
-    ? selectedOpportunities.find((item) => getBackendProgramId(item)) || null
-    : activeOpportunity;
+function FinancialFeasibilityContent({ initialPlan, program, initialScholarshipId }) {
   const programId = getBackendProgramId(program);
   const supported = initialPlan.supported_currencies;
   const defaultCurrency = initialPlan.budget?.currency
@@ -138,10 +234,7 @@ function FinancialFeasibilityContent({ initialPlan }) {
       .filter(([, row]) => row)
       .map(([category, row]) => [category, { amount: String(row.amount), currency: row.currency, period: row.period }]),
   ));
-  const [scholarshipId, setScholarshipId] = useState(() => (
-    parseScholarshipId(activeOpportunity?.id)
-    ?? parseScholarshipId(selectedOpportunities.find((item) => parseScholarshipId(item.id) != null)?.id)
-  ));
+  const [scholarshipId, setScholarshipId] = useState(initialScholarshipId);
   const [scholarships, setScholarships] = useState([]);
   const [saveState, setSaveState] = useState({ saving: false, saved: false, error: '' });
   // key = the payload the stored result or error belongs to
@@ -158,12 +251,13 @@ function FinancialFeasibilityContent({ initialPlan }) {
         // university-specific ones and explains when a scholarship can't be counted
         setScholarships(items.filter((item) => {
           const target = String(item.country || '').toLowerCase();
+          if (initialScholarshipId != null && item._numericId === initialScholarshipId) return true;
           return Boolean(country) && target.includes(country) && !target.startsWith('european union');
         }));
       })
       .catch((error) => console.error('Unable to load scholarships for the financial planner.', error));
     return () => { isCurrent = false; };
-  }, [programId, program?.country]);
+  }, [programId, program?.country, initialScholarshipId]);
 
   const budgetIsValid = isValidAmount(budgetAmount);
   const expensePayload = useMemo(() => toExpensePayload(drafts), [drafts]);
@@ -216,21 +310,6 @@ function FinancialFeasibilityContent({ initialPlan }) {
       setSaveState({ saving: false, saved: false, error: getApiErrorMessage(error) });
     }
   };
-
-  if (!activeOpportunity || !programId) {
-    return (
-      <main className="page-container financial-page">
-        <h1 className="page-title">Financial Feasibility</h1>
-        <p className="page-subtitle">Review study costs, scholarship support, and your personal budget.</p>
-        <section className="fin-card fin-empty">
-          <span className="fin-empty-icon" aria-hidden="true"><PiggyBank size={30} /></span>
-          <h2>{activeOpportunity ? 'Select a Master’s program' : 'No opportunity selected'}</h2>
-          <p>Select a program from Explore to plan its costs against your budget.</p>
-          <button className="btn btn-primary" onClick={() => navigate('/recommendations')}>Browse recommendations</button>
-        </section>
-      </main>
-    );
-  }
 
   const isCurrentResponse = apiResponse.key === payloadKey;
   const apiState = {
@@ -495,16 +574,25 @@ function BackendResult({ state, result, formatMoney }) {
         </div>
       )}
 
-      <ul className="fin-legend">
-        <li className="is-total"><span /> Total estimated expenses <strong>{money(total)}</strong></li>
-        <li className="is-total"><span /> Tuition fees <strong>{money(result.tuition_cost)}</strong></li>
-        <li className="is-remaining"><span /> Living expenses <strong>{money(result.living_cost)}</strong></li>
-        <li className="is-total"><span /> Other known costs <strong>{money(result.other_costs)}</strong></li>
-        <li className="is-funding"><span /> Scholarship coverage <strong>{formatMoney(result.confirmed_funding)}{result.coverage_percent != null ? ` · ${Math.round(result.coverage_percent)}%` : ''}</strong></li>
-        <li className="is-remaining"><span /> Remaining to pay <strong>{money(remaining)}</strong></li>
-        <li className="is-budget"><span /> Your budget <strong>{budget != null ? formatMoney(budget) : 'Not entered'}</strong></li>
-        <li className="is-gap"><span /> {result.surplus ? 'Surplus' : 'Funding gap'} <strong>{money(result.funding_gap == null ? null : result.surplus || result.funding_gap)}</strong></li>
-      </ul>
+      <section className="fin-group" aria-label="Costs">
+        <h3>Costs</h3>
+        <ul className="fin-legend">
+          <li><span /> Tuition fees <strong>{money(result.tuition_cost)}</strong></li>
+          <li><span /> Living expenses <strong>{money(result.living_cost)}</strong></li>
+          <li><span /> Other known costs <strong>{money(result.other_costs)}</strong></li>
+          <li className="is-sum"><span /> Total estimated expenses <strong>{money(total)}</strong></li>
+        </ul>
+      </section>
+
+      <section className="fin-group" aria-label="Funding and budget">
+        <h3>Funding and budget</h3>
+        <ul className="fin-legend">
+          <li><span /> Scholarship coverage <strong>{formatMoney(result.confirmed_funding)}{result.coverage_percent != null ? ` · ${Math.round(result.coverage_percent)}%` : ''}</strong></li>
+          <li className="is-sum"><span /> Remaining to pay <strong>{money(remaining)}</strong></li>
+          <li><span /> Your budget <strong>{budget != null ? formatMoney(budget) : 'Not entered'}</strong></li>
+          <li className="is-sum"><span /> {result.surplus ? 'Surplus' : 'Funding gap'} <strong>{money(result.funding_gap == null ? null : result.surplus || result.funding_gap)}</strong></li>
+        </ul>
+      </section>
 
       {result.explanation.map((line) => <p key={line} className="fin-explain">{line}</p>)}
 

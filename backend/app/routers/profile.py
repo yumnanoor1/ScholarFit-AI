@@ -3,8 +3,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User, StudentProfile
-from app.schemas.user import ProfileCreate, ProfileUpdate, ProfileResponse
+from app.schemas.user import ProfileCreate, ProfileStatus, ProfileUpdate, ProfileResponse
 from app.routers.auth import get_current_user
+from app.services.profile_completion import profile_completion
 
 router = APIRouter(prefix="/profile", tags=["Student Profile"])
 
@@ -63,6 +64,15 @@ def get_profile(
             detail="Profile not created yet. Create one first with POST /profile/",
         )
     return profile
+
+
+@router.get("/status", response_model=ProfileStatus)
+def get_profile_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Whether your profile is finished, worked out from the stored data. Works before a profile exists."""
+    return profile_completion(db, current_user)
 
 
 @router.put("/", response_model=ProfileResponse)

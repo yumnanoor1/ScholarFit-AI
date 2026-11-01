@@ -6,7 +6,9 @@ import { useAuth } from '../context/AuthContext';
 import Modal from '../components/common/Modal';
 import BrandLogo from '../components/common/BrandLogo';
 import AuthBrandPanel from '../components/auth/AuthBrandPanel';
+import GoogleSignInButton from '../components/auth/GoogleSignInButton';
 import { AnimatedForm } from '../components/ui/modern-animated-sign-in';
+import { getHomePath } from '../services/homePath';
 
 const POLICY_TEXT = {
   terms: 'FitScholars helps you find and compare study-abroad programs and scholarships. Eligibility results are guidance based on published requirements, not an admission decision. Always confirm requirements, costs and deadlines with the official university or provider. FitScholars does not submit applications for you.',
@@ -15,7 +17,7 @@ const POLICY_TEXT = {
 
 export default function Register() {
   const navigate = useNavigate();
-  const { register } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -55,10 +57,34 @@ export default function Register() {
     }
   };
 
-  // Google sign-up needs a Google OAuth client and a backend endpoint; until then say so plainly
-  const handleGoogleRegister = () => {
+  const handleGoogleCredential = async (credential) => {
+    if (!agreeTerms) {
+      setNotice('');
+      setError('Please agree to the Terms of Service and Privacy Policy.');
+      return;
+    }
+
+    setLoading(true);
     setError('');
-    setNotice('Google sign-up isn’t available yet. Please create your account with your email and a password.');
+    setNotice('Continuing with Google…');
+
+    const res = await loginWithGoogle(credential);
+    if (res.success) {
+      navigate(await getHomePath(res), { replace: true });
+      return;
+    }
+    setLoading(false);
+    setNotice('');
+    if (res.code === 'link_required') {
+      navigate('/login', { replace: true, state: { googleLink: credential } });
+    } else {
+      setError(res.error);
+    }
+  };
+
+  const handleGoogleUnavailable = () => {
+    setError('');
+    setNotice('Google sign-up isn’t available right now. Please create your account with your email and a password.');
   };
 
   const fields = [
@@ -135,8 +161,13 @@ export default function Register() {
             header="Create your account"
             centerHeader
             fields={fields}
-            googleLogin="Continue with Google"
-            onGoogleLogin={handleGoogleRegister}
+            googleButton={(
+              <GoogleSignInButton
+                label="Continue with Google"
+                onCredential={handleGoogleCredential}
+                onUnavailable={handleGoogleUnavailable}
+              />
+            )}
             beforeSubmit={termsCheckbox}
             submitButton="Create account"
             submittingButton="Creating account…"

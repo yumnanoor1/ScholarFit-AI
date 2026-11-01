@@ -6,6 +6,8 @@ import {
   Settings, ShieldCheck, UserRound,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useProfile } from '../../context/ProfileContext';
+import { HOME_PATH, ONBOARDING_PATH, canUseApp } from '../../services/profileAccess';
 import BrandLogo from '../common/BrandLogo';
 
 const navigationGroups = [
@@ -45,6 +47,9 @@ function SidebarLink({ to, label, icon: Icon, match }) {
 export default function Sidebar() {
   const navigate = useNavigate();
   const { logout, user } = useAuth();
+  const { completion } = useProfile();
+  // Features aren't listed until the API confirms they're available, so nothing here leads to a refusal
+  const unlocked = canUseApp(completion);
 
   // Together, so ProtectedRoute doesn't record this page as somewhere to return to after login
   const handleLogout = () => {
@@ -56,16 +61,18 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <NavLink to="/dashboard" className="sidebar-brand" aria-label="FitScholars dashboard">
+      <NavLink to={unlocked ? HOME_PATH : ONBOARDING_PATH} className="sidebar-brand" aria-label={unlocked ? 'FitScholars dashboard' : 'Complete your profile'}>
         <BrandLogo tone="light" height={62} alt="" />
       </NavLink>
 
       <nav className="sidebar-nav" aria-label="Main navigation">
         <div className="sidebar-primary-links">
-          <SidebarLink to="/dashboard" label="Dashboard" icon={Home} />
+          {unlocked
+            ? <SidebarLink to={HOME_PATH} label="Dashboard" icon={Home} />
+            : <SidebarLink to={ONBOARDING_PATH} label="Complete profile" icon={Home} />}
           <SidebarLink to="/profile" label="My Profile" icon={UserRound} />
         </div>
-        {navigationGroups.map((group) => (
+        {unlocked && navigationGroups.map((group) => (
           <div className="sidebar-section" key={group.label}>
             <h2 className="sidebar-section-title">{group.label}</h2>
             {group.links.map((link) => <SidebarLink key={link.to} {...link} />)}
@@ -75,7 +82,7 @@ export default function Sidebar() {
 
       <div className="sidebar-bottom">
         {user?.role === 'admin' && <SidebarLink to="/admin/scholarships" label="Administration" icon={ShieldCheck} />}
-        <SidebarLink to="/settings" label="Settings" icon={Settings} />
+        {unlocked && <SidebarLink to="/settings" label="Settings" icon={Settings} />}
         <button type="button" className="sidebar-link sidebar-logout" onClick={handleLogout}>
           <LogOut size={18} aria-hidden="true" />
           <span>Log out</span>

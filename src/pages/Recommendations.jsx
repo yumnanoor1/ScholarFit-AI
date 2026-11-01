@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Bookmark, Briefcase, Building2, ChevronRight, CircleHelp,
+  Bookmark, Briefcase, Building2, Calculator, ChevronRight, CircleHelp,
   GraduationCap, MapPin, Search, SlidersHorizontal, Wallet,
 } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
@@ -9,7 +9,7 @@ import SavedStatusNotice from '../components/opportunities/SavedStatusNotice';
 import UniversityLogo from '../components/common/UniversityLogo';
 import EligibilityBadge from '../components/opportunities/EligibilityBadge';
 import {
-  compareByRank, getCategoryTone, getEligibilityLabel, getEligibilityReason, getExclusionLabel, getMatchTone, getScholarshipDeadlineLabel,
+  compareByRank, getCategoryTone, getEligibilityLabel, getExclusionLabel, getMatchTone, getScholarshipDeadlineLabel,
 } from '../services/eligibilityBadges';
 import MatchRing from '../components/opportunities/MatchRing';
 import { ComparisonSelectionBar, OpportunityCompareCheckbox } from '../components/opportunities/ComparisonControls';
@@ -18,6 +18,7 @@ import { apiService } from '../services/api';
 import { getOpportunityTitle } from '../services/opportunityJourney';
 import { getDeadlineInfo, getScholarshipLogo } from '../services/programFit';
 import { getSelectedProgramId } from '../services/opportunityApi';
+import { buildFinancialRouteState } from '../services/financialSelection';
 import { useProgramEligibility, useScholarshipEligibility, useScholarshipRecommendations } from '../hooks/useProgramEligibility';
 import './Universities.css';
 
@@ -31,6 +32,7 @@ export default function Recommendations() {
     activeOpportunityId,
     selectedOpportunities,
     isOpportunitySaved,
+    selectOpportunity,
     toggleSaveOpportunity,
     comparisonOpportunityIds,
   } = useProfile();
@@ -184,15 +186,7 @@ export default function Recommendations() {
       )}
 
       {!isLoading && !error && visibleOpportunities.length > 0 && (
-        <div className="program-list is-matches" role="list" aria-label="Matched opportunities">
-          <div className="program-list-head" aria-hidden="true">
-            <span>Opportunity</span>
-            <span>Tuition / funding</span>
-            <span>Deadline</span>
-            <span>Match</span>
-            <span>Eligibility</span>
-            <span>Compare</span>
-          </div>
+        <div className="match-list" role="list" aria-label="Matched opportunities">
           {visibleOpportunities.map((opportunity) => {
             const title = getOpportunityTitle(opportunity);
             const isProgram = opportunity.kind === 'program';
@@ -206,16 +200,28 @@ export default function Recommendations() {
             const deadline = isProgram
               ? programDeadline && { label: programDeadline.label, note: programDeadline.passed ? 'Passed' : `${programDeadline.days} days left` }
               : getScholarshipDeadlineLabel(eligibility.deadline);
-            const reason = !isProgram && scholarshipEligibility.state === 'ok' ? getEligibilityReason(eligibility) : '';
             const saved = isOpportunitySaved(opportunity.id);
             const ScholarshipIcon = opportunity.type === 'RA' ? Briefcase : Building2;
             const openDetails = () => navigate(isProgram ? `/universities/${opportunity.id}` : `/scholarships/${opportunity.id}`);
+            // The planner works on a program, so a scholarship is checked against the program chosen above
+            const checkFinancialFeasibility = () => {
+              if (isProgram) {
+                selectOpportunity({ ...opportunity });
+                navigate('/financial', { state: buildFinancialRouteState({ programId: opportunity._numericId ?? opportunity.id }) });
+                return;
+              }
+              const program = programs.find((item) => getSelectedProgramId(item.id) === selectedProgramId);
+              if (program) selectOpportunity({ ...program });
+              navigate('/financial', {
+                state: buildFinancialRouteState({ programId: selectedProgramId, scholarshipId: opportunity._numericId }),
+              });
+            };
 
             return (
               <div
                 key={opportunity.id}
                 role="listitem"
-                className={`program-row ${activeOpportunityId === opportunity.id ? 'is-active' : ''}`}
+                className={`match-card ${activeOpportunityId === opportunity.id ? 'is-active' : ''}`}
                 tabIndex={0}
                 aria-label={`${title}, ${organization || 'provider not listed'}, ${getEligibilityLabel(eligibility.status)}. Open details`}
                 onClick={openDetails}
@@ -226,47 +232,48 @@ export default function Recommendations() {
                   }
                 }}
               >
-                <div className="program-row-main">
+                <header className="match-card-head">
                   {isProgram
-                    ? <UniversityLogo university={opportunity.university} size={42} fallback={<GraduationCap size={20} />} />
-                    : <UniversityLogo src={getScholarshipLogo(opportunity)} size={42} bareFallback fallback={<span className="program-row-mark is-scholarship" aria-hidden="true"><ScholarshipIcon size={20} /></span>} />}
-                  <div className="program-row-copy">
-                    <strong>{title}</strong>
-                    <span>{[organization || 'Provider not listed', opportunity.country].filter(Boolean).join(' · ')}</span>
-                    <span className="program-row-tags">
-                      <em className={isProgram ? 'is-program' : 'is-scholarship'}>{isProgram ? "Master's program" : opportunity.type || 'Scholarship'}</em>
-                    </span>
-                    {recommendation && (
-                      <small className="matched-row-badges">
-                        <span className={`program-status is-${getCategoryTone(recommendation.category)}`}>{recommendation.category_label}</span>
-                        {recommendation.program_match && (
-                          <span className={`program-status is-${getMatchTone(recommendation.program_match.outcome)}`}>{recommendation.program_match.label}</span>
-                        )}
-                      </small>
-                    )}
-                    {recommendation?.positive[0] && <small>Why: {recommendation.positive[0]}</small>}
-                    {recommendation?.warnings[0] && <small>Check: {recommendation.warnings[0]}</small>}
+                    ? <UniversityLogo university={opportunity.university} size={48} fallback={<GraduationCap size={22} />} />
+                    : <UniversityLogo src={getScholarshipLogo(opportunity)} size={48} bareFallback fallback={<span className="program-row-mark is-scholarship" aria-hidden="true"><ScholarshipIcon size={22} /></span>} />}
+                  <div className="match-card-title">
+                    <h2>{title}</h2>
+                    <p>{[organization || 'Provider not listed', opportunity.country].filter(Boolean).join(' · ')}</p>
+                    <div className="match-card-tags">
+                      {isProgram && <span className="match-card-type is-program">Master&apos;s program</span>}
+                      {recommendation && <span className={`program-status is-${getCategoryTone(recommendation.category)}`}>{recommendation.category_label}</span>}
+                      {recommendation?.program_match && (
+                        <span className={`program-status is-${getMatchTone(recommendation.program_match.outcome)}`}>{recommendation.program_match.label}</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="program-row-cell" data-label="Tuition / funding">
-                  <strong>{isProgram ? opportunity.tuitionOriginal || opportunity.tuition || 'Not listed' : recommendation?.funding.label || 'Not listed'}</strong>
-                  {recommendation && <small>{recommendation.funding.summary}</small>}
-                  {isProgram && opportunity.tuitionAmount > 0 && opportunity.tuitionCurrency !== 'USD' && opportunity.tuition && (
-                    <small>≈ {opportunity.tuition.replace(' / year', '')}</small>
-                  )}
-                </div>
-                <div className="program-row-cell" data-label="Deadline">
-                  <strong>{deadline ? deadline.label : opportunity.deadline || 'Not listed'}</strong>
-                  {deadline && <small>{deadline.note}</small>}
-                </div>
-                <div className="program-row-cell" data-label="Match">
                   <MatchRing score={opportunity.matchScore} />
-                </div>
-                <div className="program-row-cell" data-label="Eligibility">
-                  <EligibilityBadge status={eligibility.status} />
-                  {reason && <small className="program-row-reason">{reason}</small>}
-                </div>
-                <div className="program-row-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                </header>
+                <dl className="match-card-facts">
+                  <div>
+                    <dt>Tuition / funding</dt>
+                    <dd>
+                      <strong>{isProgram ? opportunity.tuitionOriginal || opportunity.tuition || 'Not listed' : recommendation?.funding.label || 'Not listed'}</strong>
+                      {isProgram && opportunity.tuitionAmount > 0 && opportunity.tuitionCurrency !== 'USD' && opportunity.tuition && (
+                        <small>≈ {opportunity.tuition.replace(' / year', '')}</small>
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Deadline</dt>
+                    <dd>
+                      <strong>{deadline ? deadline.label : opportunity.deadline || 'Not listed'}</strong>
+                      {deadline && <small>{deadline.note}</small>}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Eligibility</dt>
+                    <dd>
+                      <EligibilityBadge status={eligibility.status} />
+                    </dd>
+                  </div>
+                </dl>
+                <footer className="match-card-actions" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                   <OpportunityCompareCheckbox opportunity={{ ...opportunity, title }} />
                   <button
                     type="button"
@@ -277,8 +284,13 @@ export default function Recommendations() {
                   >
                     <Bookmark size={16} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" />
                   </button>
-                  <ChevronRight className="program-row-chevron" size={20} aria-hidden="true" />
-                </div>
+                  <button type="button" className="match-card-financial" onClick={checkFinancialFeasibility}>
+                    <Calculator size={14} aria-hidden="true" /> Check Financial Feasibility
+                  </button>
+                  <button type="button" className="match-card-open" onClick={openDetails}>
+                    View details <ChevronRight size={16} aria-hidden="true" />
+                  </button>
+                </footer>
               </div>
             );
           })}

@@ -81,9 +81,12 @@ RESET_EMAILS_BY_ADDRESS = RateLimit(limit=3, window=HOUR, cooldown=HOUR)
 RESET_REQUESTS_BY_IP = RateLimit(limit=10, window=HOUR, cooldown=HOUR)
 RESET_FAILURES_BY_IP = RateLimit(limit=10, window=15 * MINUTE, cooldown=15 * MINUTE)
 REGISTRATIONS_BY_IP = RateLimit(limit=30, window=HOUR, cooldown=HOUR)
+# Rejected Google tokens only. Passwords tried while linking count towards the login limits instead
+GOOGLE_FAILURES_BY_IP = RateLimit(limit=30, window=15 * MINUTE, cooldown=15 * MINUTE)
+ASSISTANT_MESSAGES_BY_USER = RateLimit(limit=30, window=MINUTE, cooldown=MINUTE)
 
 ALL_LIMITS = (LOGIN_FAILURES_BY_ACCOUNT_AND_IP, LOGIN_FAILURES_BY_ACCOUNT, LOGIN_FAILURES_BY_IP, RESET_EMAILS_BY_ADDRESS,
-              RESET_REQUESTS_BY_IP, RESET_FAILURES_BY_IP, REGISTRATIONS_BY_IP)
+              RESET_REQUESTS_BY_IP, RESET_FAILURES_BY_IP, REGISTRATIONS_BY_IP, GOOGLE_FAILURES_BY_IP, ASSISTANT_MESSAGES_BY_USER)
 
 
 def client_ip(request: Request) -> str:

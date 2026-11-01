@@ -234,7 +234,8 @@ class SessionTests(AuthCase):
 
 
 GOOD = {"APP_ENV": "production", "SECRET_KEY": "k" * 64, "DATABASE_URL": "postgresql://app:strong@db.internal/fit",
-        "FRONTEND_URL": "https://fitscholar.example", "SMTP_HOST": "smtp.example.com", "SMTP_FROM": "no-reply@example.com"}
+        "FRONTEND_URL": "https://fitscholar.example", "SMTP_HOST": "smtp.example.com", "SMTP_FROM": "no-reply@example.com",
+        "GOOGLE_CLIENT_ID": "fitscholar.apps.googleusercontent.com"}
 
 
 class SettingsTests(unittest.TestCase):
@@ -261,6 +262,7 @@ class SettingsTests(unittest.TestCase):
         self.assert_stops("FRONTEND_URL", FRONTEND_URL="https://localhost:5173")
         self.assert_stops("SMTP_HOST", SMTP_HOST=None)
         self.assert_stops("SMTP_USE_TLS", SMTP_USE_TLS="false")
+        self.assert_stops("GOOGLE_CLIENT_ID", GOOGLE_CLIENT_ID=None)
 
     def test_the_error_never_contains_a_value(self):
         with self.assertRaises(RuntimeError) as stopped:

@@ -96,6 +96,9 @@ export interface ProfileSaveProgress {
   fieldStatuses?: ProfileFieldStatuses;
 }
 
+export const PROFILE_STEPS = ["About You", "Academic Background", "Study Goals", "Language & Funding", "Review & Complete"];
+export const LAST_PROFILE_STEP = PROFILE_STEPS.length - 1;
+
 export const EMPTY_PROFILE: StudentProfile = {
   personalInfo: {
     fullName: "", email: "", dateOfBirth: "", gender: "", citizenshipCountry: "",

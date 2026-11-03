@@ -20,7 +20,8 @@ import { getDeadlineInfo, getScholarshipLogo } from '../services/programFit';
 import { getSelectedProgramId } from '../services/opportunityApi';
 import { buildFinancialRouteState } from '../services/financialSelection';
 import { useProgramEligibility, useScholarshipEligibility, useScholarshipRecommendations } from '../hooks/useProgramEligibility';
-import './Universities.css';
+ import './Universities.css';
+import './Recommendations.css';
 
 function hasFundingInformation(opportunity) {
   return Boolean(opportunity.coverage || opportunity.funding || opportunity.fundingOptions?.length);

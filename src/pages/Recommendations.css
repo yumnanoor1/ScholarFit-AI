@@ -1,0 +1,85 @@
+
+/* Recommendations page - visual refinement only */
+
+.opportunity-recommendations-page .matched-toolbar {
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dce7f0;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 4px 16px rgba(9, 38, 74, 0.04);
+}
+
+.opportunity-recommendations-page .matched-category-tabs {
+  gap: 7px;
+}
+
+.opportunity-recommendations-page .matched-category-tabs button {
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.opportunity-recommendations-page .matched-category-tabs button:hover {
+  border-color: #c8ddeb;
+}
+
+.opportunity-recommendations-page .matched-category-tabs button.is-active {
+  background: #127cb9;
+  color: #ffffff;
+}
+
+.opportunity-recommendations-page .matched-filter-select,
+.opportunity-recommendations-page .matched-search,
+.opportunity-recommendations-page .matched-sort {
+  min-height: 38px;
+  border-color: #dce7f0;
+  border-radius: 9px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.opportunity-recommendations-page .matched-filter-select:focus-within,
+.opportunity-recommendations-page .matched-search:focus-within,
+.opportunity-recommendations-page .matched-sort:focus-within {
+  border-color: #127cb9;
+  box-shadow: 0 0 0 3px rgba(18, 124, 185, 0.1);
+}
+
+.opportunity-recommendations-page .match-card {
+  border-radius: 15px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.opportunity-recommendations-page .match-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -16px rgba(9, 38, 74, 0.35);
+}
+
+.opportunity-recommendations-page .matched-empty-state {
+  border: 1px dashed #cbdce9;
+  border-radius: 14px;
+  padding: 28px 20px;
+  background: #f8fbfd;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .opportunity-recommendations-page .matched-toolbar {
+    padding: 10px;
+    gap: 8px;
+  }
+
+  .opportunity-recommendations-page .matched-category-tabs {
+    flex-wrap: wrap;
+    border-right: 0;
+    padding-right: 0;
+  }
+
+  .opportunity-recommendations-page .matched-filter-select,
+  .opportunity-recommendations-page .matched-search,
+  .opportunity-recommendations-page .matched-sort {
+    width: 100%;
+    max-width: none;
+  }
+}

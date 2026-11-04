@@ -15,6 +15,7 @@ from app.models.opportunity import Program, Scholarship
 from app.models.user import StudentProfile, User
 from app.services.eligibility_engine import check_program_eligibility
 from app.services.profile_completion import profile_completion
+from app.services.rag_service import retrieve_scholarships, generate_answer
 from app.services.scholarship_eligibility import evaluate_scholarship
 
 PROFILE_ROUTE = "/profile?edit=1"
@@ -412,12 +413,35 @@ def _next_action(context, guidance, completion, scholarship_results, message):
 
 
 # ---------- Entry point ----------
+def _rag_reply(db: Session, context: dict, message: str) -> dict:
+    sources = retrieve_scholarships(db, message, limit=5)
+    answer = generate_answer(message, sources)
 
+    source_items = [
+        f"{source['name']} — {source.get('official_url') or 'Official URL not provided'}"
+        for source in sources
+    ]
+
+    sections = (
+        [{"heading": "Sources", "items": source_items}]
+        if source_items else []
+    )
+
+    return _reply(
+        _context(context, "scholarship_info"),
+        "scholarship_info",
+        answer,
+        sections=sections,
+        suggestions=SUGGESTIONS,
+    )
 def respond(db: Session, user: User, profile: StudentProfile, message: str, context: dict, guidance: Guidance,
             today: Optional[date] = None) -> dict:
     today = today or date.today()
     intent = detect_intent(message)
     if intent == "help":
+      try:
+         return _rag_reply(db, context, message)
+      except Exception:
         return _help(context)
     completion = profile_completion(db, user)
     if intent == "financial":

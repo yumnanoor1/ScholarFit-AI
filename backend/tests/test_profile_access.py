@@ -18,7 +18,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.security import issue_session_token
 from app.database import Base, get_db
 from app.models.user import StudentProfile, User
-from app.routers import admin_scholarships, auth, eligibility, financial_feasibility, profile, programs, recommendations, saved_scholarships, scholarships, universities
+from app.routers import admin_scholarships, assistant, auth, eligibility, financial_feasibility, profile, recommendations, saved_scholarships, scholarships
 from app.services.google_identity import GoogleIdentity
 from app.services.profile_completion import REQUIRED_FIELDS, profile_completion
 from app.schemas.user import GoogleCredential
@@ -30,7 +30,8 @@ COMPLETE = dict(nationality="Pakistan", degree_level="Bachelor's", field_of_stud
 
 def build_app(session):
     app = FastAPI()
-    for module in (auth, profile, eligibility, financial_feasibility, recommendations, saved_scholarships, scholarships, programs, universities, admin_scholarships):
+    for module in (auth, profile, scholarships, saved_scholarships, eligibility, financial_feasibility,
+                   recommendations, admin_scholarships, assistant):
         app.include_router(module.router)
     app.dependency_overrides[get_db] = lambda: session
     return app
@@ -103,7 +104,7 @@ class CompletionRuleTests(ProfileAccessCase):
                 self.assertEqual(self.status_of(user).missing, [label])
 
     def test_the_forms_fallback_values_are_not_answers(self):
-        self.assertIn("CGPA and grading scale", self.status_of(self.add_user("zero@example.com", **{**COMPLETE, "cgpa": 0.0})).missing)
+        self.assertTrue(self.status_of(self.add_user("zero@example.com", **{**COMPLETE, "cgpa": 0.0})).complete)
         self.assertIn("Field of study", self.status_of(self.add_user("general@example.com", **{**COMPLETE, "field_of_study": "General"})).missing)
 
     def test_an_unknown_study_status_or_impossible_grade_is_not_complete(self):
@@ -147,7 +148,7 @@ class GateTests(ProfileAccessCase):
     def test_every_gated_route_refuses_an_incomplete_student(self):
         token = self.token(self.incomplete)
         routes = list(self.gated_routes())
-        self.assertGreaterEqual(len(routes), 16)
+        self.assertGreaterEqual(len(routes), 8)
         for method, path in routes:
             with self.subTest(f"{method} {path}"):
                 status, body = call(self.app, method, path, token, body={})
@@ -166,9 +167,13 @@ class GateTests(ProfileAccessCase):
 
     def test_a_complete_student_gets_through(self):
         token = self.token(self.complete)
-        for path in ("/saved-scholarships/", "/recommendations/scholarships", "/eligibility/programs", "/financial-feasibility/plan"):
+        for path in ("/saved-scholarships/", "/recommendations/scholarships", "/eligibility/scholarships", "/financial-feasibility/plan"):
             with self.subTest(path):
                 self.assertEqual(call(self.app, "GET", path, token)[0], 200)
+
+    def test_university_and_program_routers_are_not_active(self):
+        paths = {route.path for route in self.app.routes}
+        self.assertFalse(any(path.startswith(("/universities", "/programs")) for path in paths))
 
     def test_finishing_the_profile_unlocks_straight_away(self):
         token = self.token(self.partial)
@@ -215,9 +220,157 @@ class OpenRouteTests(ProfileAccessCase):
     def test_profile_routes_stay_open_to_an_incomplete_student(self):
         token = self.token(self.incomplete)
         self.assertEqual(call(self.app, "GET", "/profile/", token)[0], 404)
-        created = {"degree_level": "Bachelor's", "field_of_study": "Computer Science", "cgpa": 3.0}
+        created = {"degree_level": "Bachelor's", "field_of_study": "Computer Science", "cgpa": 3.0, "cgpa_scale": 4.0}
         self.assertEqual(call(self.app, "POST", "/profile/", token, created)[0], 201)
         self.assertEqual(call(self.app, "PUT", "/profile/", token, {"nationality": "Pakistan"})[0], 200)
+
+    def test_profile_fields_round_trip_and_partial_updates_merge(self):
+        token = self.token(self.incomplete)
+        payload = {
+            "degree_level": "Bachelor's",
+            "field_of_study": "Computer Science",
+            "cgpa": 0,
+            "cgpa_scale": 4,
+            "preferred_fields": ["Data Science"],
+            "preferred_degree_levels": ["Master's"],
+            "preferred_funding_types": ["Tuition waivers"],
+            "funding_preference": "Fully funded only",
+            "language_test": {
+                "test_type": "TOEFL iBT",
+                "overall_score": 105,
+                "listening": 28,
+                "reading": 27,
+                "writing": 25,
+                "speaking": 26,
+                "test_date": "2024-06-15",
+                "test_status": "Completed",
+            },
+            "tuition_budget_amount": 1250,
+            "tuition_budget_currency": "EUR",
+            "living_budget_amount": 700,
+            "living_budget_currency": "EUR",
+            "budget_usd": None,
+            "form_details": {
+                "academicBackground": {"major": "Computer Science", "workExperience": "Research assistant"},
+                "studyPreferences": {"currency": "EUR"},
+            },
+        }
+        status_code, created = call(self.app, "POST", "/profile/", token, payload)
+        self.assertEqual(status_code, 201)
+        self.assertEqual(created["cgpa"], 0)
+        self.assertEqual(created["field_of_study"], "Computer Science")
+        self.assertEqual(created["preferred_fields"], ["Data Science"])
+        self.assertEqual(created["preferred_degree_levels"], ["Master's"])
+        self.assertEqual(created["preferred_funding_types"], ["Tuition waivers"])
+        self.assertEqual(created["language_test"]["listening"], 28)
+        self.assertEqual(created["language_test"]["test_date"], "2024-06-15")
+        self.assertEqual(created["toefl_score"], 105)
+        self.assertEqual(created["tuition_budget_currency"], "EUR")
+        self.assertIsNone(created["budget_usd"])
+
+        updated_status, updated = call(
+            self.app,
+            "PUT",
+            "/profile/",
+            token,
+            {
+                "tuition_budget_amount": 1500,
+                "language_test": {
+                    "test_type": "TOEFL iBT",
+                    "overall_score": 106,
+                    "test_date": "2024-06-15",
+                    "test_status": "Completed",
+                },
+                "form_details": {"academicBackground": {"workExperience": "Teaching assistant"}},
+            },
+        )
+        self.assertEqual(updated_status, 200)
+        self.assertEqual(updated["tuition_budget_amount"], 1500)
+        self.assertEqual(updated["tuition_budget_currency"], "EUR")
+        self.assertEqual(updated["language_test"]["overall_score"], 106)
+        self.assertEqual(updated["toefl_score"], 106)
+        self.assertEqual(updated["form_details"]["academicBackground"]["major"], "Computer Science")
+        self.assertEqual(updated["form_details"]["academicBackground"]["workExperience"], "Teaching assistant")
+        self.assertEqual(updated["preferred_fields"], ["Data Science"])
+
+    def test_a_complete_profile_persists_and_unlocks_after_reload(self):
+        token = self.token(self.incomplete)
+        details = {
+            "personalInfo": {"fullName": "A Student", "email": "new@example.com"},
+            "academicBackground": {"major": "Computer Science"},
+            "englishProficiency": {"willingToTest": "Yes"},
+            "studyPreferences": {"countries": ["Germany"]},
+            "documentAvailability": {"transcript": "Available"},
+        }
+        status_code, _ = call(
+            self.app,
+            "POST",
+            "/profile/",
+            token,
+            {
+                **COMPLETE,
+                "preferred_fields": ["Data Science"],
+                "preferred_degree_levels": ["Master's"],
+                "preferred_funding_types": ["Tuition waivers"],
+                "form_details": details,
+            },
+        )
+        self.assertEqual(status_code, 201)
+
+        status_code, completion = call(self.app, "GET", "/profile/status", token)
+        self.assertEqual(status_code, 200)
+        self.assertTrue(completion["complete"])
+
+        status_code, restored = call(self.app, "GET", "/profile/", token)
+        self.assertEqual(status_code, 200)
+        self.assertEqual(restored["form_details"], details)
+        self.assertEqual(restored["preferred_fields"], ["Data Science"])
+
+    def test_profile_validation_rejects_missing_scale_and_unpaired_budgets(self):
+        token = self.token(self.incomplete)
+        missing_scale = {"degree_level": "Bachelor's", "field_of_study": "Computer Science", "cgpa": 3.0}
+        self.assertEqual(call(self.app, "POST", "/profile/", token, missing_scale)[0], 422)
+
+        unpaired_budget = {
+            "degree_level": "Bachelor's",
+            "field_of_study": "Computer Science",
+            "tuition_budget_amount": 1000,
+        }
+        self.assertEqual(call(self.app, "POST", "/profile/", token, unpaired_budget)[0], 422)
+
+    def test_profile_validation_rejects_language_scores_outside_test_scale(self):
+        token = self.token(self.incomplete)
+        payload = {
+            "degree_level": "Bachelor's",
+            "field_of_study": "Computer Science",
+            "language_test": {
+                "test_type": "IELTS",
+                "overall_score": 9.5,
+                "test_status": "Completed",
+            },
+        }
+        self.assertEqual(call(self.app, "POST", "/profile/", token, payload)[0], 422)
+
+    def test_profile_updates_reject_blank_academic_fields_and_invalid_status(self):
+        token = self.token(self.complete)
+        for payload in (
+            {"field_of_study": " "},
+            {"degree_level": ""},
+            {"academic_status": "on leave"},
+            {"graduation_date": "2027-13"},
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(call(self.app, "PUT", "/profile/", token, payload)[0], 422)
+
+    def test_profile_reads_are_scoped_to_the_authenticated_user(self):
+        first = self.add_user("profile-one@example.com", degree_level="Bachelor's", field_of_study="Chemistry")
+        second = self.add_user("profile-two@example.com", degree_level="Master's", field_of_study="Physics")
+        first_body = call(self.app, "GET", "/profile/", self.token(first))[1]
+        second_body = call(self.app, "GET", "/profile/", self.token(second))[1]
+        self.assertEqual(first_body["user_id"], first.id)
+        self.assertEqual(first_body["field_of_study"], "Chemistry")
+        self.assertEqual(second_body["user_id"], second.id)
+        self.assertEqual(second_body["field_of_study"], "Physics")
 
     def test_account_details_stay_open(self):
         self.assertEqual(call(self.app, "GET", "/auth/me", self.token(self.incomplete))[0], 200)

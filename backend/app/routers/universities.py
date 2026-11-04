@@ -15,6 +15,26 @@ from app.schemas.opportunity import (
 router = APIRouter(prefix="/universities", tags=["Universities"])
 
 
+def _normalized_name(value):
+    return " ".join((value or "").casefold().split())
+
+
+def _reject_duplicate(db: Session, name: str, country: str, exclude_id: Optional[int] = None):
+    normalized_name = _normalized_name(name)
+    normalized_country = _normalized_name(country)
+    duplicate = next(
+        (
+            item for item in db.query(University).all()
+            if item.id != exclude_id
+            and _normalized_name(item.name) == normalized_name
+            and _normalized_name(item.country) == normalized_country
+        ),
+        None,
+    )
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A university with this name and country already exists")
+
+
 @router.get("/", response_model=List[UniversityResponse])
 def list_universities(
     country: Optional[str] = Query(None, description="Filter by country, e.g. Germany"),
@@ -47,7 +67,8 @@ def create_university(
     db: Session = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    """Add a new university (admin only)"""
+    """Add a new university (admin only); duplicate names within a country are rejected."""
+    _reject_duplicate(db, data.name, data.country)
     uni = University(**data.model_dump())
     db.add(uni)
     db.commit()
@@ -67,7 +88,9 @@ def update_university(
     if not uni:
         raise HTTPException(status_code=404, detail="University not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    _reject_duplicate(db, changes.get("name", uni.name), changes.get("country", uni.country), uni.id)
+    for field, value in changes.items():
         setattr(uni, field, value)
 
     db.commit()

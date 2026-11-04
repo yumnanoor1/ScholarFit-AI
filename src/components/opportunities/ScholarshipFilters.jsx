@@ -22,13 +22,13 @@ function ChipGroup({ legend, name, options, filters, onChange, disabled = false,
 
 /** Search, sorting and the collapsible filter panel of Explore Scholarships. */
 export default function ScholarshipFilters({
-  searchText, onSearchText, filters, onChange, options, programId, onProgramChange, sort, onSortChange, total, loading,
+  searchText, onSearchText, filters, onChange, options, sort, onSortChange, total, loading,
   signedIn, open, onToggle, onClear,
 }) {
   const active = getActiveFilters(filters, options);
-  const panelCount = active.filter((item) => item.key !== 'q').length + (programId != null ? 1 : 0);
+  const panelCount = active.filter((item) => item.key !== 'q').length;
   const discipline = filters.discipline[0] || '';
-  const hasFilters = active.length > 0 || programId != null;
+  const hasFilters = active.length > 0;
 
   return (
     <section className="scholarships-search" aria-label="Search and filter scholarships">
@@ -109,25 +109,6 @@ export default function ScholarshipFilters({
             disabled={!signedIn}
             hint={signedIn ? null : 'Log in to filter by your eligibility.'}
           />
-          <div className="scholarships-filter-group">
-            <label className="scholarships-filter-field">
-              <span>Program you want to study</span>
-              <select value={programId ?? ''} onChange={(event) => onProgramChange(event.target.value ? Number(event.target.value) : null)}>
-                <option value="">No program selected</option>
-                {options?.programs.map((item) => <option key={item.id} value={item.id}>{item.name}, {item.university}</option>)}
-              </select>
-            </label>
-          </div>
-          {programId != null && (
-            <ChipGroup
-              legend="Program compatibility"
-              name="match"
-              options={options?.match_outcomes}
-              filters={filters}
-              onChange={onChange}
-              hint="Not a Match results are hidden unless you ask for them, and they aren't suitable for this program."
-            />
-          )}
         </div>
       )}
     </section>

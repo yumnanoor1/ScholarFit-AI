@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.rate_limit import ALL_LIMITS
 from app.database import Base
-from app.models.opportunity import Program, Scholarship, University
+from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
 from app.routers import assistant as api
 from app.schemas.assistant import AssistantContext, AssistantRequest
@@ -43,10 +43,6 @@ class ApiTests(unittest.TestCase):
         engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         Base.metadata.create_all(bind=engine)
         self.db = sessionmaker(bind=engine)()
-        uni = University(name="German University", country="Germany")
-        self.db.add(uni)
-        self.db.flush()
-        self.program = Program(university_id=uni.id, name="German MSc", degree_level="Master", min_ielts=7.0, min_cgpa=3.0)
         fields = {k: v for k, v in vars(make_scholarship()).items() if k != "id"}
         self.scholarship = Scholarship(**{**fields, "name": "Alpha Grant", "english_requirement": "Yes - IELTS 7.5 overall"})
         self.hidden = Scholarship(**{**fields, "name": "Hidden Grant", "verification_status": "unverified"})
@@ -54,7 +50,7 @@ class ApiTests(unittest.TestCase):
         self.bob = User(email="bob@example.com", hashed_password="x", full_name="Bob")
         self.admin = User(email="admin@example.com", hashed_password="x", full_name="Admin", role="admin")
         self.nobody = User(email="none@example.com", hashed_password="x", full_name="None")
-        self.db.add_all([self.program, self.scholarship, self.hidden, self.alice, self.bob, self.admin, self.nobody])
+        self.db.add_all([self.scholarship, self.hidden, self.alice, self.bob, self.admin, self.nobody])
         self.db.flush()
         done = dict(institution="NUST", academic_status="graduated", graduation_date="2024-06", preferred_countries="Germany")
         self.alice_profile = StudentProfile(user_id=self.alice.id, degree_level="Bachelor's", field_of_study="Computer Science",
@@ -137,13 +133,13 @@ class ApiTests(unittest.TestCase):
         self.assertIn("can't see", reply["summary"])
 
     def test_financial_action(self):
-        reply = self.ask(self.alice, "Can I afford this?", program_id=self.program.id)
+        reply = self.ask(self.alice, "Can I afford this?", scholarship_id=self.scholarship.id)
         self.assertEqual(reply["action"]["route"], "/financial")
-        self.assertEqual(reply["action"]["state"]["programId"], self.program.id)
+        self.assertEqual(reply["action"]["state"]["scholarshipId"], self.scholarship.id)
         self.assertIsNone(self.ask(self.alice, "Can I afford this?")["action"]["state"])
 
     def test_invalid_context_ids_are_ignored(self):
-        reply = self.ask(self.alice, "Can I afford this?", program_id=9999)
+        reply = self.ask(self.alice, "Can I afford this?", scholarship_id=9999)
         self.assertIsNone(reply["action"]["state"])
 
     def test_unknown_question_offers_suggestions(self):

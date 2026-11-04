@@ -258,6 +258,7 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(row.last_verified_date, date(2026, 9, 30))
             self.assertEqual(row.verification_basis, "official_source")
             self.assertEqual(row.structured_data_version, migration.STRUCTURED_DATA_VERSION)
+            self.assertEqual(row.record_version, 1)
 
     def test_repeat_run_changes_nothing_and_keeps_later_edits(self):
         migration.add_missing_columns(self.engine)
@@ -316,6 +317,8 @@ def make_scholarship(**overrides):
     data = dict.fromkeys(column.name for column in Scholarship.__table__.columns)
     data.update(id=1, name="Test", provider="Test Provider", country="Germany", degree_level="Master's",
                 verification_status="verified", eligible_nationalities="Open to students of all nationalities",
+                verification_basis="official_source", official_info_url="https://example.org/scholarship",
+                last_verified_date=date(2026, 10, 1),
                 pakistan_eligible="Yes - open to all", eligible_fields="All fields",
                 min_academic_requirement="Minimum CGPA 3.0", english_requirement="Yes - IELTS 6.5 overall",
                 deadline="Varies; e.g. one university's window closes 31 August 2026", funding_type="Fully Funded",
@@ -359,7 +362,11 @@ class ConsumerCompatibilityTests(unittest.TestCase):
 
     def test_structured_deadline_keeps_eligibility_separate(self):
         result = evaluate_scholarship(
-            make_scholarship(deadline_type="fixed", application_deadline_date=date(2026, 2, 20)), self.profile(), today=TODAY)
+            make_scholarship(deadline_type="fixed", application_deadline_date=date(2026, 2, 20),
+                             required_previous_degree="Bachelor's", academic_condition="numeric",
+                             min_gpa=3.0, min_gpa_scale=4.0,
+                             min_academic_requirement="Minimum CGPA 3.0/4.0"),
+            self.profile(), today=TODAY)
         self.assertEqual((result["status"], result["deadline"]["status"]), ("eligible", "closed"))
 
     def test_response_works_for_old_and_new_rows(self):

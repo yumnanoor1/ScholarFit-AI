@@ -1,54 +1,22 @@
 import { parseScholarshipId } from './opportunityApi.js';
 
-export function isScholarshipOpportunity(opportunity) {
-  return opportunity?.kind === 'scholarship' || String(opportunity?.id ?? '').startsWith('sch-');
+function isScholarship(opportunity) {
+  return opportunity?.kind === 'scholarship' || parseScholarshipId(opportunity?.id) != null;
 }
 
-function positiveInteger(value) {
-  const number = Number(value);
-  return value != null && value !== '' && Number.isInteger(number) && number > 0 ? number : null;
+export function buildFinancialRouteState({ scholarshipId = null } = {}) {
+  const numericId = scholarshipId == null ? null : Number(scholarshipId);
+  return { scholarshipId: Number.isInteger(numericId) && numericId > 0 ? numericId : null };
 }
 
-// Backend programs carry a numeric ID; older sample selections (univ-1 …) don't
-export function getBackendProgramId(program) {
-  if (!program || isScholarshipOpportunity(program)) return null;
-  return positiveInteger(program._numericId ?? program.id);
-}
-
-/** Navigation state sent by the "Check Financial Feasibility" buttons. */
-export function buildFinancialRouteState({ programId = null, scholarshipId = null, universityId = null } = {}) {
-  return {
-    programId: positiveInteger(programId),
-    scholarshipId: positiveInteger(scholarshipId),
-    universityId: positiveInteger(universityId),
-  };
-}
-
-/**
- * Works out what the Financial Feasibility page should calculate.
- * Navigation state wins; without it the active selection is used, as when
- * the page is opened from the sidebar. A scholarship is never invented.
- */
 export function resolveFinancialSelection({ routeState, activeOpportunity, selectedOpportunities = [] }) {
-  const fromRoute = routeState && typeof routeState === 'object' && 'programId' in routeState;
-  const candidates = [activeOpportunity, ...selectedOpportunities].filter(Boolean);
-
-  const programId = fromRoute
-    ? positiveInteger(routeState.programId)
-    : getBackendProgramId(activeOpportunity) ?? candidates.map(getBackendProgramId).find(Boolean) ?? null;
-
-  let scholarshipId;
-  if (fromRoute) {
-    scholarshipId = positiveInteger(routeState.scholarshipId);
-  } else {
-    const scholarship = isScholarshipOpportunity(activeOpportunity)
-      ? activeOpportunity
-      : selectedOpportunities.find((item) => parseScholarshipId(item.id) != null);
-    scholarshipId = parseScholarshipId(scholarship?.id);
-  }
-
-  const program = programId
-    ? candidates.find((item) => getBackendProgramId(item) === programId) || null
-    : null;
-  return { programId, scholarshipId: scholarshipId ?? null, universityId: fromRoute ? positiveInteger(routeState.universityId) : null, program };
+  const fromRoute = routeState && typeof routeState === 'object' && 'scholarshipId' in routeState;
+  const candidates = [activeOpportunity, ...selectedOpportunities].filter(isScholarship);
+  const selected = fromRoute
+    ? routeState.scholarshipId
+    : candidates[0]?.id;
+  const scholarshipId = parseScholarshipId(selected) ?? (
+    Number.isInteger(Number(selected)) && Number(selected) > 0 ? Number(selected) : null
+  );
+  return { scholarshipId };
 }

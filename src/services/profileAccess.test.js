@@ -19,6 +19,7 @@ let Sidebar;
 let AuthProvider;
 let wizard;
 let profileApi;
+let profileExtraction;
 let storage;
 let profileModel;
 let ProfileSetupChoice;
@@ -77,6 +78,7 @@ before(async () => {
   ({ default: Sidebar } = await vite.ssrLoadModule('/src/components/layout/Sidebar.jsx'));
   wizard = await vite.ssrLoadModule('/src/components/ui/form-2.tsx');
   profileApi = await vite.ssrLoadModule('/src/services/profileApi.js');
+  profileExtraction = await vite.ssrLoadModule('/src/services/profileExtraction.js');
   storage = await vite.ssrLoadModule('/src/services/userStorage.js');
   profileModel = await vite.ssrLoadModule('/src/data/profileModel.ts');
   ({ default: ProfileSetupChoice } = await vite.ssrLoadModule('/src/pages/ProfileSetupChoice.jsx'));
@@ -164,12 +166,13 @@ test('the sidebar stays locked until the status is known', () => {
 
 test('a finished profile gets the whole sidebar back', () => {
   const html = sidebar(DONE);
-  for (const shown of ['Dashboard', 'Explore', 'Compare', 'Settings', 'Log out']) assert.match(html, new RegExp(shown));
+  for (const shown of ['Dashboard', 'Scholarships', 'Compare', 'Settings', 'Log out']) assert.match(html, new RegExp(shown));
+  assert.doesNotMatch(html, /href="\/universities|href="\/programs/);
   assert.doesNotMatch(html, /Complete profile/);
 });
 
 test('a stored profile row is not treated as finished', () => {
-  const mapped = profileApi.mapBackendToFrontendProfile({ id: 1, user_id: 2, degree_level: "Bachelor's", cgpa: 3.1 }, { name: 'Student' }, {});
+  const mapped = profileApi.mapBackendToFrontendProfile({ id: 1, user_id: 2, degree_level: "Bachelor's", cgpa: 3.1 }, { name: 'Student' });
   assert.equal(mapped.profileComplete, false);
   assert.equal(mapped.profileStatus, 'draft');
   assert.equal('profileCompletionPercentage' in mapped, false);
@@ -177,9 +180,9 @@ test('a stored profile row is not treated as finished', () => {
 
 test('the graduation date survives a round trip through the API', () => {
   const backend = { academic_status: 'studying', graduation_date: '2027-06', field_of_study: 'CS', degree_level: "Bachelor's" };
-  assert.equal(profileApi.mapBackendToFrontendProfile(backend, {}, {}).academicBackground.expectedGraduationDate, '2027-06');
+  assert.equal(profileApi.mapBackendToFrontendProfile(backend).academicBackground.expectedGraduationDate, '2027-06');
   const graduated = { ...backend, academic_status: 'graduated' };
-  assert.equal(profileApi.mapBackendToFrontendProfile(graduated, {}, {}).academicBackground.graduationDate, '2027-06');
+  assert.equal(profileApi.mapBackendToFrontendProfile(graduated).academicBackground.graduationDate, '2027-06');
 });
 
 test('a custom grading scale reaches the API without clamping the grade', () => {
@@ -254,11 +257,23 @@ test('setup explains what is missing to a returning student, not to a new one', 
   assert.doesNotMatch(choice({ completion: READY, hasBackendProfile: false }), /Please complete/);
 });
 
-const done = (location) => renderToString(withCompletion(DONE, h(StaticRouter, { location }, h(ProfileCompleted))));
+const done = (location, completion = DONE) => renderToString(withCompletion(completion, h(StaticRouter, { location }, h(ProfileCompleted))));
 
 test('the completion confirmation shows once, and never by direct URL', () => {
   assert.match(done({ pathname: '/profile-setup/complete', state: { justCompleted: true } }), /Your profile is complete/);
   assert.doesNotMatch(done('/profile-setup/complete'), /Your profile is complete/);
+});
+
+test('completion waits for profile verification instead of redirecting while status loads', () => {
+  const pending = { ...READY, status: 'loading', complete: false };
+  assert.match(done({ pathname: '/profile-setup/complete', state: { justCompleted: true } }, pending), /Verifying your completed profile/);
+});
+
+test('completion reports verification failures with a retry action', () => {
+  const failed = { ...READY, status: 'error' };
+  const html = done({ pathname: '/profile-setup/complete', state: { justCompleted: true } }, failed);
+  assert.match(html, /We couldn’t verify your profile/);
+  assert.match(html, /Try again/);
 });
 
 test('the editor saves straight away, with no draft or onboarding wording', () => {
@@ -291,11 +306,118 @@ test('a save confirmation appears only after a save', () => {
 });
 
 test('edits to preferred fields reach the API after a reload', () => {
-  const loaded = profileApi.mapBackendToFrontendProfile({ field_of_study: 'Data Science, Marine Biology', degree_level: "Bachelor's" }, {}, {});
+  const loaded = profileApi.mapBackendToFrontendProfile({
+    field_of_study: 'Computer Science',
+    preferred_fields: ['Data Science', 'Marine Biology'],
+    degree_level: "Bachelor's",
+  }, {}, {});
   assert.deepEqual(loaded.studyPreferences.fields, ['Data Science', 'Marine Biology']);
-  assert.equal(loaded.academicBackground.major, 'Data Science, Marine Biology');
+  assert.equal(loaded.academicBackground.major, 'Computer Science');
   loaded.studyPreferences.fields = ['Cybersecurity'];
-  assert.equal(profileApi.mapFrontendToBackendProfile(loaded).field_of_study, 'Cybersecurity');
+  const payload = profileApi.mapFrontendToBackendProfile(loaded);
+  assert.equal(payload.field_of_study, 'Computer Science');
+  assert.deepEqual(payload.preferred_fields, ['Cybersecurity']);
+});
+
+test('profile mapping round-trips language, preferences, and separate currency budgets', () => {
+  const values = validProfile();
+  values.academicBackground.major = 'Computer Science';
+  values.studyPreferences.fields = ['Data Science'];
+  values.studyPreferences.intendedDegree = "Master's";
+  values.studyPreferences.fundingPreferences = ['Tuition waivers'];
+  values.studyPreferences.maxTuitionBudget = '1250';
+  values.studyPreferences.maxLivingCostBudget = '700';
+  values.studyPreferences.currency = 'EUR';
+  Object.assign(values.englishProficiency, {
+    testType: 'TOEFL iBT',
+    overallScore: '105',
+    listening: '28',
+    reading: '27',
+    writing: '25',
+    speaking: '26',
+    testDate: '2024-06-15',
+    testStatus: 'Completed',
+  });
+
+  const payload = profileApi.mapFrontendToBackendProfile(values);
+  assert.equal(payload.field_of_study, 'Computer Science');
+  assert.deepEqual(payload.preferred_fields, ['Data Science']);
+  assert.deepEqual(payload.preferred_degree_levels, ["Master's"]);
+  assert.deepEqual(payload.preferred_funding_types, ['Tuition waivers']);
+  assert.equal(payload.tuition_budget_amount, 1250);
+  assert.equal(payload.tuition_budget_currency, 'EUR');
+  assert.equal(payload.living_budget_amount, 700);
+  assert.equal(payload.living_budget_currency, 'EUR');
+  assert.equal(payload.budget_usd, null);
+  assert.deepEqual(payload.language_test, {
+    test_type: 'TOEFL iBT',
+    other_test_name: null,
+    overall_score: 105,
+    listening: 28,
+    reading: 27,
+    writing: 25,
+    speaking: 26,
+    test_date: '2024-06-15',
+    test_status: 'Completed',
+    willing_to_test: 'Yes',
+    medium_of_instruction: null,
+  });
+
+  const loaded = profileApi.mapBackendToFrontendProfile(payload);
+  assert.equal(loaded.academicBackground.major, 'Computer Science');
+  assert.deepEqual(loaded.studyPreferences.fields, ['Data Science']);
+  assert.equal(loaded.studyPreferences.currency, 'EUR');
+  assert.equal(loaded.studyPreferences.maxTuitionBudget, '1250');
+  assert.equal(loaded.studyPreferences.maxLivingCostBudget, '700');
+  assert.equal(loaded.englishProficiency.listening, '28');
+  assert.equal(loaded.englishProficiency.testDate, '2024-06-15');
+});
+
+test('a non-USD budget is never copied into the legacy USD field', () => {
+  const values = validProfile();
+  values.studyPreferences.currency = 'GBP';
+  values.studyPreferences.maxTuitionBudget = '0';
+  const payload = profileApi.mapFrontendToBackendProfile(values);
+  assert.equal(payload.tuition_budget_amount, 0);
+  assert.equal(payload.tuition_budget_currency, 'GBP');
+  assert.equal(payload.budget_usd, null);
+});
+
+test('invalid numeric profile values are reported instead of silently dropped', () => {
+  const values = validProfile();
+  values.academicBackground.cgpa = 'not-a-number';
+  assert.throws(() => profileApi.mapFrontendToBackendProfile(values), /CGPA must be a valid non-negative number/);
+});
+
+test('profile update API failures retain the backend validation message', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 422,
+    json: async () => ({ detail: [{ msg: 'CGPA scale is required' }] }),
+  });
+  try {
+    await assert.rejects(profileApi.updateProfileApi('token', {}), /CGPA scale is required/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('profile update API replaces the generic server error with actionable guidance', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ detail: 'Something went wrong on our side. Please try again.' }),
+  });
+  try {
+    await assert.rejects(
+      profileApi.updateProfileApi('token', {}),
+      /Your profile changes could not be saved\. Your information is still available in this form/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('an optional field can be cleared by an edit', () => {
@@ -308,9 +430,24 @@ test('an optional field can be cleared by an edit', () => {
 });
 
 test('a reload keeps the degree title apart from the degree level', () => {
-  const cached = validProfile();
-  const loaded = profileApi.mapBackendToFrontendProfile({ degree_level: "Bachelor's" }, {}, cached);
+  const savedDetails = validProfile();
+  const loaded = profileApi.mapBackendToFrontendProfile({
+    degree_level: "Bachelor's",
+    form_details: { academicBackground: savedDetails.academicBackground },
+  });
   assert.equal(loaded.academicBackground.degreeTitle, 'BS Computer Science');
+});
+
+test('scholarship profile validation does not require programme-selection preferences', () => {
+  const values = validProfile();
+  values.studyPreferences.intake = '';
+  values.studyPreferences.admissionYear = '';
+  values.studyPreferences.programPreference = '';
+  values.studyPreferences.languageOfInstruction = '';
+  const errors = wizard.validateStep(2, values);
+  for (const field of ['intake', 'admissionYear', 'programPreference', 'languageOfInstruction']) {
+    assert.equal(errors[field], undefined);
+  }
 });
 
 test('a study field can be typed, without duplicating a listed one', () => {
@@ -333,8 +470,36 @@ test('a completed English test needs its type and score, and no test does not', 
   assert.deepEqual(wizard.validateStep(3, values), {});
 });
 
+test('profile validation accepts zero CGPA and rejects invalid currency and test scores', () => {
+  const values = validProfile();
+  values.academicBackground.cgpa = '0';
+  assert.equal(wizard.validateStep(1, values).cgpa, undefined);
+  values.studyPreferences.currency = 'US';
+  assert.match(wizard.validateStep(3, values).currency, /3-letter currency code/);
+  values.studyPreferences.currency = 'USD';
+  values.englishProficiency.testType = 'IELTS';
+  values.englishProficiency.overallScore = '10';
+  assert.match(wizard.validateStep(3, values).overallScore, /cannot exceed 9/);
+});
+
 test('CV details need the student to confirm them on the review step', () => {
   const props = { initialStep: 4, initialValues: validProfile() };
   assert.match(renderToString(h(wizard.default, { ...props, requiresReviewConfirmation: true })), /I have checked the details taken from my CV/);
   assert.doesNotMatch(renderToString(h(wizard.default, props)), /I have checked the details/);
+  assert.match(renderToString(h(wizard.default, { ...props, requiresReviewConfirmation: true, extractionSource: 'local-parser' })), /extracted locally in your browser/);
+  assert.match(renderToString(h(wizard.default, { ...props, requiresReviewConfirmation: true, extractionSource: 'api' })), /configured external CV extraction service/);
+});
+
+test('CV extraction merges found values into a review draft without erasing existing profile data', () => {
+  const existing = validProfile();
+  const extracted = profileModel.mergeProfile({
+    personalInfo: { fullName: 'CV Name' },
+    academicBackground: { technicalSkills: 'Python' },
+  });
+  const merged = profileExtraction.mergeExtractedProfile(existing, extracted);
+  assert.equal(merged.personalInfo.fullName, 'CV Name');
+  assert.equal(merged.personalInfo.email, 'student@example.com');
+  assert.equal(merged.academicBackground.cgpa, '3.4');
+  assert.equal(merged.academicBackground.technicalSkills, 'Python');
+  assert.deepEqual(merged.studyPreferences.countries, ['Germany']);
 });

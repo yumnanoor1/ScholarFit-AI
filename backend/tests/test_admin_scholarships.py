@@ -5,7 +5,10 @@ Run from the backend folder:  python -m unittest discover -s tests -v
 import unittest
 import urllib.error
 from datetime import date, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -24,10 +27,9 @@ from app.routers import saved_scholarships as saved_api
 from app.routers import scholarships as api
 from app.routers.auth import get_optional_user
 from app.schemas.admin import AdminDetail, ArchiveWrite, DuplicateWrite, FlagWrite, VerificationWrite
-from app.schemas.matching import ScholarshipProgramLinkWrite
 from app.schemas.opportunity import ScholarshipCreate, ScholarshipUpdate
 from app.services.scholarship_eligibility import evaluate_scholarship
-from app.services.scholarship_quality import duplicate_pairs, find_conflicts, find_issues
+from app.services.scholarship_quality import duplicate_pairs, find_conflicts, find_issues, update_record
 from app.services.scholarship_search import search_scholarships
 from app.services.source_check import check_url
 from test_scholarship_eligibility import make_profile, make_scholarship
@@ -109,6 +111,7 @@ class CreateTests(Base_):
     def test_new_records_are_never_verified(self):
         row = self.create()
         self.assertEqual(row["verification_status"], "unverified")
+        self.assertEqual(row["record_version"], 1)
 
     def test_a_body_cant_verify(self):
         self.assertEqual(self.create(verification_status="verified", verification_basis="official_source")["verification_status"], "unverified")
@@ -182,8 +185,31 @@ class UpdateTests(Base_):
 
     def test_stale_form_is_refused(self):
         self.edit(provider="First", expected_version=1)
+        self.assertEqual(self.record.record_version, 2)
         self.assert_refused(409, lambda: self.edit(provider="Second", expected_version=1))
         self.assertEqual(self.record.provider, "First")
+
+    def test_two_loaded_forms_cannot_overwrite_each_other(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        engine = create_engine(f"sqlite:///{Path(directory.name) / 'versions.db'}")
+        self.addCleanup(engine.dispose)
+        Base.metadata.create_all(bind=engine)
+        sessions = sessionmaker(bind=engine)
+        first, second = sessions(), sessions()
+        self.addCleanup(second.close)
+        self.addCleanup(first.close)
+        record = Scholarship(name="Concurrent Award", country="Germany", record_version=1)
+        first.add(record)
+        first.commit()
+        stale_record = second.get(Scholarship, record.id)
+        current_record = first.get(Scholarship, record.id)
+
+        update_record(first, current_record, ScholarshipUpdate(provider="First", expected_version=1), self.admin)
+        with self.assertRaises(HTTPException) as error:
+            update_record(second, stale_record, ScholarshipUpdate(provider="Second", expected_version=1), self.admin)
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(first.get(Scholarship, record.id).provider, "First")
 
     def test_unsent_fields_are_kept(self):
         self.edit(provider="New")
@@ -229,17 +255,27 @@ class VerificationTests(Base_):
         return admin_api.set_verification(verification(**overrides), scholarship_id=self.record.id, db=self.db, admin=self.admin)
 
     def test_verify(self):
+        version = self.record.record_version
         self.verify()
         self.assertEqual((self.record.verification_status, self.record.verification_basis), ("verified", "official_source"))
         self.assertEqual(self.record.last_verified_date, date(2026, 10, 1))
         self.assertEqual(self.record.last_verified, "2026-10-01")
+        self.assertEqual(self.record.record_version, version + 1)
+
+    def test_repeating_the_same_verification_does_not_increment(self):
+        self.verify()
+        version = self.record.record_version
+        audit_count = self.db.query(ScholarshipAuditLog).count()
+        self.verify()
+        self.assertEqual(self.record.record_version, version)
+        self.assertEqual(self.db.query(ScholarshipAuditLog).count(), audit_count)
 
     def test_a_url_alone_doesnt_verify(self):
         self.assert_refused(422, lambda: self.verify(evidence_reviewed=False))
         self.assertEqual(self.record.verification_status, "unverified")
 
     def test_secondary_source_cant_verify(self):
-        for basis in ("secondary_only", "not_verified"):
+        for basis in ("mixed_sources", "secondary_only", "not_verified"):
             self.assert_refused(422, lambda b=basis: self.verify(basis=b))
 
     def test_needs_source_and_date(self):
@@ -276,36 +312,32 @@ class VerificationTests(Base_):
         self.verify()
         self.assertEqual(link.verification_status, "unverified")
         self.assertEqual(link.outcome, "potential")
+        detail = self.detail()
+        self.assertNotIn("relationships", detail)
+        self.assertEqual(detail["references"]["internal_links"], 1)
 
     def test_flags(self):
         call = lambda **body: admin_api.set_flag(FlagWrite(**body), scholarship_id=self.record.id, db=self.db, admin=self.admin)  # noqa: E731
+        original_version = self.record.record_version
         call(flag="outdated_source", active=True)
+        self.assertEqual(self.record.record_version, original_version + 1)
         self.assertIn("outdated_source", self.record.data_flags)
         self.assertEqual(self.record.verification_status, "unverified")
         self.assertIn("outdated_source", [item["code"] for item in find_issues(self.record)])
+        version = self.record.record_version
+        audit_count = self.db.query(ScholarshipAuditLog).count()
+        call(flag="outdated_source", active=True)
+        self.assertEqual(self.record.record_version, version)
+        self.assertEqual(self.db.query(ScholarshipAuditLog).count(), audit_count)
         call(flag="outdated_source", active=False)
         self.assertEqual(self.record.data_flags, [])
+        self.assertEqual(self.record.record_version, version + 1)
 
-
-class RelationshipTests(Base_):
-    def put(self, **fields):
-        body = {**dict(outcome="potential", relationship_type="unconfirmed"), **fields}
-        return api.set_scholarship_program_link(ScholarshipProgramLinkWrite(**body), scholarship_id=self.record.id, program_id=self.program.id, db=self.db, admin=self.admin)
-
-    def test_add_change_remove(self):
-        self.put(evidence="The record fits.")
-        self.assertEqual(self.detail()["relationships"][0]["outcome"], "potential")
-        self.put(outcome="confirmed", relationship_type="named_program", evidence="The official page names it.", source_url=GOOD_INFO,
-                 verification_status="verified", last_verified=date(2026, 10, 1))
-        self.assertEqual(self.detail()["relationships"][0]["outcome"], "confirmed")
-        api.delete_scholarship_program_link(self.record.id, self.program.id, db=self.db, admin=self.admin)
-        self.assertEqual(self.db.query(ScholarshipProgramLink).count(), 0)
-        actions = [item.action for item in self.db.query(ScholarshipAuditLog)]
-        self.assertEqual(actions, ["relationship", "relationship", "relationship_removed"])
-
-    def test_confirmed_needs_evidence(self):
-        with self.assertRaises(ValidationError):
-            self.put(outcome="confirmed", relationship_type="named_program")
+    def test_source_checks_do_not_advance_the_content_version(self):
+        version = self.record.record_version
+        with patch("app.routers.admin_scholarships.check_url", return_value={"status": "ok"}):
+            admin_api.check_sources(self.record.id, db=self.db, admin=self.admin)
+        self.assertEqual(self.record.record_version, version)
 
 
 class DuplicateTests(Base_):
@@ -340,6 +372,15 @@ class DuplicateTests(Base_):
         self.mark(self.record.id)
         self.assertIsNotNone(self.db.get(Scholarship, self.copy.id))
         self.assertEqual(self.copy.stipend_amount, 2000.0)
+
+    def test_duplicate_change_versions_once_and_repeating_it_is_a_noop(self):
+        original_version = self.copy.record_version
+        self.mark(self.record.id)
+        self.assertEqual(self.copy.record_version, original_version + 1)
+        audit_count = self.db.query(ScholarshipAuditLog).count()
+        self.mark(self.record.id)
+        self.assertEqual(self.copy.record_version, original_version + 1)
+        self.assertEqual(self.db.query(ScholarshipAuditLog).count(), audit_count)
 
     def test_bad_targets(self):
         self.assert_refused(422, lambda: self.mark(self.copy.id))
@@ -393,6 +434,8 @@ class QualityTests(Base_):
         self.assertEqual(result["sources_checked"], 0)
 
     def test_list_filters(self):
+        self.other.last_verified_date = None
+        self.db.commit()
         self.assertEqual(admin_api.list_records(q="beta", verification=None, issue=None, archived=False, skip=0, limit=25, db=self.db)["total"], 1)
         self.assertEqual(admin_api.list_records(q=None, verification="unverified", issue=None, archived=False, skip=0, limit=25, db=self.db)["total"], 0)
         self.assertEqual(admin_api.list_records(q=None, verification=None, issue="never_verified", archived=False, skip=0, limit=25, db=self.db)["items"][0]["name"], "Beta Award")
@@ -454,10 +497,9 @@ class ArchiveAndDeleteTests(Base_):
         self.archive()
         self.assertNotIn("Alpha Award", self.listed())
         self.assertNotIn("Alpha Award", [r["scholarship_name"] for r in eligibility_api.check_all_scholarships(eligible_only=False, include_unverified=True, db=self.db, current_user=self.student)])
-        names = recommendations_api.scholarship_recommendations(program_id=None, include_unverified=True, db=self.db, current_user=self.student)
+        names = recommendations_api.scholarship_recommendations(include_unverified=True, db=self.db, current_user=self.student)
         self.assertNotIn("Alpha Award", [r["scholarship_name"] for r in names["recommendations"] + names["excluded"]])
         self.assertNotIn("Alpha Award", [i["scholarship"].name for i in search_scholarships(self.db, {}, None, False)["items"]])
-        self.assertEqual(api.program_coverage(include_unverified=True, db=self.db)[0]["scholarship_id"], self.other.id)
 
     def test_archive_keeps_references(self):
         self.save()
@@ -471,8 +513,11 @@ class ArchiveAndDeleteTests(Base_):
         self.assertEqual(api.get_scholarship(self.record.id, db=self.db).name, "Alpha Award")
 
     def test_restore(self):
+        original_version = self.record.record_version
         self.archive()
+        self.assertEqual(self.record.record_version, original_version + 1)
         admin_api.restore(scholarship_id=self.record.id, db=self.db, admin=self.admin)
+        self.assertEqual(self.record.record_version, original_version + 2)
         self.assertIn("Alpha Award", self.listed())
         self.assertEqual([item.action for item in self.db.query(ScholarshipAuditLog)], ["archived", "restored"])
 

@@ -716,6 +716,19 @@ p {
   padding-top: 28px;
 }
 
+.saved-opportunity-empty-state {
+  display: flex;
+  flex: 1;
+  min-height: clamp(300px, 45vh, 560px);
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.saved-opportunity-empty-state > .glow-card {
+  width: 100%;
+}
+
 .saved-opportunities-header {
   margin-bottom: 24px;
 }
@@ -789,24 +802,15 @@ p {
   background: #e7eef4;
 }
 
-.saved-opportunity-image-wrap img,
-.saved-opportunity-image-fallback {
+.saved-opportunity-image-wrap > img {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
 
-.saved-opportunity-image-wrap img {
+.saved-opportunity-image-wrap > img {
   object-fit: cover;
-}
-
-.saved-opportunity-image-fallback {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #dce8f0, #edf2f5);
-  color: #52718b;
 }
 
 .saved-opportunity-tags {
@@ -4222,6 +4226,16 @@ p {
   min-width: 0;
 }
 
+.app-container:has(.profile-gate-error) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.profile-gate-error {
+  text-align: center;
+}
+
 .app-container .page-container,
 .app-container .page-container.scholarship-page,
 .app-container .dashboard-page,
@@ -4237,6 +4251,17 @@ p {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+.app-container:has(.saved-opportunities-page) {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-container .saved-opportunities-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
 }
 
 .app-container .page-tabs,

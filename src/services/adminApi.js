@@ -47,8 +47,4 @@ export const adminApi = {
   duplicates: (token) => request(token, `${RECORDS}/duplicates`),
   compare: (token, first, second) => request(token, `${RECORDS}/duplicates/compare?first=${first}&second=${second}`),
   markDuplicate: (token, id, body) => request(token, `${RECORDS}/${id}/duplicate`, 'POST', body),
-  saveLink: (token, id, programId, body) => request(token, `/scholarships/${id}/programs/${programId}`, 'PUT', body),
-  removeLink: (token, id, programId) => request(token, `/scholarships/${id}/programs/${programId}`, 'DELETE'),
-  programs: (token) => request(token, '/programs/?limit=100'),
-  universities: (token) => request(token, '/universities/?limit=100'),
 };

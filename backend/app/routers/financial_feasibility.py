@@ -1,32 +1,38 @@
-from typing import List, Optional
+from datetime import date
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.opportunity import Program, Scholarship
+from app.models.opportunity import Program, Scholarship, ScholarshipProgramLink
 from app.models.user import StudentFinancialPlan, StudentProfile, User
 from app.core.permissions import require_complete_profile
 from app.schemas.financial import (
     BudgetUpdate,
-    CompareRequest,
     ExpenseInputs,
-    FeasibilityRequest,
     FinancialPlanResponse,
     FeasibilityResult,
     MoneyInput,
+    ScholarshipFeasibilityRequest,
 )
-from app.services.exchange_rates import EUR_RATES
+from app.services.exchange_rates import EUR_RATES, convert, rates_info
 from app.services.financial_feasibility import calculate_feasibility
 from app.services.scholarship_matching import match_for_financial
+from app.services.source_verification import scholarship_source_issue, source_freshness_issue
 
 router = APIRouter(prefix="/financial-feasibility", tags=["Financial Feasibility"])
 
 
-def _profile_budget(db: Session, user: User) -> Optional[float]:
-    # The budget always comes from the signed-in student's own profile
+def _profile_budget(db: Session, user: User) -> Optional[MoneyInput]:
     profile = db.query(StudentProfile).filter(StudentProfile.user_id == user.id).first()
-    return profile.budget_usd if profile else None
+    if not profile:
+        return None
+    if profile.budget_usd is not None:
+        return MoneyInput(amount=profile.budget_usd, currency="USD")
+    # Tuition and living budgets are spending limits, not the total funds available
+    # for the complete study period.
+    return None
 
 
 def _get_plan(db: Session, user: User) -> Optional[StudentFinancialPlan]:
@@ -51,38 +57,130 @@ def _plan_response(plan: Optional[StudentFinancialPlan]) -> dict:
     }
 
 
-def _load(db: Session, program_id: int, scholarship_id: Optional[int]):
-    program = db.query(Program).filter(Program.id == program_id).first()
-    if not program:
-        raise HTTPException(status_code=404, detail="Program not found")
-    scholarship = None
-    if scholarship_id is not None:
-        scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-        if not scholarship:
-            raise HTTPException(status_code=404, detail="Scholarship not found")
-    return program, scholarship
-
-
-def _run(db: Session, user: User, request: FeasibilityRequest) -> dict:
-    program, scholarship = _load(db, request.program_id, request.scholarship_id)
-    plan = _get_plan(db, user)
-    saved_budget = None
+def _budget(db: Session, user: User, plan: Optional[StudentFinancialPlan], request_budget=None):
+    if request_budget is not None:
+        return request_budget, "request"
     if plan and plan.budget_amount is not None:
-        saved_budget = MoneyInput(amount=plan.budget_amount, currency=plan.budget_currency)
+        return MoneyInput(amount=plan.budget_amount, currency=plan.budget_currency), "saved"
+    profile_budget = _profile_budget(db, user)
+    return (profile_budget, "profile") if profile_budget else (None, "not_provided")
+
+
+def _confirmed_cost_programs(db: Session, scholarship: Scholarship, today: date):
+    links = (
+        db.query(ScholarshipProgramLink)
+        .filter(
+            ScholarshipProgramLink.scholarship_id == scholarship.id,
+            ScholarshipProgramLink.outcome == "confirmed",
+            ScholarshipProgramLink.verification_status == "verified",
+        )
+        .order_by(ScholarshipProgramLink.program_id)
+        .all()
+    )
+    programs = []
+    for link in links:
+        if not link.evidence or not link.source_url or not link.last_verified:
+            continue
+        if source_freshness_issue(link.source_url, link.last_verified, today):
+            continue
+        program = db.query(Program).filter(Program.id == link.program_id).first()
+        if not program:
+            continue
+        match = match_for_financial(db, scholarship, program)
+        if match and match["outcome"] == "confirmed":
+            programs.append((program, match))
+    return programs
+
+
+def _unresolved_result(scholarship, currency, budget, budget_source, explanation):
+    issue = scholarship_source_issue(scholarship)
+    budget_amount = convert(budget.amount, budget.currency, currency) if budget else None
+    missing = [explanation]
+    if budget and budget_amount is None:
+        missing.append(f"No configured exchange rate is available from {budget.currency} to {currency}.")
+    if issue:
+        missing.append(f"Scholarship source needs verification: {issue}")
+    return {
+        "status": "insufficient_data",
+        "currency": currency,
+        "program": None,
+        "scholarship": {
+            "id": scholarship.id,
+            "name": scholarship.name,
+            "funding_type": scholarship.funding_type,
+            "verification_status": scholarship.verification_status,
+            "verification_issue": issue,
+            "last_verified": scholarship.last_verified_date.isoformat() if scholarship.last_verified_date else None,
+            "source_url": scholarship.official_info_url,
+            "applicable": False,
+            "counted": False,
+            "match_outcome": "needs_verification",
+            "match_label": "Needs Verification",
+            "match_explanation": explanation,
+        },
+        "duration_months": None,
+        "costs": [],
+        "tuition_cost": None,
+        "living_cost": None,
+        "other_costs": 0.0,
+        "total_estimated_cost": None,
+        "funding": [],
+        "confirmed_funding": 0.0,
+        "potential_funding": 0.0,
+        "scholarship_coverage": {"tuition": 0.0, "living": 0.0, "combined_package": 0.0, "other": 0.0, "total": 0.0},
+        "remaining_cost": None,
+        "budget": {
+            "amount": budget_amount,
+            "original_amount": budget.amount if budget else None,
+            "original_currency": budget.currency if budget else None,
+            "source": budget_source,
+        },
+        "funding_gap": None,
+        "surplus": None,
+        "coverage_percent": None,
+        "exchange_rates": {**rates_info(), "used": bool(budget and budget.currency != currency and budget_amount is not None)},
+        "explanation": ["Affordability cannot be determined from the available scholarship-linked cost data."],
+        "missing_data": missing,
+        "uncertainties": [],
+    }
+
+
+def _run(db: Session, user: User, request: ScholarshipFeasibilityRequest) -> dict:
+    scholarship = db.query(Scholarship).filter(Scholarship.id == request.scholarship_id).first()
+    if not scholarship:
+        raise HTTPException(status_code=404, detail="Scholarship not found")
+    plan = _get_plan(db, user)
+    saved_budget, budget_source = _budget(db, user, plan, request.budget)
+    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user.id).first()
+    currency = request.currency or (saved_budget.currency if saved_budget else "USD")
+    today = date.today()
+    cost_programs = _confirmed_cost_programs(db, scholarship, today)
+    if len(cost_programs) != 1:
+        explanation = (
+            "More than one current, confirmed cost record is linked to this scholarship; a single affordability result would be ambiguous."
+            if cost_programs else
+            "No unique current, confirmed scholarship-linked cost record is available."
+        )
+        return _unresolved_result(scholarship, currency, saved_budget, budget_source, explanation)
+
+    program, match = cost_programs[0]
     expenses = request.expenses
     if expenses is None and plan:
-        saved = (plan.expenses or {}).get(str(program.id))
+        saved = (plan.expenses or {}).get(f"scholarship:{scholarship.id}") or (plan.expenses or {}).get(str(program.id))
         expenses = ExpenseInputs.model_validate(saved) if saved else None
-    return calculate_feasibility(
+    result = calculate_feasibility(
         program,
         scholarship=scholarship,
-        match=match_for_financial(db, scholarship, program) if scholarship else None,
+        match=match,
         budget=request.budget,
-        saved_budget=saved_budget,
-        profile_budget_usd=_profile_budget(db, user),
-        currency=request.currency,
+        saved_budget=saved_budget if budget_source == "saved" else None,
+        profile_budget=profile.budget_usd if profile else None,
+        currency=currency,
         expenses=expenses,
+        today=today,
     )
+    result["program"] = None
+    return result
 
 
 @router.get("/plan", response_model=FinancialPlanResponse)
@@ -111,18 +209,18 @@ def save_budget(
     return _plan_response(plan)
 
 
-@router.put("/plan/expenses/{program_id}", response_model=FinancialPlanResponse)
+@router.put("/plan/scholarships/{scholarship_id}/expenses", response_model=FinancialPlanResponse)
 def save_expenses(
-    program_id: int,
+    scholarship_id: int,
     data: ExpenseInputs,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_complete_profile),
 ):
-    """Save the signed-in student's own expense estimates for one program."""
-    _load(db, program_id, None)
+    """Save the signed-in student's cost inputs for one scholarship affordability check."""
+    if not db.query(Scholarship.id).filter(Scholarship.id == scholarship_id).first():
+        raise HTTPException(status_code=404, detail="Scholarship not found")
     plan = _get_or_create_plan(db, current_user)
-    # A new dict so SQLAlchemy sees the JSON column change
-    plan.expenses = {**(plan.expenses or {}), str(program_id): data.model_dump(exclude_none=True)}
+    plan.expenses = {**(plan.expenses or {}), f"scholarship:{scholarship_id}": data.model_dump(exclude_none=True)}
     db.commit()
     db.refresh(plan)
     return _plan_response(plan)
@@ -130,45 +228,9 @@ def save_expenses(
 
 @router.post("/calculate", response_model=FeasibilityResult)
 def calculate(
-    request: FeasibilityRequest,
+    request: ScholarshipFeasibilityRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_complete_profile),
 ):
-    """Estimate whether a program (optionally with a scholarship) fits the student's budget."""
-    return _run(db, current_user, request)
-
-
-@router.post("/compare", response_model=List[FeasibilityResult])
-def compare(
-    request: CompareRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_complete_profile),
-):
-    """Run up to six program / funding scenarios side by side."""
-    return [_run(db, current_user, scenario) for scenario in request.scenarios]
-
-
-@router.get("/{program_id}", response_model=FeasibilityResult)
-def feasibility_for_program(
-    program_id: int,
-    scholarship_id: Optional[int] = Query(None, gt=0),
-    currency: Optional[str] = Query(None, min_length=3, max_length=3),
-    budget_amount: Optional[float] = Query(None, ge=0),
-    budget_currency: Optional[str] = Query(None, min_length=3, max_length=3),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_complete_profile),
-):
-    """Feasibility from stored data only: program and scholarship records plus the student's saved plan.
-    Expenses nobody has stored are reported as missing."""
-    budget = None
-    if budget_amount is not None:
-        if not budget_currency:
-            raise HTTPException(status_code=422, detail="budget_currency is required with budget_amount")
-        budget = MoneyInput(amount=budget_amount, currency=budget_currency)
-    request = FeasibilityRequest(
-        program_id=program_id,
-        scholarship_id=scholarship_id,
-        budget=budget,
-        currency=currency.upper() if currency else None,
-    )
+    """Estimate whether a scholarship's confirmed funding fits the student's budget and linked costs."""
     return _run(db, current_user, request)

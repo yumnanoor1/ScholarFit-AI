@@ -43,6 +43,8 @@ def make_scholarship(**overrides):
     data = dict(
         id=7, name="Test Scholarship", country="Germany", provider="German Academic Exchange Service", funding_type="Fully Funded",
         verification_status="verified", last_verified="2026-09-30", official_url="https://example.org",
+        official_info_url="https://example.org", verification_basis="official_source",
+        last_verified_date=date(2026, 10, 30), source_checks=[], data_flags=[],
         tuition_coverage=None, living_stipend=None, duration="Duration of the Master's programme",
         accommodation=None, health_insurance=None, travel_airfare=None, visa_support=None, other_benefits=None,
     )
@@ -218,6 +220,12 @@ class ScholarshipTests(unittest.TestCase):
         self.assertEqual(result["confirmed_funding"], 0)
         self.assertFalse(result["scholarship"]["counted"])
 
+    def test_verified_status_without_current_official_evidence_is_not_counted(self):
+        result = self.run_with(verification_basis="provider_submitted", tuition_coverage="Full tuition fee waiver")
+        self.assertEqual(result["confirmed_funding"], 0)
+        self.assertFalse(result["scholarship"]["counted"])
+        self.assertIn("official source", result["scholarship"]["verification_issue"])
+
     def test_scholarship_for_other_country_not_counted(self):
         result = self.run_with(country="Netherlands", tuition_coverage="Full tuition fee waiver")
         self.assertEqual(result["confirmed_funding"], 0)
@@ -313,8 +321,11 @@ class ApiTests(unittest.TestCase):
         self.db.add(uni)
         self.db.flush()
         self.program = Program(university_id=uni.id, name="MSc Test", duration_months=24,
-                               tuition_amount=10000, tuition_currency="EUR")
+                               tuition_amount=10000, tuition_currency="EUR",
+                               source_url="https://example.edu/program", last_verified=date(2026, 10, 30))
         self.scholarship = Scholarship(country="Germany", name="Test Scholarship", verification_status="verified",
+                                       official_info_url="https://example.org", verification_basis="official_source",
+                                       last_verified_date=date(2026, 10, 30), source_checks=[], data_flags=[],
                                        tuition_coverage="Full tuition fee waiver",
                                        duration="Duration of the Master's programme")
         self.alice = User(email="alice@example.com", hashed_password="x", full_name="Alice")
@@ -355,6 +366,21 @@ class ApiTests(unittest.TestCase):
         result = api.calculate(request, db=self.db, current_user=self.alice)
         self.assertEqual(result["budget"]["source"], "profile")
         self.assertAlmostEqual(result["budget"]["amount"], 10000, places=0)
+
+    def test_profile_budget_preserves_its_saved_currency(self):
+        profile = self.db.query(StudentProfile).filter_by(user_id=self.alice.id).one()
+        profile.budget_usd = None
+        profile.tuition_budget_amount = 111310
+        profile.tuition_budget_currency = "SEK"
+        self.db.commit()
+        result = api.calculate(
+            FeasibilityRequest(program_id=self.program.id, expenses=all_expenses()),
+            db=self.db,
+            current_user=self.alice,
+        )
+        self.assertEqual(result["budget"]["source"], "not_provided")
+        self.assertIsNone(result["budget"]["amount"])
+        self.assertTrue(any("total study budget" in item for item in result["missing_data"]))
 
     def test_get_endpoint_reports_missing_living_costs(self):
         result = api.feasibility_for_program(self.program.id, scholarship_id=None, currency=None,
@@ -408,6 +434,23 @@ class ProgramCostTests(unittest.TestCase):
         program = make_program(costs=[self.cost(is_estimate=True)])
         result = calculate_feasibility(program, budget=eur(100000), expenses=all_expenses(living_costs=None))
         self.assertTrue(any("estimate published by the source" in note for note in result["uncertainties"]))
+
+    def test_stale_tuition_source_prevents_definitive_result(self):
+        result = calculate_feasibility(
+            make_program(last_verified=date(2025, 1, 1)), budget=eur(100000), expenses=all_expenses(),
+            today=date(2026, 11, 2),
+        )
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertTrue(any("tuition source needs verification" in item for item in result["missing_data"]))
+
+    def test_stale_living_cost_source_prevents_definitive_result(self):
+        program = make_program(costs=[self.cost(last_verified=date(2025, 1, 1))])
+        result = calculate_feasibility(
+            program, budget=eur(100000), expenses=all_expenses(living_costs=None), today=date(2026, 11, 2)
+        )
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertTrue(any("Living costs" in item and "source needs verification" in item
+                            for item in result["missing_data"]))
 
     def test_cost_in_currency_without_rate_is_not_zero(self):
         program = make_program(costs=[self.cost(currency="GBP")])
@@ -483,6 +526,18 @@ class ExchangeRateTests(unittest.TestCase):
                                        today=date(2027, 3, 1))
         self.assertTrue(result["exchange_rates"]["stale"])
         self.assertTrue(any("Exchange rates are from" in note for note in result["uncertainties"]))
+        self.assertEqual(result["status"], "insufficient_data")
+
+    def test_stale_rates_used_only_for_scholarship_benefit_block_definitive_result(self):
+        scholarship = make_scholarship(
+            living_stipend="Yes - USD 500 per month", tuition_coverage=None
+        )
+        result = calculate_feasibility(
+            make_program(), scholarship=scholarship, budget=eur(100000), expenses=all_expenses(),
+            today=date(2027, 3, 1),
+        )
+        self.assertTrue(result["exchange_rates"]["used"])
+        self.assertEqual(result["status"], "insufficient_data")
 
 
 class PlanApiTests(unittest.TestCase):

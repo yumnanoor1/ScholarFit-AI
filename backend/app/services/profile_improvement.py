@@ -1,6 +1,6 @@
 """
-Profile improvement guidance. It holds no eligibility rules of its own: every gap comes from
-check_program_eligibility or evaluate_scholarship, or from an empty field of the student's profile.
+Scholarship-focused profile guidance. Every requirement gap comes from the scholarship eligibility
+service; optional gaps are limited to empty student profile fields.
 
 Result types
   unmet                a stated requirement the profile does not meet
@@ -11,30 +11,26 @@ Result types
 Priority
   High    an unmet or missing mandatory requirement the student can act on
   Medium  an unmet requirement that can't realistically change, or a scholarship-level manual check
-  Low     checks left to university admission, and optional profile completion
+  Low     optional profile completion
 
-A gap shared by several opportunities is one recommendation listing all of them. Nothing here
-promises admission or funding.
+A gap shared by several scholarships is one recommendation listing all of them. Nothing here
+promises a scholarship.
 """
 from typing import Optional
 
-from app.services.eligibility_engine import check_program_eligibility
 from app.services.scholarship_eligibility import evaluate_scholarship
 
 CATEGORIES = [
     "Academic Improvement", "English Language Preparation", "Skills Development", "Work Experience",
     "Research and Projects", "Profile Completion", "Scholarship Eligibility",
-    "University Admission Requirements", "Documentation and Verification",
+    "Documentation and Verification",
 ]
 PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 PROFILE_ROUTE = "/profile?edit=1"
 NOT_IN_PROFILE = "Not in your profile"
-NOT_GUARANTEED = "Addressing these gaps does not guarantee admission or a scholarship."
+NOT_GUARANTEED = "Addressing these gaps does not guarantee a scholarship."
 
-PROGRAM_REQUIREMENT_LABELS = {"cgpa": "Minimum CGPA", "english": "English language", "degree_level": "Degree level"}
-# Shared gaps: program and scholarship requirement names that mean the same thing
-SHARED_KEYS = {"cgpa": "academic", "gender": "restrictions", "residency": "restrictions", "source_evidence": "restrictions",
-               "record_review": "restrictions"}
+SHARED_KEYS = {"cgpa": "academic", "gender": "restrictions", "residency": "restrictions"}
 
 
 def _value(value):
@@ -42,9 +38,12 @@ def _value(value):
 
 
 def _cgpa_text(profile):
-    if profile.cgpa is None or profile.cgpa <= 0:
+    if profile.cgpa is None:
         return NOT_IN_PROFILE
-    return f"{profile.cgpa:g}/{(profile.cgpa_scale or 4.0):g}"
+    scale = getattr(profile, "cgpa_scale", None)
+    if scale is None or scale <= 0:
+        return f"{profile.cgpa:g} (scale not recorded)"
+    return f"{profile.cgpa:g}/{scale:g}"
 
 
 def _english_text(profile):
@@ -53,6 +52,13 @@ def _english_text(profile):
         scores.append(f"IELTS {profile.ielts_score:g}")
     if profile.toefl_score is not None:
         scores.append(f"TOEFL {profile.toefl_score}")
+    language_test = getattr(profile, "language_test", None) or {}
+    if (isinstance(language_test, dict)
+            and language_test.get("test_type") not in (None, "No Test / Not Taken")
+            and language_test.get("overall_score") is not None):
+        test_name = language_test.get("other_test_name") or language_test.get("test_type")
+        if test_name and not any(score.lower().startswith(f"{test_name.lower()} ") for score in scores):
+            scores.append(f"{test_name} {language_test['overall_score']:g}")
     return ", ".join(scores) or NOT_IN_PROFILE
 
 
@@ -93,7 +99,7 @@ def _templates(profile):
             english, category="English Language Preparation", priority="High", actionability="achievable",
             title="Raise your English test score",
             gap=f"Your score ({_english_text(profile)}) is below the stated minimum.",
-            why="English minimums are usually mandatory for admission or for the award.",
+            why="The scholarship states an English minimum for applicants.",
             action="Prepare for a retake aimed at the highest minimum listed below, then update your profile with the new score.",
             route=PROFILE_ROUTE),
         ("missing_information", "academic"): dict(
@@ -111,7 +117,7 @@ def _templates(profile):
             degree, category="Profile Completion", priority="High", actionability="achievable",
             title="Add your current degree",
             gap="Your degree level is missing, so it can't be compared with the required level.",
-            why="Master's programs and scholarships depend on your completed or current degree.",
+            why="Scholarships can require a particular completed or current degree.",
             action="Add your current or completed degree to your profile.", route=PROFILE_ROUTE),
         ("unmet", "degree_level"): dict(
             degree, category="Academic Improvement", priority="High", actionability="achievable",
@@ -165,15 +171,15 @@ def _templates(profile):
             profile_information=f"Field of study: {_value(profile.field_of_study)}",
             category="Scholarship Eligibility", priority="Medium", actionability="manual_verification",
             title="Confirm your field qualifies",
-            gap="These scholarships are limited to certain fields or programmes, stated in free text.",
+            gap="These scholarships are limited to certain fields, stated in free text.",
             why="A field restriction can rule out an otherwise strong application.",
-            action="Read the eligible-field wording below and confirm your intended program qualifies.", route="/scholarships"),
+            action="Read the eligible-field wording below and confirm that your field qualifies.", route="/scholarships"),
         ("manual_verification", "academic"): dict(
             cgpa, category="Scholarship Eligibility", priority="Medium", actionability="manual_verification",
             title="Check non-numeric academic requirements",
             gap="These requirements use ranks, classes or approximate grades that can't be compared automatically.",
             why="Rules such as \"top 10% of graduates\" may still apply to you.",
-            action="Ask your university for your class rank or grade equivalence if the scholarship needs it.",
+            action="Check your transcript or ask its issuing institution for your class rank or grade equivalence if the scholarship needs it.",
             route="/scholarships"),
         ("manual_verification", "bachelors_conditions"): dict(
             degree, category="Documentation and Verification", priority="Medium", actionability="manual_verification",
@@ -209,32 +215,6 @@ def _templates(profile):
             gap="These records state conditions your profile can't confirm, such as other funding or a previous degree.",
             why="One of these conditions can rule you out even when everything else is met.",
             action="Read the wording below and confirm on the official page whether it applies to you.", route="/scholarships"),
-        ("manual_verification", "admission"): dict(
-            requirement="Requirements set by the host university",
-            profile_information=f"English: {_english_text(profile)}; CGPA: {_cgpa_text(profile)}",
-            category="University Admission Requirements", priority="Low", actionability="manual_verification",
-            title="Check the host university's requirements",
-            gap="For these scholarships, some requirements are set by the university you apply to.",
-            why="They're checked during admission, so they don't block the scholarship result here.",
-            action="Once you've chosen a host program, check its admission page.", route="/universities"),
-        ("manual_verification", "program_background"): dict(
-            requirement="Academic background and prerequisites",
-            profile_information=f"Degree: {_value(profile.degree_level)}; field: {_value(profile.field_of_study)}",
-            category="University Admission Requirements", priority="Medium", actionability="manual_verification",
-            title="Check background and prerequisite requirements",
-            gap="Each program states its required background in free text, so it can't be compared automatically.",
-            why="Missing a prerequisite subject can decide admission even if your grades and English are fine.",
-            action="Compare your transcript with the wording below. If a subject is missing, a relevant course may help; "
-                   "ask admissions whether it would be accepted.",
-            route="/universities"),
-        ("manual_verification", "no_published_minimum"): dict(
-            requirement="Published admission minimums",
-            profile_information=f"CGPA: {_cgpa_text(profile)}; English: {_english_text(profile)}",
-            category="Documentation and Verification", priority="Medium", actionability="manual_verification",
-            title="Confirm requirements on the official page",
-            gap="These programs have no structured CGPA or English minimum in FitScholars.",
-            why="No minimum on record doesn't mean there isn't one.",
-            action="Check each official program page for its current requirements.", route="/universities"),
         ("manual_verification", "unverified"): dict(
             requirement="Scholarship record", profile_information="Not evaluated",
             category="Documentation and Verification", priority="Medium", actionability="manual_verification",
@@ -242,6 +222,22 @@ def _templates(profile):
             gap="This record hasn't been checked against its official source, so no result is given.",
             why="Unverified details may be wrong or out of date.",
             action="Read the official page directly before relying on this scholarship.", route="/scholarships"),
+        ("manual_verification", "source_evidence"): dict(
+            requirement="Official source evidence", profile_information="Not evaluated",
+            category="Documentation and Verification", priority="High", actionability="manual_verification",
+            title="Verify the scholarship's current official details",
+            gap="Its source evidence is missing or out of date, so no eligibility result is given.",
+            why="Requirements and deadlines should not be relied on without current official evidence.",
+            action="Check the official scholarship page and have the record re-verified before relying on it.",
+            route="/scholarships"),
+        ("manual_verification", "record_review"): dict(
+            requirement="Scholarship record review", profile_information="Not evaluated",
+            category="Documentation and Verification", priority="High", actionability="manual_verification",
+            title="This scholarship record is under review",
+            gap="The record is being reviewed, so its eligibility details are not treated as confirmed.",
+            why="Conflicting or flagged details may affect eligibility and funding information.",
+            action="Check the official scholarship page and wait for the record review before relying on it.",
+            route="/scholarships"),
     }
 
 
@@ -259,61 +255,89 @@ def _optional_gaps(profile, has_budget, related_for_work):
                              expected_benefit=None, related=[], action_route=route))
 
     add("skills", "Technical skills", profile.skills, "Skills Development", "List your technical skills",
-        "Programs state prerequisites in free text, and a skills list makes them easier to compare.",
+        "A skills list can help prepare scholarship applications and supporting documents.",
         "Add the tools and subjects you know to your profile.")
     add("research", "Projects and research", profile.research_interests, "Research and Projects",
         "Describe your projects or research", "Useful for statements of purpose and merit-based scholarships.",
         "Add your main projects or research interests to your profile.")
-    add("institution", "University", getattr(profile, "institution", None), "Profile Completion", "Add your university",
-        "Some scholarships look at the university and record you studied at.", "Add your university to your profile.")
-    add("status", "Study status", getattr(profile, "academic_status", None), "Profile Completion",
-        "Add your study status and graduation date",
-        "It shows whether your CGPA can still change, which changes the advice you get here.",
-        "Add whether you're studying or graduated, and the date.")
+    add("institution", "Institution", getattr(profile, "institution", None), "Profile Completion", "Add your institution",
+        "Some scholarships consider the institution recorded in your education history.",
+        "Add your current or previous institution to your education history.")
+    academic_status = getattr(profile, "academic_status", None)
+    graduation_date = getattr(profile, "graduation_date", None)
+    if academic_status in (None, "") or graduation_date in (None, ""):
+        missing_fields = [
+            label for label, value in (("study status", academic_status), ("graduation date", graduation_date))
+            if value in (None, "")
+        ]
+        gaps.append(dict(
+            id="optional-status", category="Profile Completion", priority="Low", result_type="optional",
+            actionability="achievable", title="Add your study status and graduation date",
+            gap=f"{' and '.join(missing_fields).capitalize()} {'are' if len(missing_fields) > 1 else 'is'} missing from your profile.",
+            why_it_matters="It shows whether your CGPA can still change, which changes the advice you get here.",
+            suggested_action="Add whether you're studying or graduated, and your expected or actual graduation date.",
+            requirement=None,
+            profile_information=(f"Study status: {_value(academic_status)}; "
+                                 f"Graduation date: {_value(graduation_date)}"),
+            comparison="No requirement depends on this field.", expected_benefit=None, related=[],
+            action_route=PROFILE_ROUTE,
+        ))
+    preference_values = (
+        ("preferred fields", getattr(profile, "preferred_fields", None)),
+        ("target degree levels", getattr(profile, "preferred_degree_levels", None)),
+        ("preferred countries", getattr(profile, "preferred_countries", None)),
+        ("funding preference", getattr(profile, "preferred_funding_types", None)
+         or getattr(profile, "funding_preference", None)),
+    )
+    missing_preferences = [
+        label for label, value in preference_values
+        if value is None or value == "" or value == [] or value == {}
+    ]
+    if missing_preferences:
+        gaps.append(dict(
+            id="optional-preferences", category="Profile Completion", priority="Low", result_type="optional",
+            actionability="achievable", title="Set your study preferences",
+            gap=f"Not recorded: {', '.join(missing_preferences)}.",
+            why_it_matters="Study preferences help focus recommendations on the fields, countries, degree levels, and funding you want.",
+            suggested_action="Update your preferred fields, degree levels, countries, and funding in your profile.",
+            requirement=None, profile_information=f"Missing preferences: {', '.join(missing_preferences)}",
+            comparison="No eligibility requirement depends on these preferences.",
+            expected_benefit="Helps tailor opportunity recommendations to your stated goals.",
+            related=[], action_route=PROFILE_ROUTE,
+        ))
     if not related_for_work:
         add("work", "Work experience", getattr(profile, "work_experience", None), "Work Experience",
             "Add your work experience", "It helps when comparing you with experience-based criteria.",
             "Add internships, jobs or volunteering to your profile.")
     if not has_budget:
         add("budget", "Budget", None, "Profile Completion", "Add your study budget",
-            "Your budget is needed to check whether a program is affordable.",
+            "Your budget is needed to check scholarship affordability.",
             "Enter it in the Financial Planner.", route="/financial")
     return gaps
 
 
-def _opportunity(kind, item_id, name, organization, status, satisfied, unmet, missing, manual, url, verified):
+def _opportunity(kind, item_id, name, organization, status, satisfied, unmet, missing, manual, url, verified,
+                 deadline=None):
     return {"kind": kind, "id": item_id, "name": name, "organization": organization, "status": status,
             "satisfied": satisfied, "unmet": unmet, "missing_information": missing, "manual_verification": manual,
-            "source_url": url, "last_verified": verified}
-
-
-def _program_entry(program, result):
-    def item(check):
-        return {"requirement": PROGRAM_REQUIREMENT_LABELS.get(check["requirement"], check["requirement"]),
-                "reason": check["message"]}
-
-    checks = result["matched_requirements"] + result["missing_requirements"]
-    pick = lambda status: [item(check) for check in checks if check["status"] == status]  # noqa: E731
-    manual = [{"requirement": "Academic background and prerequisites", "reason": program.required_degree}] if program.required_degree else []
-    university = getattr(program, "university", None)
-    verified = getattr(program, "last_verified", None)
-    return _opportunity("program", program.id, program.name, university.name if university else None,
-                        result["status"].replace("-", "_"), pick("satisfied"), pick("not-satisfied"),
-                        pick("missing-information"), manual, program.source_url,
-                        verified.isoformat() if verified else None)
+            "source_url": url, "last_verified": verified, "deadline": deadline}
 
 
 def _scholarship_entry(result):
     def items(group):
         return [{"requirement": item["label"], "reason": item["reason"]} for item in group]
 
+    source_is_current = result["verification_status"] == "verified" and not any(
+        item["requirement"] in {"source_evidence", "record_review"} for item in result["needs_verification"]
+    )
     return _opportunity("scholarship", result["scholarship_id"], result["scholarship_name"], result["provider"],
                         result["status"], items(result["satisfied"]), items(result["not_satisfied"]),
                         items(result["missing_information"]), items(result["needs_verification"]),
-                        result["official_url"], result["last_verified"])
+                        result["official_url"], result["last_verified"],
+                        result["deadline"] if source_is_current else None)
 
 
-def build_guidance(profile, programs, scholarships, has_budget=False, today=None) -> dict:
+def build_guidance(profile, scholarships, has_budget=False, today=None, include_optional=True) -> dict:
     templates = _templates(profile)
     found = {}
 
@@ -326,26 +350,6 @@ def build_guidance(profile, programs, scholarships, has_budget=False, today=None
             found[key].append(related)
 
     entries = []
-    for program in programs:
-        result = check_program_eligibility(profile, program)
-        entries.append(_program_entry(program, result))
-        university = getattr(program, "university", None)
-        base = {"kind": "program", "id": program.id, "name": program.name,
-                "organization": university.name if university else None, "source_url": program.source_url}
-        needed = " or ".join(filter(None, [f"IELTS {program.min_ielts:g}" if program.min_ielts is not None else None,
-                                           f"TOEFL iBT {program.min_toefl}" if program.min_toefl is not None else None]))
-        for check in result["missing_requirements"]:
-            result_type = "unmet" if check["status"] == "not-satisfied" else "missing_information"
-            text = needed if check["requirement"] == "english" else (
-                f"Minimum CGPA {program.min_cgpa:g}/4.0" if check["requirement"] == "cgpa" else None)
-            add(result_type, check["requirement"], {**base, "requirement_text": text, "result": check["message"]})
-        if program.required_degree:
-            add("manual_verification", "program_background",
-                {**base, "requirement_text": program.required_degree, "result": "Needs a manual check"})
-        if result["status"] == "not-evaluated":
-            add("manual_verification", "no_published_minimum",
-                {**base, "requirement_text": None, "result": "No structured minimum to compare"})
-
     for scholarship in scholarships:
         result = evaluate_scholarship(scholarship, profile, today=today)
         entries.append(_scholarship_entry(result))
@@ -357,8 +361,8 @@ def build_guidance(profile, programs, scholarships, has_budget=False, today=None
         for result_type, group in (("unmet", result["not_satisfied"]), ("missing_information", result["missing_information"]),
                                    ("manual_verification", result["needs_verification"])):
             for item in group:
-                requirement = "admission" if item["scope"] == "admission" else item["requirement"]
-                add(result_type, requirement, {**base, "requirement_text": item["source_text"], "result": item["reason"]})
+                add(result_type, item["requirement"],
+                    {**base, "requirement_text": item["source_text"], "result": item["reason"]})
 
     recommendations = []
     for (result_type, requirement), related in found.items():
@@ -388,7 +392,8 @@ def build_guidance(profile, programs, scholarships, has_budget=False, today=None
         })
 
     has_work_review = ("manual_verification", "work_experience") in found
-    recommendations += _optional_gaps(profile, has_budget, has_work_review)
+    if include_optional:
+        recommendations += _optional_gaps(profile, has_budget, has_work_review)
     recommendations.sort(key=lambda item: (PRIORITY_ORDER[item["priority"]], -len(item["related"]), item["title"]))
 
     counts = {}
@@ -398,7 +403,6 @@ def build_guidance(profile, programs, scholarships, has_budget=False, today=None
     return {
         "summary": {
             "opportunities_evaluated": len(entries),
-            "programs_evaluated": len(programs),
             "scholarships_evaluated": len(scholarships),
             "eligible": statuses.count("eligible"),
             "not_eligible": statuses.count("not_eligible"),

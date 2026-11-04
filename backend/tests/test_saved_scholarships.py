@@ -5,6 +5,7 @@ Run from the backend folder:  python -m unittest discover -s tests -v
 import inspect
 import unittest
 from datetime import datetime, timedelta, timezone
+from datetime import date
 
 from fastapi import HTTPException, Response
 from fastapi.dependencies.utils import get_dependant
@@ -30,8 +31,14 @@ class SavedScholarshipTests(unittest.TestCase):
         event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
         Base.metadata.create_all(bind=engine)
         self.db = sessionmaker(bind=engine)()
-        self.first = Scholarship(name="First", country="Germany", verification_status="verified")
-        self.second = Scholarship(name="Second", country="Sweden", verification_status="verified")
+        self.first = Scholarship(
+            name="First", country="Germany", verification_status="verified", verification_basis="official_source",
+            official_info_url="https://example.org/first", last_verified_date=date.today(),
+        )
+        self.second = Scholarship(
+            name="Second", country="Sweden", verification_status="verified", verification_basis="official_source",
+            official_info_url="https://example.org/second", last_verified_date=date.today(),
+        )
         self.alice = User(email="alice@example.com", hashed_password="x", full_name="Alice")
         self.bob = User(email="bob@example.com", hashed_password="x", full_name="Bob")
         self.db.add_all([self.first, self.second, self.alice, self.bob])

@@ -1,41 +1,35 @@
 """
-Ranks scholarships for one student and, when chosen, one program. The score is how suitable a
-scholarship looks from the records. It is not a chance of winning an award or of being admitted.
+Ranks scholarships for one student. The score is how suitable a scholarship looks from the
+recorded requirements, funding, deadline, and evidence. It is not a chance of winning an award.
 
-Nothing is decided here: eligibility comes from scholarship_eligibility.py, the relationship from
-scholarship_matching.py, the deadline from scholarship_deadline, and program amounts from
-financial_feasibility.py. This file only weighs those results.
+Nothing is decided here: eligibility comes from scholarship_eligibility.py, the deadline from
+scholarship_deadline, and funding from the scholarship record. This file only weighs those results.
 
 Score: each dimension gives a value from 0 to 1, and
     score = 100 * sum(weight * value) / sum(weights that apply), rounded to a whole number.
-Program compatibility applies only when a program is selected, so its weight is left out otherwise.
+Weights are eligibility 37.5, funding 25, academic 12.5, deadline 12.5, and evidence 12.5.
+Saved degree and funding preferences affect their existing score dimensions, never mandatory eligibility.
 
 Each requirement counts once: degree, grades, field and Bachelor's conditions feed the academic
 dimension, the source check feeds evidence, and everything else feeds eligibility. Requirements
 that are missing or unconfirmed earn less than met ones, and missing data never earns full value.
 
-Hard exclusions: not eligible, not a match for the selected program, closed deadline. An excluded
-scholarship has no score at all, so no number can present it as suitable.
+Hard exclusions: not eligible and closed deadline. An excluded scholarship has no score at all,
+so no number can present it as suitable.
 """
 from datetime import date
-from typing import Optional
-
 from app.models.opportunity import Scholarship
-from app.services.financial_feasibility import calculate_feasibility
+from app.services.eligibility_engine import _degree_rank
 from app.services.scholarship_eligibility import ELIGIBLE, MISSING, NOT_ELIGIBLE, NOT_EVALUATED, SATISFIED, evaluate_scholarship
-from app.services.scholarship_matching import (
-    CONFIRMED, LABELS as MATCH_LABELS, NEEDS_VERIFICATION, NOT_A_MATCH, POTENTIAL, evaluate_match, get_link, match_for_financial,
-)
 
 # ---- Every scoring constant lives here ----
-WEIGHTS = {"eligibility": 30, "program": 20, "funding": 20, "academic": 10, "deadline": 10, "evidence": 10}
-DIMENSION_LABELS = {"eligibility": "Eligibility", "program": "Program compatibility", "funding": "Funding",
-                    "academic": "Academic fit", "deadline": "Deadline", "evidence": "Evidence quality"}
+WEIGHTS = {"eligibility": 37.5, "funding": 25, "academic": 12.5, "deadline": 12.5, "evidence": 12.5}
+DIMENSION_LABELS = {"eligibility": "Eligibility", "funding": "Funding", "academic": "Academic fit",
+                    "deadline": "Deadline", "evidence": "Evidence quality"}
 
 ELIGIBLE_VALUE = 1.0
 VERIFY_MANUALLY_CAP = 0.6       # the most an unconfirmed result can earn, reached when every checkable requirement is met
 ACADEMIC_VALUES = {"satisfied": 1.0, "admission": 0.5, "manual": 0.25, "missing": 0.0}
-PROGRAM_VALUES = {CONFIRMED: 1.0, POTENTIAL: 0.6, NEEDS_VERIFICATION: 0.25}
 FUNDING_VALUES = {"fully_funded": 1.0, "substantially_funded": 0.75, "tuition_only": 0.55, "partially_funded": 0.4, "incomplete": 0.1}
 FUNDING_UNCONFIRMED_PENALTY = 0.1
 DEADLINE_VALUES = {"open": 1.0, "upcoming": 0.8, "rolling": 0.8, "no_separate_deadline": 0.7, "unknown": 0.3}
@@ -56,8 +50,7 @@ SOURCE_REQUIREMENT = "source_evidence"      # like record_review, this says how 
 PROFILE_FIELDS = {"nationality": "Country of citizenship", "degree_level": "Current or completed degree",
                   "field": "Field of study", "academic": "CGPA and grading scale", "english": "English test score",
                   "age": "Date of birth"}
-NOT_A_PROBABILITY = ("The score shows how suitable a scholarship looks from its records. "
-                     "It isn't your chance of winning an award or being admitted.")
+NOT_A_PROBABILITY = "The score shows how suitable a scholarship looks from its records, not your chance of receiving an award."
 
 
 def _requirements(result):
@@ -83,6 +76,20 @@ def _academic_value(result):
 
     values = [value(item) for item in _requirements(result) if item["requirement"] in ACADEMIC_REQUIREMENTS]
     return sum(values) / len(values) if values else 0.0
+
+
+def _preferred_degree_match(profile, scholarship):
+    preferences = getattr(profile, "preferred_degree_levels", None) or []
+    offered = getattr(scholarship, "eligible_degree_levels", None) or []
+    if not offered and getattr(scholarship, "degree_level", None):
+        offered = [scholarship.degree_level]
+    preferred_ranks = {_degree_rank(level) for level in preferences}
+    offered_ranks = {_degree_rank(level) for level in offered}
+    preferred_ranks.discard(None)
+    offered_ranks.discard(None)
+    if not preferred_ranks or not offered_ranks:
+        return None
+    return bool(preferred_ranks & offered_ranks)
 
 
 def _money(amount, currency):
@@ -157,11 +164,29 @@ def funding_summary(scholarship) -> dict:
         "benefits": benefits,
         "not_covered": not_covered,
         "duration_months": scholarship.funding_duration_months,
-        "for_program": None,
     }
 
 
-def _funding_value(funding):
+def _funding_preference_match(funding, profile, scholarship):
+    preference = " ".join(str(getattr(profile, "funding_preference", None) or "").lower().split())
+    if preference in ("fully funded only", "full funding required") and funding["tier"] != "fully_funded":
+        return False
+    if (preference == "fully funded or substantial scholarship"
+            and funding["tier"] not in ("fully_funded", "substantially_funded")):
+        return False
+    preferred_types = {
+        item.strip().lower() for item in (getattr(profile, "preferred_funding_types", None) or [])
+        if isinstance(item, str) and item.strip()
+    }
+    if (preferred_types == {"tuition waivers"} and scholarship is not None
+            and scholarship.tuition_coverage_type == "none"):
+        return False
+    return None
+
+
+def _funding_value(funding, profile=None, scholarship=None):
+    if _funding_preference_match(funding, profile, scholarship) is False:
+        return 0.0
     value = FUNDING_VALUES[funding["tier"]]
     return max(0.0, value - FUNDING_UNCONFIRMED_PENALTY) if not funding["amount_confirmed"] else value
 
@@ -169,47 +194,41 @@ def _funding_value(funding):
 def _evidence_value(scholarship, result):
     basis = scholarship.verification_basis
     value = EVIDENCE_VALUES.get(basis, 0.0)
-    if scholarship.verification_status != "verified":
+    source_issue = any(item["requirement"] == SOURCE_REQUIREMENT for item in result["needs_verification"])
+    if source_issue or scholarship.verification_status != "verified":
         value = min(value, EVIDENCE_VALUES["secondary_only"])
     if any(item.get("conflict") for item in _requirements(result)) or not scholarship.official_url:
         value *= EVIDENCE_PROBLEM_FACTOR
     return value
 
 
-def _program_funding(scholarship, program, db):
-    """Amounts from Financial Feasibility for the selected program, unchanged."""
-    result = calculate_feasibility(program, scholarship=scholarship, match=match_for_financial(db, scholarship, program))
-    return {"currency": result["currency"], "total_estimated_cost": result["total_estimated_cost"],
-            "confirmed_funding": result["confirmed_funding"], "potential_funding": result["potential_funding"],
-            "coverage_percent": result["coverage_percent"]}
-
-
-def _exclusions(result, match, deadline):
+def _exclusions(result, deadline):
     found = []
     if result["status"] == NOT_ELIGIBLE:
         reasons = "; ".join(f"{item['label']}: {item['reason']}" for item in result["not_satisfied"])
         found.append({"rule": "not_eligible", "reason": reasons})
-    if match and match["outcome"] == NOT_A_MATCH:
-        found.append({"rule": "not_a_match", "reason": match["explanation"]})
     if deadline["status"] == "closed":
         found.append({"rule": "closed", "reason": f"The listed deadline ({deadline['date']}) has passed, so you can't apply now. "
                                                   "This is separate from your eligibility."})
     return found
 
 
-def _category(result, match, score, scholarship, conflict):
+def _category(result, score, scholarship, conflict):
     """(category, why). Category limits come first: a score never lifts a result past them."""
-    if scholarship.verification_status != "verified":
-        return "needs_verification", "This scholarship record is not verified."
+    source_issue = next(
+        (item for item in result["needs_verification"] if item["requirement"] == "source_evidence"),
+        None,
+    )
+    if source_issue or scholarship.verification_status != "verified":
+        return "needs_verification", source_issue["reason"] if source_issue else "This scholarship record is not verified."
     if conflict:
         return "needs_verification", "This record's details disagree, so check them first."
     if result["status"] == MISSING:
         return "needs_verification", "Your profile is missing information this scholarship needs."
-    if match and match["outcome"] == NEEDS_VERIFICATION:
-        return "needs_verification", "It isn't clear that this scholarship supports your selected program."
+    if result["status"] == NOT_EVALUATED:
+        return "needs_verification", "Some eligibility requirements need verification before this can be considered a match."
     if result["status"] == ELIGIBLE:
-        program_clear = not match or match["outcome"] == CONFIRMED
-        if score >= STRONG_MINIMUM and program_clear:
+        if score >= STRONG_MINIMUM:
             return "strong", "You meet the stated requirements and the score is high."
         if score >= GOOD_MINIMUM:
             return "good", "You meet the stated requirements."
@@ -219,10 +238,8 @@ def _category(result, match, score, scholarship, conflict):
     return "needs_verification", "Too little could be confirmed for this scholarship."
 
 
-def _reasons(result, match, funding, deadline, scholarship, program):
+def _reasons(result, funding, deadline, scholarship):
     positive, warnings, negative = [], [], []
-    if match and match["outcome"] == CONFIRMED:
-        positive.append(f"Confirmed for {program.name}: {match['explanation']}")
     if result["status"] == ELIGIBLE:
         positive.append("You meet the requirements this scholarship states.")
     positive += [f"{item['label']}: {item['reason']}" for item in result["satisfied"]]
@@ -238,10 +255,6 @@ def _reasons(result, match, funding, deadline, scholarship, program):
     warnings += [f"Add to your profile - {item['label']}: {item['reason']}" for item in result["missing_information"]]
     conflicts = [item for item in result["needs_verification"] if item.get("conflict")]
     warnings += [f"{item['label']}: {item['reason']}" for item in conflicts]
-    if match and match["outcome"] == POTENTIAL:
-        warnings.append(f"Only a potential match for {program.name}: {match['explanation']}")
-    elif match and match["outcome"] == NEEDS_VERIFICATION:
-        warnings.append(f"Check that this supports {program.name}: {match['explanation']}")
     warnings +=[f"{item['label']}: {item['reason']}" for item in result["needs_verification"]
                  if item["scope"] == "scholarship" and not item.get("conflict")]
     if scholarship.verification_status != "verified":
@@ -254,12 +267,7 @@ def _reasons(result, match, funding, deadline, scholarship, program):
         warnings.append(f"Not covered: {', '.join(funding['not_covered'])}.")
     if deadline["status"] == "unknown":
         warnings.append("No exact deadline is on record, so check the official page.")
-    if not match:   # true of every row, so it goes after the reasons specific to this record
-        warnings.append("Program compatibility hasn't been evaluated, because no program is selected.")
-
     negative += [f"{item['label']}: {item['reason']}" for item in result["not_satisfied"]]
-    if match and match["outcome"] == NOT_A_MATCH:
-        negative.append(f"Not a match for {program.name}: {match['explanation']}")
     if deadline["status"] == "closed":
         negative.append(f"The application period has closed ({deadline['date']}).")
     return positive, warnings, negative
@@ -273,29 +281,51 @@ def _breakdown(values):
     return rows, int(total + 0.5)
 
 
-def recommend_scholarship(scholarship, profile, program=None, link=None, db=None, today=None) -> dict:
+def recommend_scholarship(scholarship, profile, today=None) -> dict:
     """One scholarship's result. profile may be None: nothing is then treated as met."""
     today = today or date.today()
     result = evaluate_scholarship(scholarship, profile, today=today)
-    match = evaluate_match(scholarship, program, link) if program is not None else None
+    source_issue = next(
+        (item for item in result["needs_verification"] if item["requirement"] == "source_evidence"),
+        None,
+    )
     deadline = result["deadline"]
     funding = funding_summary(scholarship)
-    exclusions = _exclusions(result, match, deadline)
-    positive, warnings, negative = _reasons(result, match, funding, deadline, scholarship, program)
+    exclusions = _exclusions(result, deadline)
+    positive, warnings, negative = _reasons(result, funding, deadline, scholarship)
+    preferred_degree_match = _preferred_degree_match(profile, scholarship)
+    if preferred_degree_match is False:
+        warnings.append("The scholarship's study level doesn't match your preferred target degree level.")
+    if _funding_preference_match(funding, profile, scholarship) is False:
+        funding_preference = " ".join(
+            str(getattr(profile, "funding_preference", None) or "").lower().split()
+        )
+        preferred_types = {
+            item.strip().lower() for item in (getattr(profile, "preferred_funding_types", None) or [])
+            if isinstance(item, str) and item.strip()
+        }
+        if preferred_types == {"tuition waivers"} and scholarship.tuition_coverage_type == "none":
+            warnings.append("Your profile prefers tuition waivers, but this record states that tuition is not covered.")
+        elif funding_preference in ("fully funded only", "full funding required"):
+            warnings.append("Your profile prefers fully funded scholarships only; this award is not confirmed as fully funded.")
+        elif funding_preference == "fully funded or substantial scholarship":
+            warnings.append("This award does not meet your preference for fully funded or substantial scholarships.")
+        else:
+            warnings.append("This award does not match your saved funding preference.")
     conflict = any(item.get("conflict") for item in _requirements(result))
 
     score = category = category_reason = None
     breakdown = []
     if not exclusions:
-        values = {"eligibility": _eligibility_value(result), "funding": _funding_value(funding),
-                  "academic": _academic_value(result), "deadline": DEADLINE_VALUES[deadline["status"]],
+        academic_value = _academic_value(result)
+        if preferred_degree_match is False:
+            academic_value = 0.0
+        values = {"eligibility": _eligibility_value(result),
+                  "funding": _funding_value(funding, profile, scholarship),
+                  "academic": academic_value, "deadline": DEADLINE_VALUES[deadline["status"]],
                   "evidence": _evidence_value(scholarship, result)}
-        if match:
-            values["program"] = PROGRAM_VALUES[match["outcome"]]
         breakdown, score = _breakdown(values)
-        category, category_reason = _category(result, match, score, scholarship, conflict)
-        if program is not None and db is not None:
-            funding["for_program"] = _program_funding(scholarship, program, db)
+        category, category_reason = _category(result, score, scholarship, conflict)
 
     return {
         "scholarship_id": scholarship.id,
@@ -303,16 +333,13 @@ def recommend_scholarship(scholarship, profile, program=None, link=None, db=None
         "provider": scholarship.provider,
         "country": scholarship.country,
         "rank": None,
-        "recommended": not exclusions,
+        "recommended": not exclusions and source_issue is None,
         "score": score,
         "category": category,
         "category_label": CATEGORY_LABELS.get(category),
         "category_reason": category_reason,
         "exclusions": exclusions,
         "eligibility": {"status": result["status"], "outcome": result["outcome"], "summary": result["summary"]},
-        "program_match": ({"program_id": program.id, "program_name": program.name, "outcome": match["outcome"], "label": match["label"],
-                           "explanation": match["explanation"],
-                           "relationship_verification_status": match["relationship_verification_status"]} if match else None),
         "funding": funding,
         "deadline": deadline,
         "positive": positive,
@@ -340,7 +367,7 @@ def profile_gaps(items):
     return sorted(gaps, key=lambda gap: (-gap["scholarships_affected"], gap["field"]))
 
 
-def recommend_for_student(db, profile, program=None, include_unverified=False, today=None) -> dict:
+def recommend_for_student(db, profile, include_unverified=False, today=None) -> dict:
     """Ranked scholarships for a student, with the excluded ones listed apart."""
     query = db.query(Scholarship).filter(Scholarship.archived_at.is_(None)).order_by(Scholarship.id)
     if not include_unverified:
@@ -349,36 +376,36 @@ def recommend_for_student(db, profile, program=None, include_unverified=False, t
     # A record flagged as a copy of another shown record would be the same opportunity twice
     shown = {item.id for item in scholarships}
     scholarships = [item for item in scholarships if item.duplicate_of_id not in shown]
-    links = {}
-    if program is not None:
-        links = {item.id: get_link(db, item.id, program.id) for item in scholarships}
-    items = [recommend_scholarship(item, profile, program, links.get(item.id), db, today) for item in scholarships]
+    items = [recommend_scholarship(item, profile, today) for item in scholarships]
 
-    recommended = sorted((item for item in items if item["recommended"]), key=_sort_key)
-    for rank, item in enumerate(recommended, start=1):
+    ranked = [item for item in items if item["recommended"]]
+    if include_unverified:
+        # Opted-in records can be ranked for review without being marked recommended.
+        ranked.extend(item for item in items if not item["recommended"] and item["category"] == "needs_verification")
+    ranked = sorted(ranked, key=_sort_key)
+    for rank, item in enumerate(ranked, start=1):
         item["rank"] = rank
-    excluded = sorted((item for item in items if not item["recommended"]), key=lambda item: (item["scholarship_name"], item["scholarship_id"]))
+    ranked_ids = {item["scholarship_id"] for item in ranked}
+    excluded = sorted((item for item in items if item["scholarship_id"] not in ranked_ids),
+                      key=lambda item: (item["scholarship_name"], item["scholarship_id"]))
     gaps = profile_gaps(items)
     for item in items:
         del item["_gaps"]
-    counts = {key: sum(item["category"] == key for item in recommended) for key in CATEGORY_ORDER}
+    counts = {key: sum(item["category"] == key for item in ranked) for key in CATEGORY_ORDER}
     return {
-        "program": {"id": program.id, "name": program.name} if program is not None else None,
         "profile_complete": profile is not None and not gaps,
         "profile_gaps": gaps,
-        "summary": {"recommended": len(recommended), "excluded": len(excluded), **counts,
-                    "eligible": sum(item["eligibility"]["status"] == ELIGIBLE for item in recommended),
-                    "verify_manually": sum(item["eligibility"]["outcome"] == "verify_manually" for item in recommended),
-                    "potential_program_matches": sum((item["program_match"] or {}).get("outcome") == POTENTIAL for item in recommended)},
+        "summary": {"recommended": sum(item["recommended"] for item in ranked), "excluded": len(excluded), **counts,
+                    "eligible": sum(item["eligibility"]["status"] == ELIGIBLE for item in ranked if item["recommended"]),
+                    "verify_manually": sum(item["eligibility"]["outcome"] == "verify_manually" for item in ranked if item["recommended"])},
         "weights": WEIGHTS,
-        "recommendations": recommended,
+        "recommendations": ranked,
         "excluded": excluded,
         "notes": [NOT_A_PROBABILITY],
     }
 
 
-def recommend_one(db, scholarship, profile, program=None, today=None) -> dict:
-    link = get_link(db, scholarship.id, program.id) if program is not None else None
-    item = recommend_scholarship(scholarship, profile, program, link, db, today)
+def recommend_one(db, scholarship, profile, today=None) -> dict:
+    item = recommend_scholarship(scholarship, profile, today)
     del item["_gaps"]
     return item

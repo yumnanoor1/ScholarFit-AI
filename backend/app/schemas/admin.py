@@ -3,7 +3,6 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.matching import MatchResult
 from app.schemas.opportunity import ScholarshipResponse, is_web_url
 
 
@@ -60,7 +59,7 @@ class AuditEntry(BaseModel):
 
 class ReferenceCounts(BaseModel):
     saved_by_students: int
-    program_links: int
+    internal_links: int
     duplicates_pointing_here: int
 
 
@@ -76,7 +75,6 @@ class AdminDetail(BaseModel):
     issues: List[QualityIssue]
     references: ReferenceCounts
     audit: List[AuditEntry]
-    relationships: List[MatchResult]
 
 
 class VerificationWrite(BaseModel):

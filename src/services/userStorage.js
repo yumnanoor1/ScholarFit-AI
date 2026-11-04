@@ -9,6 +9,7 @@ export const APPLIED_OPPORTUNITIES_KEY = 'fitscholar.appliedOpportunities.v1';
 export const DOCUMENT_RECORDS_KEY = 'fitscholar.documentRecords.v1';
 export const APPLICATION_STRATEGY_KEY = 'fitscholar.applicationStrategies.v1';
 export const APPLICATION_TASK_STATUS_KEY = 'fitscholar.applicationTaskStatuses.v1';
+export const JOURNEY_COMPLETED_STEPS_KEY = 'fitscholar.journeyCompletedSteps.v1';
 export const SAVED_SNAPSHOT_KEY = 'fitscholar.savedScholarshipsSnapshot.v1';
 export const SAVED_REMOVED_KEY = 'fitscholar.savedScholarshipsRemoved.v1';
 export const PROFILE_KEY = 'fitscholar.profile.v2';
@@ -101,6 +102,10 @@ export function readOpportunityData(userId) {
   const selected = readUserStorage(SELECTED_OPPORTUNITIES_KEY, userId, []);
   const activeId = readUserStorage(ACTIVE_OPPORTUNITY_KEY, userId, null);
   const snapshot = readSavedSnapshot(userId);
+  const scholarshipSelections = Array.isArray(selected)
+    ? selected.filter((item) => item && /^sch-db-\d+$/.test(item.id))
+    : [];
+  const scholarshipIds = (ids) => [...new Set(ids.filter((id) => /^sch-db-\d+$/.test(id)))].slice(0, 2);
   return {
     savedOpportunities: [...new Set([
       ...readSavedLocally(userId),
@@ -109,11 +114,9 @@ export function readOpportunityData(userId) {
     savedRecords: snapshot || [],
     hasSavedSnapshot: snapshot !== null,
     removedSaves: readRemovedSaves(userId),
-    comparisonOpportunityIds: [...new Set(readIdList(COMPARISON_OPPORTUNITIES_KEY, userId))].slice(0, 2),
-    selectedOpportunities: Array.isArray(selected) ? selected.filter((item) => item && typeof item.id === 'string') : [],
-    activeOpportunityId: typeof activeId === 'string' ? activeId : null,
-    appliedOpportunityIds: readIdList(APPLIED_OPPORTUNITIES_KEY, userId),
-    opportunityTaskStatuses: readUserObject(APPLICATION_TASK_STATUS_KEY, userId),
+    comparisonOpportunityIds: scholarshipIds(readIdList(COMPARISON_OPPORTUNITIES_KEY, userId)),
+    selectedOpportunities: scholarshipSelections,
+    activeOpportunityId: typeof activeId === 'string' && scholarshipSelections.some((item) => item.id === activeId) ? activeId : null,
     documentRecords: readUserObject(DOCUMENT_RECORDS_KEY, userId),
   };
 }

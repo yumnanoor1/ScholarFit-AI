@@ -77,7 +77,7 @@ class ScholarshipEligibilityResult(BaseModel):
 # ---------- Profile improvement guidance ----------
 
 class RelatedOpportunity(BaseModel):
-    kind: Literal["program", "scholarship"]
+    kind: Literal["scholarship"]
     id: int
     name: str
     organization: Optional[str] = None
@@ -110,7 +110,7 @@ class OpportunityRequirementResult(BaseModel):
 
 
 class OpportunityEvaluation(BaseModel):
-    kind: Literal["program", "scholarship"]
+    kind: Literal["scholarship"]
     id: int
     name: str
     organization: Optional[str] = None
@@ -121,11 +121,11 @@ class OpportunityEvaluation(BaseModel):
     manual_verification: List[OpportunityRequirementResult]
     source_url: Optional[str] = None
     last_verified: Optional[str] = None
+    deadline: Optional[DeadlineStatus] = None
 
 
 class ImprovementSummary(BaseModel):
     opportunities_evaluated: int
-    programs_evaluated: int
     scholarships_evaluated: int
     eligible: int
     not_eligible: int

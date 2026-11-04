@@ -35,9 +35,11 @@ test('action buttons navigate to existing routes', () => {
   assert.equal(actionNavigation(null, buildFinancialRouteState), null);
 });
 
-test('financial action passes IDs only when known', () => {
-  const withIds = actionNavigation({ route: '/financial', state: { programId: 4, scholarshipId: null } }, buildFinancialRouteState);
-  assert.deepEqual(withIds.options.state, { programId: 4, scholarshipId: null, universityId: null });
+test('financial action passes only a known scholarship ID', () => {
+  const withIds = actionNavigation({ route: '/financial', state: { programId: 4, scholarshipId: 6 } }, buildFinancialRouteState);
+  assert.deepEqual(withIds.options.state, { scholarshipId: 6 });
+  const programOnly = actionNavigation({ route: '/financial', state: { programId: 4 } }, buildFinancialRouteState);
+  assert.equal(programOnly.options, undefined);
   const without = actionNavigation({ route: '/financial', state: null }, buildFinancialRouteState);
   assert.equal(without.options, undefined);
 });

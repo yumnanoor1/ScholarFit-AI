@@ -2,7 +2,7 @@
 FitScholar AI Assistant. Answers a student's question from their own saved data and the verified catalogue.
 
 There is no language model here, and nothing is invented: every figure and requirement is read from the existing
-services (profile improvement guidance, the program and scholarship eligibility engines, deadlines). This module
+services (profile improvement guidance, scholarship eligibility, deadlines). This module
 only picks which of their results answers the question and words the reply.
 """
 import re
@@ -11,15 +11,14 @@ from typing import Callable, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.opportunity import Program, Scholarship
+from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
-from app.services.eligibility_engine import check_program_eligibility
 from app.services.profile_completion import profile_completion
 from app.services.scholarship_eligibility import evaluate_scholarship
 
 PROFILE_ROUTE = "/profile?edit=1"
 IMPROVEMENT_ROUTE = "/improvement"
-NOT_GUARANTEED = "This is guidance, not a promise of admission or funding."
+NOT_GUARANTEED = "This is guidance, not a promise of receiving a scholarship."
 DOCUMENTS_NOTE = "Uploaded documents are tracked in your browser, so I can't see them here. Open Documents to check."
 
 SUGGESTIONS = [
@@ -34,7 +33,6 @@ KIND_BY_TYPE = {"unmet": "required", "missing_information": "required", "manual_
 GENERIC_LABELS = {
     "/scholarships": "Explore Scholarships",
     "/recommendations": "View Recommendations",
-    "/universities": "View Program Requirements",
     "/financial": "Check Financial Feasibility",
 }
 PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
@@ -98,8 +96,6 @@ def detect_intent(message: str) -> str:
 # ---------- Shared pieces built from the existing results ----------
 
 def _page_for(related: dict) -> tuple:
-    if related["kind"] == "program":
-        return f"/universities/{related['id']}", "View Program Requirements"
     return f"/scholarships/sch-db-{related['id']}", "Check Eligibility"
 
 
@@ -244,7 +240,7 @@ def _why_scholarship(context, scholarship: Scholarship, profile):
         {"heading": "Missing from your profile", "items": _group(result["missing_information"])},
         {"heading": "Needs a manual check", "items": _group(result["needs_verification"])},
     ) if section["items"]]
-    ctx = _context(context, "eligibility", scholarship_id=scholarship.id, program_id=None)
+    ctx = _context(context, "eligibility", scholarship_id=scholarship.id)
     next_action = (action("Complete Profile", PROFILE_ROUTE) if result["missing_information"] and not result["not_satisfied"]
                    else action("Check Eligibility", f"/scholarships/sch-db-{scholarship.id}"))
     return _reply(ctx, "why_not_eligible", f"{scholarship.name}: {result['summary']}", title=scholarship.name,
@@ -253,40 +249,20 @@ def _why_scholarship(context, scholarship: Scholarship, profile):
                   suggestions=["What if I improve my CGPA?", "What should I do first?"])
 
 
-def _why_program(context, program: Program, profile):
-    result = check_program_eligibility(profile, program)
-    unmet = [f"{check['message']}" for check in result["missing_requirements"]]
-    sections = [{"heading": "What stops this program", "items": unmet}] if unmet else []
-    if result["matched_requirements"]:
-        sections.append({"heading": "Requirements you meet", "items": [check["message"] for check in result["matched_requirements"]]})
-    ctx = _context(context, "eligibility", program_id=program.id, scholarship_id=None)
-    return _reply(ctx, "why_not_eligible", f"{program.name}: {result['status'].replace('-', ' ')}.", title=program.name,
-                  sections=sections, action=action("View Program Requirements", f"/universities/{program.id}"),
-                  notes=result["notes"][:2], suggestions=["What if I improve my CGPA?", "What should I do first?"])
-
-
 def _why_not_eligible(db, context, profile, message, scholarship_results):
     scholarships = db.query(Scholarship).filter(Scholarship.archived_at.is_(None)).all()
-    programs = db.query(Program).all()
     named_scholarship = _best_match(message, scholarships)
-    named_program = _best_match(message, programs)
-    if named_scholarship and (not named_program or _mentions(message, named_scholarship.name) >= _mentions(message, named_program.name)):
+    if named_scholarship:
         return _why_scholarship(context, named_scholarship, profile)
-    if named_program:
-        return _why_program(context, named_program, profile)
     if context.get("scholarship_id"):
         known = next((item for item in scholarships if item.id == context["scholarship_id"]), None)
         if known:
             return _why_scholarship(context, known, profile)
-    if context.get("program_id"):
-        known = next((item for item in programs if item.id == context["program_id"]), None)
-        if known:
-            return _why_program(context, known, profile)
 
     blocked = [result for result in scholarship_results if result["status"] == "not_eligible"]
     if not blocked:
         return _reply(_context(context, "eligibility"), "why_not_eligible",
-                      "I found no verified scholarship that you are ruled out of. Name a scholarship or program and I'll explain its requirements.",
+                      "I found no verified scholarship that you are ruled out of. Name a scholarship and I'll explain its requirements.",
                       action=action("Explore Scholarships", "/scholarships"), suggestions=["Which requirements am I missing?"])
     lines = [f"{result['scholarship_name']}: {result['not_satisfied'][0]['label']} \u2013 {result['not_satisfied'][0]['reason']}"
              for result in blocked[:5]]
@@ -344,11 +320,10 @@ def _deadlines(context, scholarship_results):
 
 
 def _financial(context):
-    ids = {"programId": context.get("program_id"), "scholarshipId": context.get("scholarship_id")}
-    state = ids if ids["programId"] else None
+    state = {"scholarshipId": context.get("scholarship_id")} if context.get("scholarship_id") else None
     return _reply(_context(context, "financial"), "financial",
-                  "The Financial Feasibility page compares a program's costs, any confirmed scholarship funding and your budget. "
-                  "Amounts that aren't published are marked missing and never guessed.",
+                  "The Financial Feasibility page compares a scholarship's confirmed funding with available linked cost records and your budget. "
+                  "If costs are missing or ambiguous, the result says so rather than guessing.",
                   action=action("Check Financial Feasibility", "/financial", state),
                   suggestions=["What's my best next action?"])
 
@@ -360,7 +335,7 @@ def _documents(context):
 
 def _help(context):
     return _reply(_context(context, "help"), "help",
-                  "I can look at your saved profile and the programs and scholarships we hold. Try one of these questions.",
+                  "I can look at your saved profile and verified scholarship records. Try one of these questions.",
                   suggestions=SUGGESTIONS)
 
 
@@ -400,8 +375,8 @@ def _next_action(context, guidance, completion, scholarship_results, message):
     if guidance["summary"]["eligible"]:
         add(5, "explore-eligible", "Compare your eligible opportunities", "You meet the stated requirements for some of them.",
             "Review your recommendations and shortlist the ones that fit you.", "Medium", action("View Recommendations", "/recommendations"))
-    add(6, "explore", "Explore programs and scholarships", "Nothing urgent is pending on your profile.",
-        "Browse matches and save the ones you like.", "Low", action("View Recommendations", "/recommendations"))
+    add(6, "explore", "Explore scholarships", "Nothing urgent is pending on your profile.",
+        "Browse scholarship matches and save the ones you like.", "Low", action("View Recommendations", "/recommendations"))
 
     _, _, best = min(candidates, key=lambda entry: (entry[0], entry[1]))
     ctx = _context(context, "next_action", shown_actions=(shown + [best["id"]])[-12:])

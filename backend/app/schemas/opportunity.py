@@ -7,12 +7,29 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 # ---------- UNIVERSITY ----------
 class UniversityCreate(BaseModel):
-    name: str
-    country: str
-    city: Optional[str] = None
-    ranking: Optional[int] = None
-    website: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=255)
+    country: str = Field(..., min_length=1, max_length=100)
+    city: Optional[str] = Field(None, max_length=120)
+    ranking: Optional[int] = Field(None, gt=0)
+    website: Optional[str] = Field(None, max_length=500)
     description: Optional[str] = None
+
+    @field_validator("name", "country", "city")
+    @classmethod
+    def _trim_required_identity(cls, value):
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("website")
+    @classmethod
+    def _valid_website(cls, value):
+        if value is not None and not is_web_url(value.strip()):
+            raise ValueError("must be a single http or https URL")
+        return value.strip() if value is not None else None
 
 
 class UniversityResponse(BaseModel):
@@ -30,24 +47,73 @@ class UniversityResponse(BaseModel):
 
 # ---------- PROGRAM ----------
 class ProgramCreate(BaseModel):
-    university_id: int
-    name: str
+    university_id: int = Field(..., gt=0)
+    name: str = Field(..., min_length=1, max_length=255)
     degree_level: Optional[str] = None
     field_of_study: Optional[str] = None
-    duration_months: Optional[int] = None
-    tuition_usd_per_year: Optional[float] = None
-    tuition_amount: Optional[float] = None
+    duration_months: Optional[int] = Field(None, gt=0)
+    tuition_usd_per_year: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    tuition_amount: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
     tuition_currency: Optional[str] = None
-    living_cost_usd_per_year: Optional[float] = None
+    living_cost_usd_per_year: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
     language_of_instruction: Optional[str] = None
-    min_cgpa: Optional[float] = None
-    min_ielts: Optional[float] = None
-    min_toefl: Optional[int] = None
+    min_cgpa: Optional[float] = Field(None, ge=0, le=4, allow_inf_nan=False)
+    min_ielts: Optional[float] = Field(None, ge=0, le=9, allow_inf_nan=False)
+    min_toefl: Optional[int] = Field(None, ge=0, le=120)
     required_degree: Optional[str] = None
-    application_deadline: Optional[str] = None
+    application_deadline: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
-    source_url: Optional[str] = None
+    source_url: Optional[str] = Field(None, max_length=500)
     last_verified: Optional[date] = None
+
+    @field_validator("name")
+    @classmethod
+    def _nonblank_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("application_deadline")
+    @classmethod
+    def _valid_deadline(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            if value.casefold() not in {"rolling", "not specified", "unknown", "see official source"}:
+                raise ValueError("must be an ISO date or an explicit non-date status")
+        return value
+
+    @field_validator("source_url")
+    @classmethod
+    def _valid_source_url(cls, value):
+        if value is not None and not is_web_url(value.strip()):
+            raise ValueError("must be a single http or https URL")
+        return value.strip() if value is not None else None
+
+    @field_validator("tuition_currency")
+    @classmethod
+    def _valid_program_currency(cls, value):
+        if value is not None:
+            value = value.strip().upper()
+            if len(value) != 3 or not value.isalpha():
+                raise ValueError("must be a 3-letter currency code")
+        return value
+
+    @model_validator(mode="after")
+    def _consistent_program_data(self):
+        if (self.tuition_amount is None) != (self.tuition_currency is None):
+            raise ValueError("published tuition amount and currency must be supplied together")
+        if (self.source_url is None) != (self.last_verified is None):
+            raise ValueError("source URL and its verification date must be supplied together")
+        if self.last_verified and self.last_verified > date.today():
+            raise ValueError("verification date can't be in the future")
+        return self
 
 
 class ProgramResponse(BaseModel):
@@ -77,32 +143,100 @@ class ProgramResponse(BaseModel):
 
 # ---------- UPDATE SCHEMAS (PUT ke liye) ----------
 class UniversityUpdate(BaseModel):
-    name: Optional[str] = None
-    country: Optional[str] = None
-    city: Optional[str] = None
-    ranking: Optional[int] = None
-    website: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    country: Optional[str] = Field(None, min_length=1, max_length=100)
+    city: Optional[str] = Field(None, max_length=120)
+    ranking: Optional[int] = Field(None, gt=0)
+    website: Optional[str] = Field(None, max_length=500)
     description: Optional[str] = None
+
+    @field_validator("name", "country", "city")
+    @classmethod
+    def _trim_updated_identity(cls, value):
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("website")
+    @classmethod
+    def _valid_updated_website(cls, value):
+        if value is not None and not is_web_url(value.strip()):
+            raise ValueError("must be a single http or https URL")
+        return value.strip() if value is not None else None
 
 
 class ProgramUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
     degree_level: Optional[str] = None
     field_of_study: Optional[str] = None
-    duration_months: Optional[int] = None
-    tuition_usd_per_year: Optional[float] = None
-    tuition_amount: Optional[float] = None
+    duration_months: Optional[int] = Field(None, gt=0)
+    tuition_usd_per_year: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    tuition_amount: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
     tuition_currency: Optional[str] = None
-    living_cost_usd_per_year: Optional[float] = None
+    living_cost_usd_per_year: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
     language_of_instruction: Optional[str] = None
-    min_cgpa: Optional[float] = None
-    min_ielts: Optional[float] = None
-    min_toefl: Optional[int] = None
+    min_cgpa: Optional[float] = Field(None, ge=0, le=4, allow_inf_nan=False)
+    min_ielts: Optional[float] = Field(None, ge=0, le=9, allow_inf_nan=False)
+    min_toefl: Optional[int] = Field(None, ge=0, le=120)
     required_degree: Optional[str] = None
-    application_deadline: Optional[str] = None
+    application_deadline: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = None
-    source_url: Optional[str] = None
+    source_url: Optional[str] = Field(None, max_length=500)
     last_verified: Optional[date] = None
+
+    @field_validator("name")
+    @classmethod
+    def _nonblank_updated_name(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("application_deadline")
+    @classmethod
+    def _valid_updated_deadline(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            if value.casefold() not in {"rolling", "not specified", "unknown", "see official source"}:
+                raise ValueError("must be an ISO date or an explicit non-date status")
+        return value
+
+    @field_validator("source_url")
+    @classmethod
+    def _valid_updated_source_url(cls, value):
+        if value is not None and not is_web_url(value.strip()):
+            raise ValueError("must be a single http or https URL")
+        return value.strip() if value is not None else None
+
+    @field_validator("tuition_currency")
+    @classmethod
+    def _valid_updated_currency(cls, value):
+        if value is not None:
+            value = value.strip().upper()
+            if len(value) != 3 or not value.isalpha():
+                raise ValueError("must be a 3-letter currency code")
+        return value
+
+    @model_validator(mode="after")
+    def _consistent_updated_program_data(self):
+        if (self.tuition_amount is None) != (self.tuition_currency is None):
+            raise ValueError("published tuition amount and currency must be supplied together")
+        if (self.source_url is None) != (self.last_verified is None):
+            raise ValueError("source URL and its verification date must be supplied together")
+        if self.last_verified and self.last_verified > date.today():
+            raise ValueError("verification date can't be in the future")
+        return self
 
 
 # ---------- SCHOLARSHIP ----------
@@ -230,6 +364,10 @@ class ScholarshipStructured(BaseModel):
                           (self.application_open_date, self.application_deadline_date)):
             if low is not None and high is not None and low > high:
                 raise ValueError("a range must run from low to high")
+        if self.min_gpa is not None and self.min_gpa_scale is not None and self.min_gpa > self.min_gpa_scale:
+            raise ValueError("min_gpa can't exceed its grading scale")
+        if self.last_verified_date and self.last_verified_date > date.today():
+            raise ValueError("verification date can't be in the future")
         return self
 
 
@@ -238,10 +376,10 @@ def is_web_url(value: str) -> bool:
 
 
 class ScholarshipBase(ScholarshipStructured):
-    model_config = {"extra": "ignore", "from_attributes": True}
+    model_config = {"extra": "forbid", "from_attributes": True}
 
-    country: Optional[str] = None
-    name: Optional[str] = None
+    country: Optional[str] = Field(None, min_length=1, max_length=100)
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
     provider: Optional[str] = None
     degree_level: Optional[str] = None
     study_type: Optional[str] = None
@@ -273,21 +411,59 @@ class ScholarshipBase(ScholarshipStructured):
     last_verified: Optional[str] = None
     notes: Optional[str] = None
 
+    @field_validator("country", "name")
+    @classmethod
+    def _trim_scholarship_identity(cls, value):
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("last_verified")
+    @classmethod
+    def _valid_legacy_verification_date(cls, value):
+        if value is None or value == "":
+            return None
+        try:
+            verified_on = date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("must be an ISO date") from exc
+        if verified_on > date.today():
+            raise ValueError("verification date can't be in the future")
+        return verified_on.isoformat()
+
+    @field_validator("official_info_url", "official_application_url")
+    @classmethod
+    def _valid_source_urls(cls, value):
+        if value is not None and not is_web_url(value.strip()):
+            raise ValueError("must be a single http or https URL")
+        return value.strip() if value is not None else None
+
 
 class ScholarshipCreate(ScholarshipBase):
     country: str
     name: str
+    verification_status: Optional[Literal["verified", "unverified"]] = Field(None, exclude=True)
 
 
 class ScholarshipUpdate(ScholarshipBase):
+    structured_data_version: Optional[int] = Field(None, exclude=True)
     verification_status: Optional[str] = None  # verified | unverified; only the verification endpoint can set "verified"
     expected_version: Optional[int] = None     # record_version the form was loaded with
     reviewed_groups: List[str] = []            # requirement groups the admin confirms are consistent
     audit_note: Optional[str] = None
 
+    @field_validator("country", "name")
+    @classmethod
+    def _trim_scholarship_identity(cls, value):
+        return value.strip() if value is not None else None
+
 
 class ScholarshipResponse(ScholarshipBase):
     id: int
+    country: str = Field(..., min_length=1)
     verification_status: Optional[str] = None
     structured_data_version: Optional[int] = None   # read-only; the frontend's sign that structured fields are filled
     record_version: Optional[int] = None

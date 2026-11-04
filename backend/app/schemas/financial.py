@@ -40,11 +40,24 @@ class ExpenseInputs(BaseModel):
 class FeasibilityRequest(BaseModel):
     program_id: int = Field(..., gt=0)
     scholarship_id: Optional[int] = Field(None, gt=0)
-    # Falls back to the saved budget, then the profile's budget_usd
+    # Falls back to the saved total budget, then a legacy total budget_usd value.
+    # Structured tuition/living limits are not total funds for the full study period.
     budget: Optional[MoneyInput] = None
     # Currency for every amount in the response; defaults to the program's tuition currency
     currency: Optional[str] = None
     # Falls back to the expenses saved for this program when none are sent
+    expenses: Optional[ExpenseInputs] = None
+
+    @field_validator("currency")
+    @classmethod
+    def _check_currency(cls, value):
+        return _currency(value) if value is not None else None
+
+
+class ScholarshipFeasibilityRequest(BaseModel):
+    scholarship_id: int = Field(..., gt=0)
+    budget: Optional[MoneyInput] = None
+    currency: Optional[str] = None
     expenses: Optional[ExpenseInputs] = None
 
     @field_validator("currency")
@@ -100,6 +113,7 @@ class ScholarshipSummary(BaseModel):
     name: str
     funding_type: Optional[str]
     verification_status: Optional[str]
+    verification_issue: Optional[str] = None
     last_verified: Optional[str]
     source_url: Optional[str]
     applicable: bool
@@ -135,7 +149,7 @@ class ScholarshipCoverage(BaseModel):
 class FeasibilityResult(BaseModel):
     status: FeasibilityStatus
     currency: str
-    program: ProgramSummary
+    program: Optional[ProgramSummary] = None
     scholarship: Optional[ScholarshipSummary]
     duration_months: Optional[int]
     costs: List[CostLine]
@@ -164,6 +178,6 @@ class BudgetUpdate(MoneyInput):
 
 class FinancialPlanResponse(BaseModel):
     budget: Optional[MoneyInput]
-    expenses: Dict[str, ExpenseInputs]      # keyed by program id
+    expenses: Dict[str, ExpenseInputs]      # keyed by program id or scholarship:<id>
     updated_at: Optional[datetime]
     supported_currencies: List[str]

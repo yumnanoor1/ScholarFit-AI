@@ -190,6 +190,13 @@
   padding-top: 8px;
 }
 
+.application-pathway-journey.is-overall-journey {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: 190px 190px;
+  gap: 40px 10px;
+  height: 428px;
+}
+
 .application-pathway-journey-line {
   position: absolute;
   z-index: 0;
@@ -215,8 +222,8 @@
 .application-journey-step {
   position: relative;
   z-index: 1;
-  display: flex;
   min-width: 0;
+  display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
@@ -282,11 +289,15 @@
 }
 
 .application-journey-desc {
+  display: -webkit-box;
   max-width: 190px;
   margin: 0;
+  overflow: hidden;
   color: #637d9e;
   font-size: 12px;
   line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .application-journey-chip {
@@ -495,6 +506,16 @@
   justify-self: start;
 }
 
+.application-pathway-empty .application-pathway-browse-button {
+  margin-top: 16px;
+  text-decoration: none;
+}
+
+.application-pathway-empty .application-pathway-browse-button:hover {
+  color: #fff;
+  background: #0f58a8;
+}
+
 .application-pathway-note {
   color: #6b7f99;
   font-size: 12px;
@@ -564,6 +585,10 @@
     gap: 16px;
   }
 
+  .application-pathway-journey.is-overall-journey {
+    height: auto;
+  }
+
   .application-pathway-journey-line {
     display: none;
   }
@@ -599,6 +624,10 @@
     gap: 16px;
   }
 
+  .application-pathway-journey.is-overall-journey {
+    height: auto;
+  }
+
   .application-pathway-journey-line {
     display: none;
   }
@@ -609,7 +638,6 @@
   }
 }
 
-/* Step text gets a backing in the roadmap's own colour, so the line passes behind it unseen */
 .application-pathway-roadmap {
   --roadmap-bg: #f7fafe;
   background: var(--roadmap-bg);
@@ -631,21 +659,886 @@
   margin-top: 0;
 }
 
-/* Below this width the four-column roadmap gets too cramped for the step cards */
-@media (max-width: 1280px) {
-  .application-pathway-journey {
+.application-pathway-source {
+  color: #647d9a;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.application-pathway-source-link,
+.application-pathway-documents-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #1766a8;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.application-pathway-documents {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.application-pathway-documents li {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  align-content: start;
+  padding: 12px;
+  border: 1px solid #e1ebf6;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.application-pathway-document-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.application-pathway-document-title {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 7px;
+  color: #365676;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.application-pathway-document-title svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #347ab9;
+}
+
+.application-pathway-document-status {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.application-pathway-document-status.is-available {
+  color: #17774b;
+  background: #edf8f1;
+}
+
+.application-pathway-document-status.is-missing,
+.application-pathway-document-status.is-needs-review {
+  color: #8a5a08;
+  background: #fff6e5;
+}
+
+.application-pathway-documents li small {
+  color: #788ca4;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.application-pathway-documents-empty,
+.application-pathway-documents-note {
+  color: #687f9b;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.application-pathway-documents-note {
+  margin-top: 10px;
+}
+
+.application-pathway-documents-link {
+  margin-top: 10px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .application-pathway-documents {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Reference-aligned preparation pathway */
+.application-pathway-hero {
+  min-height: 154px;
+  padding: 16px 20px;
+  border-radius: 12px;
+}
+
+.application-pathway-hero-copy {
+  width: min(68%, 500px);
+}
+
+.application-pathway-hero-copy > .application-pathway-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #2876c6;
+  background: rgba(255, 255, 255, .76);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.application-pathway-hero-copy > p:not(.application-pathway-eyebrow) {
+  max-width: 390px;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.application-pathway-journey-panel {
+  padding: 8px 8px 12px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.application-pathway-journey-panel > h2 {
+  color: #112d60;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.application-pathway-journey-panel > p:not(.application-pathway-error) {
+  margin-top: 3px;
+  color: #6c83a1;
+  font-size: 11px;
+}
+
+.application-pathway-journey-panel .application-pathway-error {
+  margin-top: 8px;
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.application-pathway-journey.is-overall-journey {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(190px, auto));
+  gap: 40px 8px;
+  min-height: 428px;
+}
+
+.application-pathway-journey-line path {
+  stroke: #c5e3fb;
+  stroke-width: 10;
+}
+
+.application-pathway-journey-line marker path {
+  fill: none;
+  stroke: #9cc9ee;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.application-journey-step {
+  align-items: flex-start;
+  gap: 3px;
+  padding: 0 6px;
+  text-align: left;
+}
+
+.application-journey-node {
+  width: 68px;
+  height: 68px;
+  align-self: center;
+  border: 2px solid #fff;
+  background: #fff;
+}
+
+.application-journey-step.is-current .application-journey-node {
+  color: #1677df;
+  box-shadow: 0 0 0 2px #1677df, 0 5px 13px rgba(17, 104, 200, .2);
+}
+
+.application-journey-step.is-complete .application-journey-node {
+  color: #258d70;
+  box-shadow: 0 0 0 2px #35a27c, 0 5px 13px rgba(31, 157, 85, .18);
+}
+
+.application-journey-step.is-locked .application-journey-node {
+  color: #7789a0;
+  box-shadow: 0 0 0 1px #d5e0ec, 0 4px 11px rgba(40, 90, 150, .1);
+}
+
+.application-journey-badge {
+  top: -3px;
+  right: -5px;
+  width: 21px;
+  height: 21px;
+  border: 1px solid #fff;
+  background: #76869d;
+}
+
+.application-journey-step.is-current .application-journey-badge {
+  background: #1677df;
+}
+
+.application-journey-step.is-complete .application-journey-badge {
+  background: #219a70;
+}
+
+.application-journey-copy {
+  width: 100%;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 0 3px;
+  background: transparent;
+  text-align: left;
+}
+
+.application-journey-copy .application-journey-title {
+  margin: 0;
+  color: #112d60;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.application-journey-desc {
+  max-width: 100%;
+  color: #7188a6;
+  font-size: 10.5px;
+  line-height: 1.35;
+  -webkit-line-clamp: 2;
+}
+
+.application-journey-details,
+.application-pathway-details {
+  max-width: 100%;
+  color: #1766a8;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.application-journey-details summary,
+.application-pathway-details summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 650;
+  list-style: none;
+}
+
+.application-journey-details summary::-webkit-details-marker,
+.application-pathway-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.application-journey-details summary::after,
+.application-pathway-details summary::after {
+  margin-left: 4px;
+  content: '+';
+}
+
+.application-journey-details[open] summary::after,
+.application-pathway-details[open] summary::after {
+  content: '−';
+}
+
+.application-journey-details > p,
+.application-pathway-details > p {
+  margin-top: 4px;
+  color: #637d9e;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.application-pathway-source {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #8a5a08;
+  background: #fff3da;
+  font-size: 9px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.application-journey-step.is-complete .application-pathway-source {
+  color: #17774b;
+  background: #def5e7;
+}
+
+.application-pathway-source-link {
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.application-pathway-rail {
+  gap: 11px;
+}
+
+.application-pathway-card {
+  padding: 13px;
+  border-color: #dce9f7;
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(30, 87, 138, .05);
+}
+
+.application-pathway-rail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #132b5c;
+}
+
+.application-pathway-rail-heading h2 {
+  color: #132b5c;
+  font-family: var(--font-family-heading);
+  font-size: 14px;
+  font-weight: 750;
+}
+
+.application-pathway-next-level .application-pathway-next-card {
+  margin-top: 10px;
+  padding: 10px;
+  border-color: #dce9f7;
+  border-radius: 10px;
+}
+
+.application-pathway-next-number {
+  width: 38px;
+  height: 38px;
+  background: linear-gradient(140deg, #1689f5, #1261c2);
+}
+
+.application-pathway-next-copy h3 {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.application-pathway-next-copy p {
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.application-pathway-next-action {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  color: #fff;
+  background: linear-gradient(110deg, #1478e5, #1261c2);
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.application-pathway-next-action:hover {
+  color: #fff;
+  background: #0f58a8;
+}
+
+.application-pathway-progress-card {
+  gap: 8px;
+}
+
+.application-pathway-progress-card .application-pathway-card-title {
+  font-size: 14px;
+}
+
+.application-pathway-progress-ring {
+  width: 126px;
+  height: 126px;
+  margin: 2px auto;
+  background: conic-gradient(
+    #1f9d55 0deg var(--journey-completed-angle),
+    #1677df var(--journey-completed-angle) var(--journey-current-angle),
+    #dce8f5 var(--journey-current-angle) 360deg
+  );
+}
+
+.application-pathway-progress-ring > div {
+  width: 102px;
+  height: 102px;
+}
+
+.application-pathway-progress-ring strong {
+  font-size: 20px;
+}
+
+.application-pathway-progress-ring span {
+  font-size: 10px;
+}
+
+.application-pathway-legend {
+  width: 100%;
+  gap: 7px;
+}
+
+.application-pathway-legend li {
+  gap: 7px;
+  font-size: 10px;
+}
+
+.application-pathway-legend li strong {
+  font-size: 10px;
+}
+
+.application-pathway-legend .is-current {
+  background: #1677df;
+}
+
+.application-pathway-eligibility {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+  padding-top: 9px;
+  border-top: 1px solid #e5edf6;
+}
+
+.application-pathway-eligibility h3 {
+  color: #132b5c;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.application-pathway-eligibility > p {
+  color: #637d9e;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.application-pathway-official-card .application-pathway-card-title {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.application-pathway-deadline {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  padding: 9px;
+  border-radius: 8px;
+  background: #f4f8fc;
+}
+
+.application-pathway-deadline h3 {
+  color: #17376d;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.application-pathway-deadline > p {
+  color: #637d9e;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.application-pathway-official-card > .application-pathway-source {
+  display: inline-block;
+  margin-top: 8px;
+}
+
+.application-pathway-page a:focus-visible,
+.application-pathway-page details summary:focus-visible {
+  outline: 2px solid #1168c8;
+  outline-offset: 2px;
+}
+
+@media (max-width: 1000px) {
+  .application-pathway-journey.is-overall-journey {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .application-pathway-journey-slot {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .application-pathway-hero-copy {
+    width: 100%;
+  }
+
+  .application-pathway-journey.is-overall-journey {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .application-pathway-journey-slot {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+
+  .application-journey-copy {
+    align-items: center;
+    text-align: center;
+  }
+
+  .application-journey-step {
+    align-items: center;
+    text-align: center;
+  }
+}
+
+.application-pathway-page {
+  max-width: 1500px;
+  padding: 18px 20px 30px;
+}
+
+.application-pathway-columns {
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 14px;
+}
+
+.application-pathway-journey-panel {
+  position: relative;
+  min-width: 0;
+  padding: 5px 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.application-pathway-journey.is-overall-journey {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(190px, auto));
+  gap: 40px 8px;
+  min-height: 428px;
+}
+
+.application-pathway-journey-slot {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.application-pathway-journey-slot > .application-journey-step {
+  width: 100%;
+  height: 100%;
+  align-items: flex-start;
+  padding: 0 6px;
+  text-align: left;
+}
+
+.application-journey-step.is-done .application-journey-node {
+  color: #278c72;
+  box-shadow: 0 0 0 2px #35a27c, 0 5px 13px rgba(31, 157, 85, .18);
+}
+
+.application-journey-step.is-in-progress .application-journey-node {
+  color: #1677df;
+  box-shadow: 0 0 0 2px #1677df, 0 5px 13px rgba(17, 104, 200, .2);
+}
+
+.application-journey-step.is-locked .application-journey-node {
+  color: #7789a0;
+  box-shadow: 0 0 0 1px #d5e0ec, 0 4px 11px rgba(40, 90, 150, .1);
+}
+
+.application-journey-step.is-done .application-journey-badge {
+  background: #219a70;
+}
+
+.application-journey-step.is-in-progress .application-journey-badge {
+  background: #1677df;
+}
+
+.application-journey-copy {
+  width: 100%;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 0 3px;
+  background: transparent;
+  text-align: left;
+}
+
+.application-journey-copy .application-journey-title {
+  margin: 0;
+  color: #112d60;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.application-journey-desc {
+  max-width: 100%;
+  min-height: 29px;
+  color: #7188a6;
+  font-size: 10.5px;
+  line-height: 1.35;
+  -webkit-line-clamp: 2;
+}
+
+.application-pathway-step-status {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #6b7f99;
+  background: #e8eef5;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.application-pathway-step-status.is-done {
+  color: #17774b;
+  background: #def5e7;
+}
+
+.application-pathway-step-status.is-in-progress {
+  color: #0f58a8;
+  background: #dcecff;
+}
+
+.application-pathway-journey-slot .application-journey-content:focus-visible {
+  border-radius: 10px;
+  outline: 2px solid #1168c8;
+  outline-offset: 2px;
+}
+
+.application-journey-content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.application-pathway-step-status {
+  position: relative;
+  width: max-content;
+  max-width: 100%;
+  margin: 5px 3px 0;
+  cursor: pointer;
+}
+
+.application-pathway-status-checkbox {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.application-pathway-step-deadlines {
+  width: calc(100% - 6px);
+  margin: 4px 3px 0;
+  color: #1766a8;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.application-pathway-step-deadlines summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 650;
+  list-style: none;
+}
+
+.application-pathway-step-deadlines summary::-webkit-details-marker {
+  display: none;
+}
+
+.application-pathway-step-deadlines summary::after {
+  margin-left: 4px;
+  content: '+';
+}
+
+.application-pathway-step-deadlines[open] summary::after {
+  content: '−';
+}
+
+.application-pathway-step-deadlines ul {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.application-pathway-step-deadlines li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 6px;
+  padding: 6px;
+  border: 1px solid #e1ebf6;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.application-pathway-step-deadlines li > span {
+  min-width: 0;
+  color: #365676;
+  overflow-wrap: anywhere;
+}
+
+.application-pathway-step-deadlines time {
+  color: #365676;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.application-pathway-step-deadlines small {
+  color: #7188a6;
+  font-size: 9px;
+}
+
+.application-pathway-step-deadlines a {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  color: #1766a8;
+  font-weight: 600;
+}
+
+.application-pathway-step-status:focus-within {
+  outline: 2px solid #1168c8;
+  outline-offset: 2px;
+}
+
+.application-pathway-next-action {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.application-pathway-next-card button {
+  width: 100%;
+  font-size: 10.5px;
+}
+
+.application-pathway-all-complete {
+  margin-top: 12px;
+  color: #17774b;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.application-pathway-encouragement {
+  position: relative;
+  display: flex;
+  min-height: 112px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid #dcebf8;
+  border-radius: 12px;
+  background:
+    linear-gradient(110deg, rgba(233, 246, 255, .97) 0%, rgba(233, 246, 255, .86) 55%, rgba(233, 246, 255, .28) 100%),
+    url('/images/study-abroad-banner.jpg') right center / cover no-repeat;
+}
+
+.application-pathway-encouragement h2 {
+  max-width: 150px;
+  color: #3d82c1;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.application-pathway-encouragement p {
+  margin-top: 7px;
+  color: #6f93b7;
+  font-size: 10px;
+}
+
+.application-pathway-encouragement > svg {
+  flex: 0 0 auto;
+  color: #2385d9;
+}
+
+@media (max-width: 1000px) {
+  .application-pathway-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .application-pathway-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .application-pathway-page {
+    padding: 13px 12px 24px;
+  }
+
+  .application-pathway-journey.is-overall-journey {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     grid-template-rows: none !important;
-    gap: 16px;
+    height: auto;
+    gap: 18px 8px;
   }
 
   .application-pathway-journey-line {
     display: none;
   }
 
-  .application-journey-step {
-    grid-column: auto !important;
-    grid-row: auto !important;
+  .application-pathway-journey-slot {
+    min-height: 170px;
   }
 
+  .application-pathway-journey-slot > .application-journey-step {
+    align-items: center;
+    text-align: center;
+  }
+
+  .application-pathway-journey-slot .application-journey-content {
+    align-items: center;
+    text-align: center;
+  }
+
+  .application-pathway-journey-slot .application-journey-copy {
+    align-items: center;
+    text-align: center;
+  }
+
+  .application-pathway-rail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .application-pathway-journey-slot > .application-journey-step .application-journey-node {
+    transition: none;
+  }
 }

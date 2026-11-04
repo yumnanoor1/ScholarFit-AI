@@ -12,9 +12,9 @@ from app.schemas.admin import (
     FlagWrite, VerificationWrite,
 )
 from app.schemas.opportunity import ScholarshipResponse
-from app.services.scholarship_matching import programs_for_scholarship
 from app.services.scholarship_quality import (
     duplicate_pairs, field_changes, find_conflicts, find_issues, record_audit, reference_counts, set_archived,
+    update_scholarship_if_current,
 )
 from app.services.source_check import check_url
 
@@ -23,8 +23,8 @@ router = APIRouter(prefix="/admin/scholarships", tags=["Admin Scholarships"], de
 
 SOURCE_FIELDS = ("official_info_url", "official_application_url")
 INCOMPLETE_CODES = {"missing_deadline", "missing_funding", "missing_eligibility", "no_structured_data"}
-ATTENTION_CODES = {"conflict", "needs_review", "broken_url", "missing_official_source", "stale_verification", "outdated_source", "broken_source",
-                   "needs_reverification"}
+ATTENTION_CODES = {"conflict", "needs_review", "broken_url", "missing_official_source", "stale_verification", "never_verified",
+                   "outdated_source", "broken_source", "needs_reverification"}
 
 
 def _record(db: Session, scholarship_id: int) -> Scholarship:
@@ -121,9 +121,7 @@ def list_records(
 def _detail(db: Session, item: Scholarship) -> dict:
     audit = (db.query(ScholarshipAuditLog).filter(ScholarshipAuditLog.scholarship_id == item.id)
              .order_by(ScholarshipAuditLog.id.desc()).limit(50).all())
-    links = [row for row in programs_for_scholarship(db, item, include_not_matches=True)
-             if row["has_relationship"] or row["blocking_criterion"] != "country"]
-    return {"scholarship": item, "issues": find_issues(item), "references": reference_counts(db, item.id), "audit": audit, "relationships": links}
+    return {"scholarship": item, "issues": find_issues(item), "references": reference_counts(db, item.id), "audit": audit}
 
 
 @router.get("/{scholarship_id}", response_model=AdminDetail)
@@ -144,8 +142,8 @@ def set_verification(
     if data.status == "verified":
         if not data.evidence_reviewed:
             raise HTTPException(status_code=422, detail="Confirm that you reviewed the evidence yourself")
-        if data.basis not in ("official_source", "mixed_sources"):
-            raise HTTPException(status_code=422, detail="A secondary or missing source can't verify a record")
+        if data.basis != "official_source":
+            raise HTTPException(status_code=422, detail="A mixed, secondary, or missing source can't verify a record")
         if not data.source_url or not data.verified_on:
             raise HTTPException(status_code=422, detail="Verifying needs the source URL and the date you checked it")
         if data.verified_on > date.today():
@@ -153,15 +151,22 @@ def set_verification(
         conflicts = find_conflicts(item)
         if conflicts and not data.acknowledge_conflicts:
             raise HTTPException(status_code=409, detail=f"This record has conflicts: {'; '.join(conflicts)}")
-    before = {field: getattr(item, field) for field in ("verification_status", "verification_basis", "official_info_url", "last_verified_date", "verification_notes")}
+    before = {field: getattr(item, field) for field in (
+        "verification_status", "verification_basis", "official_info_url", "last_verified_date",
+        "verification_notes", "last_verified",
+    )}
     after = {"verification_status": data.status, "verification_basis": data.basis, "verification_notes": data.notes}
     if data.status == "verified":
-        after.update(official_info_url=data.source_url, last_verified_date=data.verified_on)
-        item.last_verified = data.verified_on.isoformat()
-    for field, value in after.items():
-        setattr(item, field, value)
-    item.record_version = (item.record_version or 0) + 1
-    record_audit(db, item.id, "verification", admin, field_changes(before, after), data.notes)
+        after.update(
+            official_info_url=data.source_url,
+            last_verified_date=data.verified_on,
+            last_verified=data.verified_on.isoformat(),
+        )
+    changes = field_changes(before, after)
+    if not changes:
+        return _detail(db, item)
+    update_scholarship_if_current(db, item, after)
+    record_audit(db, item.id, "verification", admin, changes, data.notes)
     db.commit()
     db.refresh(item)
     return _detail(db, item)
@@ -172,10 +177,12 @@ def set_flag(data: FlagWrite, scholarship_id: int = Path(..., gt=0), db: Session
     """Raises or clears a review flag. Verification status doesn't change."""
     item = _record(db, scholarship_id)
     flags = set(item.data_flags or [])
+    was_active = data.flag in flags
+    if was_active == data.active:
+        return _detail(db, item)
     flags = flags | {data.flag} if data.active else flags - {data.flag}
-    item.data_flags = sorted(flags)
-    item.record_version = (item.record_version or 0) + 1
-    record_audit(db, item.id, "flag", admin, {data.flag: [not data.active, data.active]}, data.note)
+    update_scholarship_if_current(db, item, {"data_flags": sorted(flags)})
+    record_audit(db, item.id, "flag", admin, {data.flag: [was_active, data.active]}, data.note)
     db.commit()
     db.refresh(item)
     return _detail(db, item)
@@ -195,7 +202,7 @@ def check_sources(scholarship_id: int = Path(..., gt=0), db: Session = Depends(g
 
 @router.post("/{scholarship_id}/archive", response_model=AdminDetail)
 def archive(data: ArchiveWrite, scholarship_id: int = Path(..., gt=0), db: Session = Depends(get_db), admin=Depends(require_admin)):
-    """Takes a record out of every listing. Its ID, saved rows and relationships stay."""
+    """Takes a record out of every listing. Its ID, saved rows and internal links stay."""
     item = _record(db, scholarship_id)
     if item.archived:
         raise HTTPException(status_code=409, detail="This record is already archived")
@@ -223,11 +230,10 @@ def set_duplicate(data: DuplicateWrite, scholarship_id: int = Path(..., gt=0), d
         if _record(db, target).duplicate_of_id is not None:
             raise HTTPException(status_code=422, detail="Point to the main record, not to another duplicate")
     old = item.duplicate_of_id
-    item.duplicate_of_id = target
-    item.record_version = (item.record_version or 0) + 1
+    if old == target:
+        return _detail(db, item)
+    update_scholarship_if_current(db, item, {"duplicate_of_id": target})
     record_audit(db, item.id, "duplicate", admin, {"duplicate_of_id": [old, target]}, data.note)
     db.commit()
     db.refresh(item)
     return _detail(db, item)
-
-

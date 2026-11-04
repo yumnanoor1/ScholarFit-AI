@@ -10,9 +10,8 @@ const REQUIRED_FIELDS = [
   'academicBackground.graduationDate', 'academicBackground.cgpa', 'academicBackground.gradingScale', 'englishProficiency.testType',
   'academicBackground.relevantCoursework', 'academicBackground.technicalSkills', 'academicBackground.programmingLanguages',
   'englishProficiency.otherTestName', 'englishProficiency.mediumOfInstruction', 'studyPreferences.fields',
-  'studyPreferences.countries', 'studyPreferences.fundingPreferences', 'studyPreferences.intake',
-  'studyPreferences.studyMode', 'studyPreferences.programPreference', 'studyPreferences.maxTuitionBudget',
-  'studyPreferences.maxLivingCostBudget', 'studyPreferences.currency', 'studyPreferences.duration'
+  'studyPreferences.countries', 'studyPreferences.fundingPreferences', 'studyPreferences.maxTuitionBudget',
+  'studyPreferences.maxLivingCostBudget', 'studyPreferences.currency'
 ];
 
 const OPTIONAL_FIELDS = [
@@ -30,6 +29,27 @@ const FUNDING_OPTIONS = [
   'Fully Funded', 'Mostly Funded', 'Partial Scholarship', 'Tuition Waiver',
   'Research Assistantship (RA)', 'Teaching Assistantship (TA)', 'Self-Funded',
 ];
+
+export function mergeExtractedProfile(existingProfile, extractedProfile) {
+  const existing = mergeProfile(existingProfile || EMPTY_PROFILE);
+  const mergeSection = (saved = {}, extracted = {}) => Object.fromEntries(
+    Object.entries({ ...saved, ...extracted }).map(([key, value]) => {
+      const previous = saved[key];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return [key, mergeSection(previous && typeof previous === 'object' ? previous : {}, value)];
+      }
+      if (Array.isArray(value)) return [key, value.length ? value : (previous || [])];
+      return [key, value === '' || value === null || value === undefined ? (previous ?? value) : value];
+    }),
+  );
+  return mergeProfile({
+    personalInfo: mergeSection(existing.personalInfo, extractedProfile.personalInfo),
+    academicBackground: mergeSection(existing.academicBackground, extractedProfile.academicBackground),
+    englishProficiency: mergeSection(existing.englishProficiency, extractedProfile.englishProficiency),
+    studyPreferences: mergeSection(existing.studyPreferences, extractedProfile.studyPreferences),
+    documentAvailability: mergeSection(existing.documentAvailability, extractedProfile.documentAvailability),
+  });
+}
 
 function labeledValue(text, labels) {
   const labelPattern = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
@@ -110,7 +130,7 @@ async function readableDocumentText(file) {
   return '';
 }
 
-export async function extractProfileFromCv(file, { user, onProgress } = {}) {
+export async function extractProfileFromCv(file, { user, existingProfile, onProgress } = {}) {
   const endpoint = import.meta.env.VITE_CV_EXTRACTION_API_URL;
   if (endpoint) {
     const body = new FormData();
@@ -120,7 +140,7 @@ export async function extractProfileFromCv(file, { user, onProgress } = {}) {
     const result = await response.json();
     return {
       ...result,
-      profile: mergeProfile(result.profile),
+      profile: mergeExtractedProfile(existingProfile, result.profile || EMPTY_PROFILE),
       fieldStatuses: result.fieldStatuses || {},
       source: 'api',
       fileName: file.name,
@@ -221,14 +241,6 @@ export async function extractProfileFromCv(file, { user, onProgress } = {}) {
   preferences.fundingPreferences = fundingTerms.map((term) => (
     FUNDING_OPTIONS.find((option) => option.toLowerCase() === term.toLowerCase())
   )).filter(Boolean);
-  const intake = labeledValue(text, ['Preferred Intake', 'Intake']);
-  preferences.intake = ['Spring', 'Fall', 'Any'].find((option) => option.toLowerCase() === intake.toLowerCase()) || '';
-  const studyMode = labeledValue(text, ['Study Mode', 'Mode of Study']);
-  preferences.studyMode = ['On Campus', 'Hybrid', 'Online', 'Flexible'].find((option) => option.toLowerCase() === studyMode.toLowerCase()) || '';
-  const programPreference = labeledValue(text, ['Program Preference', 'Program Focus']);
-  preferences.programPreference = ['Coursework Focused', 'Research Focused', 'Either'].find((option) => option.toLowerCase() === programPreference.toLowerCase()) || '';
-  const duration = labeledValue(text, ['Preferred Duration', 'Program Duration']);
-  preferences.duration = ['1 Year', '1.5 Years', '2 Years', 'Flexible'].find((option) => option.toLowerCase() === duration.toLowerCase()) || '';
   const tuitionBudget = labeledValue(text, ['Maximum Tuition Budget', 'Tuition Budget']);
   const livingBudget = labeledValue(text, ['Maximum Living Cost Budget', 'Living Cost Budget']);
   preferences.maxTuitionBudget = parseBudget(tuitionBudget);
@@ -273,13 +285,9 @@ export async function extractProfileFromCv(file, { user, onProgress } = {}) {
     'studyPreferences.fields': preferences.fields.length,
     'studyPreferences.countries': preferences.countries.length,
     'studyPreferences.fundingPreferences': preferences.fundingPreferences.length,
-    'studyPreferences.intake': preferences.intake,
-    'studyPreferences.studyMode': preferences.studyMode,
-    'studyPreferences.programPreference': preferences.programPreference,
     'studyPreferences.maxTuitionBudget': preferences.maxTuitionBudget,
     'studyPreferences.maxLivingCostBudget': preferences.maxLivingCostBudget,
     'studyPreferences.currency': preferences.currency,
-    'studyPreferences.duration': preferences.duration,
   };
 
   for (const path of REQUIRED_FIELDS) {
@@ -316,10 +324,11 @@ export async function extractProfileFromCv(file, { user, onProgress } = {}) {
   if (english.testType !== 'Other') fieldStatuses['englishProficiency.otherTestName'] = 'not-applicable';
 
   onProgress?.('Preparing profile');
+  const reviewedProfile = mergeExtractedProfile(existingProfile, profile);
   return {
-    profile,
+    profile: reviewedProfile,
     fieldStatuses,
-    source: text ? 'local-demo-parser' : 'no-readable-text',
+    source: text ? 'local-parser' : 'no-readable-text',
     fileName: file.name,
     fileSize: file.size,
     fileType: file.type || file.name.split('.').pop()?.toUpperCase() || 'Document',

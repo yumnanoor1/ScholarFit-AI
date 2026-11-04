@@ -1,12 +1,10 @@
-import { ChevronDown, User, Bell, Search } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { ChevronDown, User, Search } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useProfile } from '../../context/ProfileContext';
 import { canUseApp } from '../../services/profileAccess';
 import AssistantChat from '../assistant/AssistantChat';
 
 export default function Navbar() {
-  const navigate = useNavigate();
   const { user: authenticatedUser } = useAuth();
   const { completion } = useProfile();
   const displayName = authenticatedUser?.name?.trim() || 'Student';
@@ -19,26 +17,11 @@ export default function Navbar() {
           <Search size={16} color="var(--color-text-muted)" style={{ position: 'absolute', left: '10px' }} />
           <input
             type="text"
-            placeholder="Search universities, scholarships, or programs..."
+            placeholder="Search scholarships..."
           />
         </div>
       )}
       <div className="navbar-actions">
-        {canUseApp(completion) && (
-          <button type="button" aria-label="Open application timeline" onClick={() => navigate('/timeline')} style={{ background: 'none', border: 'none', cursor: 'pointer', position: 'relative' }}>
-            <Bell size={20} color="var(--color-dark)" />
-            <span style={{
-              position: 'absolute',
-              top: '-2px',
-              right: '-2px',
-              width: '8px',
-              height: '8px',
-              backgroundColor: 'var(--color-primary)',
-              borderRadius: '50%'
-            }} />
-          </button>
-        )}
-
         <AssistantChat />
 
         <div className="navbar-user-profile">

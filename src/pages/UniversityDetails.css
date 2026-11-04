@@ -58,6 +58,12 @@
   padding: 8px;
   border: 1px solid var(--brand-tint);
   background: #fff;
+  text-align: left;
+}
+
+.sd-facts > div > div {
+  min-width: 0;
+  text-align: left;
 }
 
 .program-detail-mark img {
@@ -520,6 +526,7 @@
 .sd-hero {
   display: grid;
   gap: 8px;
+  text-align: left;
   padding: 28px 32px;
   border-radius: 16px;
   background: linear-gradient(140deg, var(--brand-navy) 0%, var(--brand-navy-light) 100%);
@@ -582,7 +589,7 @@
   padding: 18px 20px;
   border: 1px solid var(--color-border-light);
   border-radius: 14px;
-  background: #fff;
+  background: linear-gradient(135deg, #fff 0%, #f1f7fd 100%);
 }
 
 .sd-facts > div:last-child:nth-child(odd) {
@@ -647,12 +654,16 @@
   padding: 22px 24px;
   border: 1px solid var(--color-border-light);
   border-radius: 14px;
-  background: #fff;
+  background: linear-gradient(135deg, #fff 0%, #f6f9fd 100%);
   box-shadow: 0 6px 20px -18px rgba(9, 38, 74, 0.35);
+  text-align: left;
 }
 
 .sd-main > section > h2,
 .sd-aside > section > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
   color: var(--color-dark);
   font-family: var(--font-family-heading);
@@ -668,12 +679,37 @@
   line-height: 1.6;
 }
 
+.sd-aside > section > p,
+.sd-aside > section .sd-details > p {
+  text-align: justify;
+  text-align-last: left;
+}
+
 .sd-main .scholarship-requirement-list {
   gap: 10px;
 }
 
 .sd-main .scholarship-requirement-list li {
+  grid-template-columns: 170px minmax(0, 1fr);
   padding: 14px 16px;
+  background: linear-gradient(135deg, #fff 0%, #f2f8fd 100%);
+  text-align: left;
+}
+
+.sd-main .scholarship-requirement-list li > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sd-main .scholarship-requirement-list li > div > strong {
+  overflow-wrap: anywhere;
+}
+
+.sd-main .scholarship-requirement-list .program-status {
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.25;
+  text-align: center;
 }
 
 .sd-main .scholarship-requirement-list.is-score-list {
@@ -692,9 +728,11 @@
 .sd-info > div {
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr);
+  align-items: start;
   gap: 16px;
   padding: 12px 0;
   border-top: 1px solid var(--color-border-light);
+  text-align: left;
 }
 
 .sd-info > div:first-child {
@@ -707,18 +745,34 @@
 }
 
 .sd-info dt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   color: var(--color-text-muted);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.5;
 }
 
+.sd-info dt svg,
+.sd-main > section > h2 svg,
+.sd-aside > section > h2 svg {
+  flex: 0 0 auto;
+  color: var(--brand-blue);
+}
+
+.sd-info dt svg {
+  margin-top: 2px;
+}
+
 .sd-info dd {
+  min-width: 0;
   margin: 0;
   color: var(--color-dark);
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .sd-reasons {
@@ -740,6 +794,23 @@
   list-style: disc;
 }
 
+.sd-value-details summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--color-dark);
+  cursor: pointer;
+  line-height: 1.45;
+}
+
+.sd-value-details p {
+  margin: 6px 0 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .sd-details summary {
   color: var(--brand-blue);
   cursor: pointer;
@@ -749,6 +820,55 @@
 
 .sd-details .sd-info {
   margin-top: 12px;
+}
+
+.sd-details .sd-info > div:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.sd-note-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sd-main .scholarship-requirement-list p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.sd-main .scholarship-requirement-list .sd-details {
+  margin-top: 5px;
+}
+
+.sd-main .scholarship-requirement-list .sd-details p {
+  display: block;
+  overflow: visible;
+  margin-top: 6px;
+}
+
+.sd-main .scholarship-eligibility-summary > span:last-child {
+  display: -webkit-box;
+  overflow: hidden;
+  min-width: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-align: left;
+}
+
+.sd-main .sd-reasons > ul {
+  margin-top: 8px;
+}
+
+.sd-main .sd-details > p {
+  margin-top: 8px;
 }
 
 .sd-links {
@@ -820,5 +940,15 @@
   .sd-info > div {
     grid-template-columns: minmax(0, 1fr);
     gap: 2px;
+  }
+}
+
+@media (max-width: 560px) {
+  .sd-main .scholarship-requirement-list li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sd-main .scholarship-requirement-list .program-status {
+    justify-self: start;
   }
 }

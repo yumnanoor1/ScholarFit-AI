@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models.opportunity import Program, Scholarship, ScholarshipProgramLink, University
+from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
 from app.routers import recommendations as api
 from app.core.permissions import require_complete_profile
@@ -28,6 +28,7 @@ CLEAR = dict(
     discipline_scope="all", eligible_disciplines=None, academic_condition="numeric", min_gpa=3.0, min_gpa_scale=4.0,
     min_academic_requirement="Minimum CGPA 3.0/4.0", english_requirement_type="test_required", min_ielts=6.5,
     deadline_type="fixed", application_deadline_date=date(2027, 1, 15), verification_basis="official_source",
+    official_info_url="https://example.org/scholarship", last_verified_date=date(2026, 10, 1),
     funding_level="full", tuition_coverage_type="full", tuition_percent_min=None, tuition_percent_max=None, tuition_amount=None,
     tuition_currency=None, stipend_status="provided", stipend_amount=1000.0, stipend_currency="EUR", stipend_period="monthly",
     stipend_is_approximate=False, accommodation_status="covered", health_insurance_status="not_specified", travel_status="not_specified",
@@ -40,19 +41,8 @@ def record(**overrides):
     return make_scholarship(**{**CLEAR, **overrides})
 
 
-def program(**overrides):
-    data = dict(id=7, name="MSc Computer Science", university_id=3, degree_level="Master", field_of_study="Computer Science",
-                university=SimpleNamespace(name="TU Example", country="Germany"))
-    return SimpleNamespace(**{**data, **overrides})
-
-
-def link(outcome):
-    return SimpleNamespace(outcome=outcome, relationship_type="unconfirmed", evidence="Evidence", source_url="https://example.org",
-                           verification_status="verified" if outcome == "confirmed" else "unverified", last_verified=None, notes=None)
-
-
-def recommend(scholarship=None, profile=None, selected=None, stored=None):
-    return recommend_scholarship(scholarship or record(), profile or make_profile(), selected, stored, today=TODAY)
+def recommend(scholarship=None, profile=None):
+    return recommend_scholarship(scholarship or record(), profile or make_profile(), today=TODAY)
 
 
 class ModelTests(unittest.TestCase):
@@ -60,13 +50,13 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(sum(engine.WEIGHTS.values()), 100)
 
     def test_breakdown_adds_up_to_the_score(self):
-        for selected, stored in ((None, None), (program(), link("confirmed"))):
-            result = recommend(selected=selected, stored=stored)
-            self.assertAlmostEqual(sum(item["points"] for item in result["breakdown"]), result["score"], delta=1)
-            self.assertTrue(0 <= result["score"] <= 100)
+        result = recommend()
+        self.assertAlmostEqual(sum(item["points"] for item in result["breakdown"]), result["score"], delta=1)
+        self.assertTrue(0 <= result["score"] <= 100)
+        self.assertNotIn("program", [item["dimension"] for item in result["breakdown"]])
 
     def test_best_case_scores_100(self):
-        result = recommend(selected=program(), stored=link("confirmed"))
+        result = recommend()
         self.assertEqual(result["score"], 100)
         self.assertEqual((result["category"], result["category_label"]), ("strong", "Strong Match"))
 
@@ -80,11 +70,10 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(with_grade["eligibility"], without_grade["eligibility"])  # grades belong to the academic dimension
         self.assertLess(without_grade["academic"], with_grade["academic"])
 
-    def test_program_weight_is_left_out_without_a_program(self):
+    def test_recommendation_is_scholarship_only(self):
         result = recommend()
-        self.assertNotIn("program", [item["dimension"] for item in result["breakdown"]])
-        self.assertIsNone(result["program_match"])
-        self.assertTrue(any("hasn't been evaluated" in item for item in result["warnings"]))
+        self.assertNotIn("program_match", result)
+        self.assertNotIn("program", result)
 
 
 def evaluate_values(scholarship, profile):
@@ -111,8 +100,32 @@ class EligibilityTests(unittest.TestCase):
         self.assertTrue(any("second Master's" in item for item in manual["warnings"]))
 
     def test_high_score_cant_lift_verify_manually(self):
-        result = recommend(record(applicant_restrictions=["fee_paying_only"]), selected=program(), stored=link("confirmed"))
-        self.assertEqual(result["category"], "possible")
+        result = recommend(record(applicant_restrictions=["fee_paying_only"]))
+        self.assertEqual(result["category"], "needs_verification")
+
+    def test_not_evaluated_requirements_need_verification_even_with_a_high_score(self):
+        result = recommend(record(
+            academic_condition="not_specified", min_academic_requirement="Not specified",
+            english_requirement_type="not_specified", english_requirement="Not specified",
+        ))
+        self.assertEqual(result["eligibility"]["status"], "not_evaluated")
+        self.assertEqual(result["category"], "needs_verification")
+
+    def test_funding_preference_changes_score_not_eligibility(self):
+        partial = record(funding_level="partial", tuition_coverage_type="fixed_amount", tuition_amount=5000,
+                         stipend_status="none")
+        result = recommend(partial, make_profile(funding_preference="Fully funded only"))
+        self.assertEqual(result["eligibility"]["status"], "eligible")
+        funding = next(item for item in result["breakdown"] if item["dimension"] == "funding")
+        self.assertEqual(funding["value"], 0.0)
+        self.assertTrue(any("prefers fully funded" in item for item in result["warnings"]))
+
+    def test_target_degree_preference_affects_score_not_eligibility(self):
+        result = recommend(profile=make_profile(preferred_degree_levels=["PhD"]))
+        self.assertEqual(result["eligibility"]["status"], "eligible")
+        academic = next(item for item in result["breakdown"] if item["dimension"] == "academic")
+        self.assertEqual(academic["value"], 0.0)
+        self.assertTrue(any("doesn't match your preferred target degree" in item for item in result["warnings"]))
 
     def test_missing_profile_data_earns_less(self):
         full = recommend()
@@ -127,34 +140,9 @@ class EligibilityTests(unittest.TestCase):
         self.assertEqual(result["category"], "needs_verification")
 
     def test_unverified_record_is_always_needs_verification(self):
-        result = recommend(record(verification_status="unverified", verification_basis="not_verified"), selected=program(), stored=link("confirmed"))
+        result = recommend(record(verification_status="unverified", verification_basis="not_verified"))
         self.assertEqual(result["category"], "needs_verification")
         self.assertTrue(any("not verified" in item for item in result["warnings"]))
-
-
-class ProgramTests(unittest.TestCase):
-    def test_confirmed_beats_potential(self):
-        confirmed = recommend(selected=program(), stored=link("confirmed"))
-        potential = recommend(selected=program(), stored=link("potential"))
-        self.assertGreater(confirmed["score"], potential["score"])
-        self.assertEqual(potential["program_match"]["label"], "Potential Match")
-        self.assertNotEqual(potential["category"], "strong")
-        self.assertTrue(any(item.startswith("Only a potential match") for item in potential["warnings"]))
-
-    def test_needs_verification_is_conservative(self):
-        result = recommend(record(institution_scope="participating_list"), selected=program())
-        self.assertEqual(result["program_match"]["outcome"], "needs_verification")
-        self.assertEqual(result["category"], "needs_verification")
-        self.assertTrue(any(item.startswith("Check that this supports") for item in result["warnings"]))
-
-    def test_not_a_match_is_excluded(self):
-        result = recommend(record(country="Turkey"), selected=program())
-        self.assertFalse(result["recommended"])
-        self.assertIsNone(result["score"])
-        self.assertEqual(result["exclusions"][0]["rule"], "not_a_match")
-
-    def test_same_country_alone_is_never_confirmed(self):
-        self.assertEqual(recommend(selected=program())["program_match"]["outcome"], "potential")
 
 
 class AcademicTests(unittest.TestCase):
@@ -194,6 +182,19 @@ class FundingTests(unittest.TestCase):
     def test_full_funding_ranks_above_partial(self):
         partial = recommend(record(funding_level="partial", tuition_coverage_type="fixed_amount", tuition_amount=5000, stipend_status="none"))
         self.assertGreater(recommend()["score"], partial["score"])
+
+    def test_substantial_funding_preference_requires_that_level(self):
+        partial = record(funding_level="partial", tuition_coverage_type="fixed_amount",
+                         tuition_amount=5000, stipend_status="none")
+        result = recommend(partial, make_profile(funding_preference="Fully funded or substantial scholarship"))
+        self.assertEqual(next(item for item in result["breakdown"] if item["dimension"] == "funding")["value"], 0.0)
+        self.assertTrue(any("does not meet your preference" in item for item in result["warnings"]))
+
+    def test_tuition_waiver_preference_uses_recorded_coverage(self):
+        scholarship = record(funding_level="partial", tuition_coverage_type="none", stipend_status="none")
+        result = recommend(scholarship, make_profile(preferred_funding_types=["Tuition waivers"]))
+        self.assertEqual(next(item for item in result["breakdown"] if item["dimension"] == "funding")["value"], 0.0)
+        self.assertTrue(any("prefers tuition waivers" in item for item in result["warnings"]))
 
     def test_missing_amount_is_a_warning_and_earns_less(self):
         result = recommend(record(stipend_amount=None))
@@ -235,7 +236,11 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result["category"], "needs_verification")
 
     def test_weaker_source_scores_lower(self):
-        self.assertLess(recommend(record(verification_basis="secondary_only"))["score"], recommend()["score"])
+        weaker = recommend(record(verification_basis="secondary_only"))
+        self.assertIsNotNone(weaker["score"])
+        self.assertLess(weaker["score"], recommend()["score"])
+        self.assertEqual(weaker["category"], "needs_verification")
+        self.assertFalse(weaker["recommended"])
 
     def test_explanations_use_the_record(self):
         result = recommend(record(stipend_amount=1234))
@@ -249,11 +254,6 @@ class ApiTests(unittest.TestCase):
         Base.metadata.create_all(bind=db_engine)
         self.db = sessionmaker(bind=db_engine)()
         fields = {key: value for key, value in vars(record(duration="2 years")).items() if key != "id"}
-        self.university = University(name="TU Example", country="Germany")
-        self.db.add(self.university)
-        self.db.flush()
-        self.program = Program(name="MSc", university_id=self.university.id, degree_level="Master", field_of_study="Computer Science",
-                               duration_months=24, tuition_amount=10000, tuition_currency="EUR")
         self.first = Scholarship(**{**fields, "name": "Full"})
         self.partial = Scholarship(**{**fields, "name": "Partial", "funding_level": "partial", "tuition_coverage_type": "fixed_amount",
                                       "tuition_amount": 5000, "tuition_currency": "EUR", "stipend_status": "none"})
@@ -265,7 +265,7 @@ class ApiTests(unittest.TestCase):
         self.alice = User(email="alice@example.com", hashed_password="x", full_name="Alice")
         self.bob = User(email="bob@example.com", hashed_password="x", full_name="Bob")
         self.carol = User(email="carol@example.com", hashed_password="x", full_name="Carol")  # no profile
-        self.db.add_all([self.program, self.first, self.partial, self.original, self.copy, self.hidden, self.closed, self.turkey,
+        self.db.add_all([self.first, self.partial, self.original, self.copy, self.hidden, self.closed, self.turkey,
                          self.alice, self.bob, self.carol])
         self.db.flush()
         self.copy.duplicate_of_id = self.original.id
@@ -274,17 +274,14 @@ class ApiTests(unittest.TestCase):
                            ielts_score=7.0, field_of_study="Computer Science", date_of_birth=date(2001, 5, 1)),
             StudentProfile(user_id=self.bob.id, nationality="Pakistan", degree_level="Bachelor's", cgpa=3.4, cgpa_scale=4.0,
                            ielts_score=5.0, field_of_study="Computer Science"),
-            ScholarshipProgramLink(scholarship_id=self.first.id, program_id=self.program.id, outcome="confirmed",
-                                   relationship_type="named_program", evidence="Evidence", source_url="https://example.org",
-                                   verification_status="verified", last_verified=date(2026, 10, 31)),
         ])
         self.db.commit()
 
     def tearDown(self):
         self.db.close()
 
-    def listing(self, user, program_id=None, include_unverified=False):
-        result = api.scholarship_recommendations(program_id=program_id, include_unverified=include_unverified, db=self.db, current_user=user)
+    def listing(self, user, include_unverified=False):
+        result = api.scholarship_recommendations(include_unverified=include_unverified, db=self.db, current_user=user)
         return RecommendationList.model_validate(result).model_dump()
 
     def names(self, rows):
@@ -303,25 +300,16 @@ class ApiTests(unittest.TestCase):
     def test_hidden_records_need_the_flag(self):
         self.assertNotIn("Hidden", self.names(self.listing(self.alice)["recommendations"]))
         rows = self.listing(self.alice, include_unverified=True)["recommendations"]
-        self.assertEqual(next(item for item in rows if item["scholarship_name"] == "Hidden")["category"], "needs_verification")
+        hidden = next(item for item in rows if item["scholarship_name"] == "Hidden")
+        self.assertEqual(hidden["category"], "needs_verification")
+        self.assertEqual(hidden["verification_status"], "unverified")
+        self.assertFalse(hidden["recommended"])
+        self.assertIsNotNone(hidden["score"])
 
     def test_closed_is_listed_apart(self):
         result = self.listing(self.alice)
         self.assertIn("Closed", self.names(result["excluded"]))
         self.assertNotIn("Closed", self.names(result["recommendations"]))
-
-    def test_program_excludes_non_matches(self):
-        result = self.listing(self.alice, self.program.id)
-        self.assertEqual(result["program"]["id"], self.program.id)
-        self.assertEqual(result["recommendations"][0]["scholarship_name"], "Full")
-        self.assertEqual(result["recommendations"][0]["program_match"]["outcome"], "confirmed")
-        self.assertIn("Elsewhere", self.names(result["excluded"]))
-
-    def test_financial_amounts_come_with_a_program(self):
-        rows = self.listing(self.alice, self.program.id)["recommendations"]
-        self.assertGreater(rows[0]["funding"]["for_program"]["confirmed_funding"], 0)
-        potential = next(item for item in rows if item["scholarship_name"] == "Original")
-        self.assertIsNone(potential["program_match"]["relationship_verification_status"])
 
     def test_different_students_get_different_results(self):
         alice = self.listing(self.alice)
@@ -340,14 +328,13 @@ class ApiTests(unittest.TestCase):
             get_current_user(token="not-a-real-token", db=self.db)
         self.assertEqual(error.exception.status_code, 401)
 
-    def test_unknown_program(self):
-        with self.assertRaises(HTTPException) as error:
-            self.listing(self.alice, 99999)
-        self.assertEqual((error.exception.status_code, error.exception.detail), (404, "Program not found"))
+    def test_program_filter_is_not_exposed(self):
+        route = next(item for item in api.router.routes if item.path == "/recommendations/scholarships")
+        self.assertNotIn("program_id", [item.name for item in route.dependant.query_params])
 
     def test_unknown_scholarship(self):
         with self.assertRaises(HTTPException) as error:
-            api.scholarship_recommendation(99999, program_id=None, db=self.db, current_user=self.alice)
+            api.scholarship_recommendation(99999, db=self.db, current_user=self.alice)
         self.assertEqual(error.exception.status_code, 404)
 
     def test_no_profile_is_handled(self):
@@ -357,15 +344,15 @@ class ApiTests(unittest.TestCase):
         self.assertIn("nationality", [gap["field"] for gap in result["profile_gaps"]])
 
     def test_one_scholarship_matches_the_list(self):
-        one = api.scholarship_recommendation(self.first.id, program_id=None, db=self.db, current_user=self.alice)
+        one = api.scholarship_recommendation(self.first.id, db=self.db, current_user=self.alice)
         ScholarshipRecommendation.model_validate(one)
         listed = self.listing(self.alice)["recommendations"][0]
         self.assertEqual((one["score"], one["category"]), (listed["score"], listed["category"]))
 
     def test_nothing_is_written(self):
-        before = (self.db.query(ScholarshipProgramLink).count(), self.db.query(Scholarship).count())
-        self.listing(self.alice, self.program.id)
-        self.assertEqual((self.db.query(ScholarshipProgramLink).count(), self.db.query(Scholarship).count()), before)
+        before = self.db.query(Scholarship).count()
+        self.listing(self.alice)
+        self.assertEqual(self.db.query(Scholarship).count(), before)
 
 
 if __name__ == "__main__":

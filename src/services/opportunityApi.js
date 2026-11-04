@@ -9,6 +9,8 @@ import {
   getRequirementRows,
   getVerificationText,
 } from './scholarshipDisplay.js';
+import { mapRequiredDocumentNames } from './opportunityJourney.js';
+import { getSourceEvidence } from './sourceVerification.js';
 
 // Optional chaining lets the pure mapping helpers below run under `node --test`
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
@@ -25,215 +27,14 @@ function extractErrorMessage(data, fallback = 'Request failed') {
 }
 
 // ---------------------------------------------------------------------------
-// Field Mapping Helper
-// ---------------------------------------------------------------------------
-
-/**
- * Maps a backend ProgramResponse + UniversityResponse to the shape
- * expected by Universities.jsx program cards.
- *
- * Backend program fields:
- *   id, university_id, name, degree_level, field_of_study, duration_months,
- *   tuition_usd_per_year, living_cost_usd_per_year, min_cgpa, min_ielts,
- *   min_toefl, required_degree, application_deadline, description, source_url
- *
- * Backend university fields:
- *   id, name, country, city, ranking, website, description
- */
-/** "€12,000" / "SEK 192,500" style amount, or null when unknown. */
-export function formatMoney(amount, currency) {
-  if (amount == null || !currency) return null;
-  try {
-    return new Intl.NumberFormat('en', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount);
-  } catch {
-    return `${currency} ${Math.round(amount).toLocaleString()}`;
-  }
-}
-
-export function mapProgramToFrontend(program, university) {
-  const tuition =
-    program.tuition_usd_per_year != null
-      ? `$${Number(program.tuition_usd_per_year).toLocaleString()} / year`
-      : null;
-
-  let englishReq = null;
-  if (program.min_ielts != null && program.min_toefl != null) {
-    englishReq = `IELTS ${program.min_ielts} / TOEFL ${program.min_toefl}`;
-  } else if (program.min_ielts != null) {
-    englishReq = `IELTS ${program.min_ielts}`;
-  } else if (program.min_toefl != null) {
-    englishReq = `TOEFL ${program.min_toefl}`;
-  }
-
-  return {
-    // IDs kept as strings to match existing ProfileContext save/compare logic
-    id: String(program.id),
-    _numericId: program.id,
-
-    // Core program fields
-    program: program.name,
-    degree: program.degree_level || null,
-    fieldOfStudy: program.field_of_study || null,
-    description: program.description || null,
-    sourceUrl: program.source_url || null,
-
-    // University identity (joined)
-    university: university?.name || 'University not listed',
-    country: university?.country || null,
-    city: university?.city || null,
-    universityWebsite: university?.website || null,
-
-    // Cost & timeline
-    tuition: tuition,
-    duration: program.duration_months ? `${program.duration_months} months` : null,
-    deadline: program.application_deadline || null,
-
-    // Raw values for the list and detail pages
-    tuitionUsd: program.tuition_usd_per_year ?? null,
-    tuitionAmount: program.tuition_amount ?? null,
-    tuitionCurrency: program.tuition_currency || null,
-    tuitionOriginal: program.tuition_amount === 0 ? 'No tuition fee' : formatMoney(program.tuition_amount, program.tuition_currency),
-    durationMonths: program.duration_months ?? null,
-    language: program.language_of_instruction || null,
-    lastVerified: program.last_verified || null,
-    minCgpa: program.min_cgpa ?? null,
-    minIelts: program.min_ielts ?? null,
-    minToefl: program.min_toefl ?? null,
-
-    // Requirements
-    cgpaReq: program.min_cgpa != null ? String(program.min_cgpa) : null,
-    englishReq: englishReq,
-    requiredDegree: program.required_degree || null,
-
-    // Match score — not computed by this integration step
-    matchScore: null,
-
-    // Indicate data came from real backend (not mock)
-    sourceStatus: 'live-backend',
-    requiredDocuments: [],
-    applicationUrl: null,
-    applicationUrlStatus: 'unavailable',
-
-    kind: 'program',
-  };
-}
-
-// ---------------------------------------------------------------------------
 // API Calls
 // ---------------------------------------------------------------------------
-
-/**
- * Fetch all universities with optional filters.
- * GET /universities/?country=&search=&skip=&limit=
- */
-export async function fetchUniversities({ country, search, skip = 0, limit = 100 } = {}) {
-  const params = new URLSearchParams();
-  if (country) params.set('country', country);
-  if (search) params.set('search', search);
-  params.set('skip', String(skip));
-  params.set('limit', String(limit));
-
-  const response = await fetch(`${API_BASE_URL}/universities/?${params.toString()}`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch universities (${response.status})`);
-  }
-  return response.json(); // UniversityResponse[]
-}
-
-/**
- * Fetch a single university by its numeric ID.
- * GET /universities/{id}
- * Returns null (not a throw) on 404 so callers can handle missing gracefully.
- */
-export async function fetchUniversityById(id) {
-  const response = await fetch(`${API_BASE_URL}/universities/${id}`);
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Failed to fetch university ${id} (${response.status})`);
-  }
-  return response.json(); // UniversityResponse
-}
-
-/**
- * Fetch all programs with optional filters.
- * GET /programs/?country=&field_of_study=&degree_level=&max_tuition=&search=&skip=&limit=
- */
-export async function fetchPrograms({
-  country,
-  field_of_study,
-  degree_level,
-  max_tuition,
-  deadline_before,
-  university_id,
-  search,
-  skip = 0,
-  limit = 100,
-} = {}) {
-  const params = new URLSearchParams();
-  if (country) params.set('country', country);
-  if (field_of_study) params.set('field_of_study', field_of_study);
-  if (degree_level) params.set('degree_level', degree_level);
-  if (max_tuition != null) params.set('max_tuition', String(max_tuition));
-  if (deadline_before) params.set('deadline_before', deadline_before);
-  if (university_id != null) params.set('university_id', String(university_id));
-  if (search) params.set('search', search);
-  params.set('skip', String(skip));
-  params.set('limit', String(limit));
-
-  const response = await fetch(`${API_BASE_URL}/programs/?${params.toString()}`);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch programs (${response.status})`);
-  }
-  return response.json(); // ProgramResponse[]
-}
-
-/**
- * Fetch a single program by its numeric ID, then joins its university.
- * Returns { program: ProgramResponse, university: UniversityResponse|null }
- * Returns null on 404.
- */
-export async function fetchProgramById(id) {
-  const numericId = Number(id);
-  if (!Number.isFinite(numericId)) return null;
-
-  const response = await fetch(`${API_BASE_URL}/programs/${numericId}`);
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Failed to fetch program ${numericId} (${response.status})`);
-  }
-  const program = await response.json(); // ProgramResponse
-
-  // Join university to get name/country for the detail page
-  const university = await fetchUniversityById(program.university_id);
-
-  return { program, university };
-}
-
-/**
- * Fetches all programs and all universities, joins them, and returns
- * an array of frontend-mapped program objects ready for Universities.jsx.
- *
- * If the database is empty this returns [] — the UI handles that with its
- * existing "No programs match these filters" empty state.
- */
-export async function fetchMappedPrograms(filters = {}) {
-  const [programs, universities] = await Promise.all([
-    fetchPrograms(filters),
-    fetchUniversities(),
-  ]);
-
-  // Build a lookup map so joining is O(1) per program
-  const universityMap = Object.fromEntries(universities.map((u) => [u.id, u]));
-
-  return programs.map((p) => mapProgramToFrontend(p, universityMap[p.university_id] || null));
-}
 
 // ---------------------------------------------------------------------------
 // Scholarships
 // ---------------------------------------------------------------------------
 
-// Frontend IDs for backend scholarships. The "sch-" prefix is how the app tells
-// scholarships from programs; "db-" keeps them apart from the old mock IDs (sch-1…).
+// Persisted scholarship IDs stay distinct from legacy non-database selections.
 const SCHOLARSHIP_ID_PREFIX = 'sch-db-';
 
 export function toScholarshipId(numericId) {
@@ -264,11 +65,19 @@ function firstUrl(value) {
  * Match scores are not computed by the backend, so matchScore stays null.
  */
 export function mapScholarshipToFrontend(item) {
-  const verified = item.verification_status === 'verified';
+  const sourceUrl = item.official_info_url || null;
+  const lastVerified = item.last_verified_date || null;
+  const evidence = getSourceEvidence({
+    sourceUrl,
+    lastVerified,
+    verificationStatus: item.verification_status,
+    verificationBasis: item.verification_basis,
+  });
+  const verified = evidence.status === 'verified';
   const structured = Boolean(item.structured_data_version);
   // Structured records name their own links, so a home page or example link isn't offered as the application
   const officialUrl = structured
-    ? item.official_application_url || item.official_info_url || null
+    ? item.official_application_url || null
     : firstUrl(item.official_url);
   const benefits = [
     ['Tuition', listedValue(item.tuition_coverage)],
@@ -302,7 +111,9 @@ export function mapScholarshipToFrontend(item) {
     academicSummary: structured ? getAcademicSummary(item) : null,
     englishSummary: structured ? getEnglishSummary(item) : null,
     audienceSummary: structured ? getAudienceSummary(item) : null,
-    verificationText: getVerificationText(item),
+    verificationText: evidence.message || getVerificationText(item),
+    verificationLabel: evidence.label,
+    verificationMessage: evidence.message,
     verificationNotes: item.verification_notes || null,
     duplicateOf: item.duplicate_of_id ? toScholarshipId(item.duplicate_of_id) : null,
     deadlineDate: item.application_deadline_date || null,
@@ -320,6 +131,7 @@ export function mapScholarshipToFrontend(item) {
     ageRequirement: item.age_requirement || null,
 
     applicationMethod: item.application_method || null,
+    applicationChannel: item.application_channel || null,
     admissionRequired: item.admission_required || null,
     nominationRequired: item.nomination_required || null,
     requiredDocumentsText: item.required_documents || null,
@@ -327,9 +139,10 @@ export function mapScholarshipToFrontend(item) {
     notes: item.notes || null,
 
     sourceName: item.source_name || null,
-    sourceUrl: officialUrl,
-    lastVerified: item.last_verified || null,
-    verificationStatus: item.verification_status || null,
+    sourceUrl,
+    lastVerified,
+    verificationStatus: verified ? 'verified' : 'unverified',
+    recordedVerificationStatus: item.verification_status || null,
     archived: Boolean(item.archived),
 
     // Records the backend marks verified were checked against their official source
@@ -339,19 +152,12 @@ export function mapScholarshipToFrontend(item) {
     applicationUrlStatus: verified && officialUrl ? 'official-verified' : 'unavailable',
 
     matchScore: null,
-    requiredDocuments: mapRequiredDocuments(item.required_documents_list, verified),
+    requiredDocuments: mapRequiredDocumentNames(
+      item.required_documents_list,
+      item.required_documents,
+      verified,
+    ),
   };
-}
-
-/** The record's document list. IDs come from the name, so one upload counts wherever that document is required. */
-function mapRequiredDocuments(names, verified) {
-  return (Array.isArray(names) ? names : [])
-    .filter((name) => typeof name === 'string' && name.trim())
-    .map((name) => ({
-      id: name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
-      name: name.trim(),
-      sourceStatus: verified ? 'official-verified' : 'unverified',
-    }));
 }
 
 /**
@@ -429,85 +235,21 @@ export async function fetchMappedScholarships(filters = {}) {
 // Eligibility (authenticated)
 // ---------------------------------------------------------------------------
 
-// Backend overall status -> frontend status used by the pages
-const ELIGIBILITY_STATUS_MAP = {
-  eligible: 'satisfied',
-  'not-eligible': 'not-satisfied',
-  'missing-information': 'missing-information',
-  'not-evaluated': 'awaiting-verification',
-};
-
-const REQUIREMENT_STATUSES = ['satisfied', 'not-satisfied', 'missing-information'];
-
-// Backend requirement key -> requirement shape the pages already render
-const REQUIREMENT_META = {
-  cgpa: { id: 'minimum-cgpa', category: 'academic', label: 'Minimum CGPA', field: 'cgpa' },
-  english: { id: 'language-test', category: 'language', label: 'Language proficiency', field: 'englishScore' },
-  degree_level: { id: 'degree-level', category: 'academic', label: 'Degree level', field: 'degreeLevel' },
-};
-
-const AWAITING_MESSAGE = 'No structured CGPA or English requirement is available to check for this program. Confirm requirements on the official page.';
-
-function worstRequirementStatus(requirements) {
-  const statuses = requirements.map((requirement) => requirement.status);
-  if (statuses.includes('not-satisfied')) return 'not-satisfied';
-  if (statuses.includes('missing-information')) return 'missing-information';
-  if (statuses.includes('awaiting-verification')) return 'awaiting-verification';
-  return 'satisfied';
-}
-
-/**
- * Maps a backend EligibilityResult to { status, requirements, notes, message }.
- * Each requirement keeps its own backend status; the overall status is never
- * upgraded to 'satisfied' from the `eligible` flag alone.
- */
-export function mapEligibilityToFrontend(result) {
-  const backendRequirements = [
-    ...(result?.matched_requirements || []),
-    ...(result?.missing_requirements || []),
-  ];
-  const requirements = backendRequirements.map((item) => ({
-    ...(REQUIREMENT_META[item.requirement] || {
-      id: item.requirement,
-      category: 'other',
-      label: item.requirement,
-      field: item.requirement,
-    }),
-    status: REQUIREMENT_STATUSES.includes(item.status) ? item.status : 'awaiting-verification',
-    message: item.message || '',
-    sourceStatus: 'live-backend',
-    required: true,
-  }));
-
-  let status = ELIGIBILITY_STATUS_MAP[result?.status] || 'awaiting-verification';
-  if (status === 'satisfied' && (requirements.length === 0 || worstRequirementStatus(requirements) !== 'satisfied')) {
-    status = requirements.length === 0 ? 'awaiting-verification' : worstRequirementStatus(requirements);
-  }
-
-  return {
-    status,
-    requirements,
-    notes: Array.isArray(result?.notes) ? result.notes : [],
-    message: status === 'awaiting-verification' ? AWAITING_MESSAGE : '',
-    source: 'backend',
-  };
-}
-
 /**
  * Evaluation shown when backend eligibility is unavailable. Never contains
  * requirement results, so nothing is fabricated.
- * state: 'logged-out' | 'no-profile' | 'not-found' | 'error'
+ * state: 'logged-out' | 'no-profile' | 'profile-incomplete' | 'not-found' | 'error'
  */
-export function getUnavailableEligibility(state, kind = 'program') {
-  const subject = kind === 'scholarship' ? 'scholarship' : 'program';
+export function getUnavailableEligibility(state) {
   const messages = {
-    'logged-out': `Log in to check your eligibility for this ${subject}.`,
-    'no-profile': `Complete your profile to check your eligibility for this ${subject}.`,
-    'not-found': `Eligibility is not available for this ${subject}.`,
+    'logged-out': 'Log in to check your scholarship eligibility.',
+    'no-profile': 'Complete your profile to check your scholarship eligibility.',
+    'profile-incomplete': 'Complete your profile to check your scholarship eligibility.',
+    'not-found': 'Scholarship eligibility is not available.',
     error: 'Eligibility could not be checked right now. Please try again later.',
   };
   return {
-    status: state === 'no-profile' ? 'missing-information' : 'awaiting-verification',
+    status: ['no-profile', 'profile-incomplete'].includes(state) ? 'missing-information' : 'awaiting-verification',
     requirements: [],
     notes: [],
     message: messages[state] || messages.error,
@@ -528,32 +270,16 @@ async function fetchEligibility(path, token) {
   if (!response.ok) {
     const error = new Error(extractErrorMessage(data, `Failed to check eligibility (${response.status})`));
     error.status = response.status;
+    error.code = data?.detail?.code || data?.code;
     throw error;
   }
   return data;
 }
 
-/**
- * Check the logged-in student's profile against every program.
- * GET /eligibility/programs  -> EligibilityResult[]
- * Throws an error with `.status` (401 invalid token, 404 no profile).
- */
-export async function fetchProgramEligibilities(token) {
-  return fetchEligibility('/eligibility/programs', token);
-}
-
-/**
- * Check the logged-in student's profile against one program.
- * GET /eligibility/programs/{id}  -> EligibilityResult
- * Throws an error with `.status` (401 invalid token, 404 no profile or no program).
- */
-export async function fetchProgramEligibilityById(token, id) {
-  return fetchEligibility(`/eligibility/programs/${Number(id)}`, token);
-}
-
 /** Turns a failed eligibility request into an unavailable-state name. */
 export function getEligibilityErrorState(error) {
   if (error?.status === 401) return 'logged-out';
+  if (error?.status === 403 && error?.code === 'profile_incomplete') return 'profile-incomplete';
   if (error?.status === 404) {
     return /profile/i.test(error.message || '') ? 'no-profile' : 'not-found';
   }
@@ -566,9 +292,9 @@ export function getEligibilityErrorState(error) {
 // ---------------------------------------------------------------------------
 
 /**
- * Calculate affordability for one program scenario on the backend.
+ * Calculate affordability for one scholarship scenario on the backend.
  * POST /financial-feasibility/calculate -> FeasibilityResult
- * Throws an error with `.status` (401 signed out, 404 unknown program/scholarship, 422 invalid input).
+ * Throws an error with `.status` (401 signed out, 404 unknown scholarship, 422 invalid input).
  */
 export async function postFinancialFeasibility(token, payload, { signal } = {}) {
   const response = await fetch(`${API_BASE_URL}/financial-feasibility/calculate`, {
@@ -596,7 +322,6 @@ export async function postFinancialFeasibility(token, payload, { signal } = {}) 
 // Scholarship eligibility (authenticated)
 // ---------------------------------------------------------------------------
 
-// Backend scholarship statuses -> the statuses the pages already use for programs
 const SCHOLARSHIP_STATUS_MAP = {
   eligible: 'satisfied',
   not_eligible: 'not-satisfied',
@@ -673,63 +398,21 @@ export function mapScholarshipEligibilityToFrontend(result) {
 // Scholarship recommendations (authenticated)
 // ---------------------------------------------------------------------------
 
-const programQuery = (programId) => (programId != null ? `?program_id=${Number(programId)}` : '');
-
-/** GET /recommendations/scholarships?program_id= -> RecommendationList */
-export function fetchScholarshipRecommendations(token, programId = null) {
-  return fetchEligibility(`/recommendations/scholarships${programQuery(programId)}`, token);
+/** GET /recommendations/scholarships -> RecommendationList */
+export function fetchScholarshipRecommendations(token) {
+  return fetchEligibility('/recommendations/scholarships', token);
 }
 
-/** GET /recommendations/scholarships/{id}?program_id= -> ScholarshipRecommendation */
-export function fetchScholarshipRecommendation(token, id, programId = null) {
-  return fetchEligibility(`/recommendations/scholarships/${parseScholarshipId(id)}${programQuery(programId)}`, token);
-}
-
-/** The selected journey opportunity's program ID, or null when it isn't a backend program. */
-export function getSelectedProgramId(opportunityId) {
-  return /^\d+$/.test(String(opportunityId ?? '')) ? Number(opportunityId) : null;
-}
-
-
-// ---------------------------------------------------------------------------
-// Scholarship-program relationships (public)
-// ---------------------------------------------------------------------------
-
-async function fetchMatches(path) {
-  const response = await fetch(`${API_BASE_URL}${path}`);
-  if (!response.ok) throw new Error(`Failed to load scholarship and program matches (${response.status})`);
-  return response.json();
-}
-
-/** GET /scholarships/{id}/programs -> MatchResult[], ruled-out programs included. */
-export function fetchScholarshipPrograms(id) {
-  return fetchMatches(`/scholarships/${parseScholarshipId(id)}/programs?include_not_matches=true`);
-}
-
-/** GET /programs/{id}/scholarships -> MatchResult[], ruled-out scholarships included. */
-export function fetchProgramScholarships(programId) {
-  return fetchMatches(`/programs/${Number(programId)}/scholarships?include_not_matches=true`);
-}
-
-/** GET /scholarships/program-coverage -> per-scholarship counts, keyed by frontend ID. */
-export async function fetchScholarshipProgramCoverage() {
-  const rows = await fetchMatches('/scholarships/program-coverage');
-  return Object.fromEntries(rows.map((row) => [`${SCHOLARSHIP_ID_PREFIX}${row.scholarship_id}`, row]));
-}
-
-/**
- * Matches worth showing on a details page: a different host country says nothing useful about
- * this pair, so only ruled-out pairs with a closer reason stay.
- */
-export function selectRelevantMatches(matches) {
-  return (matches || []).filter((item) => item.outcome !== 'not_a_match' || item.blocking_criterion !== 'country');
+/** GET /recommendations/scholarships/{id} -> ScholarshipRecommendation */
+export function fetchScholarshipRecommendation(token, id) {
+  return fetchEligibility(`/recommendations/scholarships/${parseScholarshipId(id)}`, token);
 }
 
 
 /**
  * Saved financial plan (budget and own expense estimates) of the logged-in student.
  * GET /financial-feasibility/plan, PUT /financial-feasibility/plan/budget,
- * PUT /financial-feasibility/plan/expenses/{programId}
+ * PUT /financial-feasibility/plan/scholarships/{scholarshipId}/expenses
  * Each resolves to the whole plan and throws an error with `.status`.
  */
 async function financialPlanRequest(token, path, method, body) {
@@ -760,14 +443,14 @@ export function putFinancialBudget(token, budget) {
   return financialPlanRequest(token, '/budget', 'PUT', budget);
 }
 
-export function putProgramExpenses(token, programId, expenses) {
-  return financialPlanRequest(token, `/expenses/${programId}`, 'PUT', expenses);
+export function putScholarshipExpenses(token, scholarshipId, expenses) {
+  return financialPlanRequest(token, `/scholarships/${parseScholarshipId(scholarshipId)}/expenses`, 'PUT', expenses);
 }
 
 
 /**
  * Personal guidance for the logged-in student.
- * GET /eligibility/improvements?program_id=&scholarship_id= -> ProfileImprovementResult
+ * GET /eligibility/improvements?scholarship_id= -> ProfileImprovementResult
  * Throws an error with `.status` (401 invalid token, 404 no profile or unknown opportunity).
  */
 export async function fetchProfileImprovements(token, query = {}) {
@@ -794,12 +477,10 @@ export async function askAssistant(token, message, context = {}) {
   return data;
 }
 
-/** Query for one selected opportunity. Older sample selections (univ-1, sch-1) have no backend record. */
+/** Query for a selected scholarship with a persisted backend record. */
 export function getImprovementQuery(opportunity) {
   if (!opportunity) return null;
   const scholarshipId = parseScholarshipId(opportunity.id);
   if (scholarshipId != null) return { scholarship_id: scholarshipId };
-  const programId = Number(opportunity._numericId ?? opportunity.id);
-  if (opportunity.kind !== 'scholarship' && Number.isInteger(programId) && programId > 0) return { program_id: programId };
   return null;
 }

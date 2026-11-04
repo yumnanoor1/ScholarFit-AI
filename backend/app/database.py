@@ -24,3 +24,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def create_application_schema(bind=None):
+    """Create the existing application tables, leaving scholarship RAG tables to their migration."""
+    from app.models.scholarship_knowledge import SCHOLARSHIP_KNOWLEDGE_TABLE_NAMES
+
+    target = bind or engine
+    application_tables = [
+        table for table in Base.metadata.tables.values()
+        if table.name not in SCHOLARSHIP_KNOWLEDGE_TABLE_NAMES
+    ]
+    Base.metadata.create_all(bind=target, tables=application_tables)

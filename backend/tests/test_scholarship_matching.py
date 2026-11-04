@@ -36,6 +36,8 @@ EVIDENCE = dict(evidence="The official page covers this program.", source_url="h
 
 def scholarship(**overrides):
     data = dict(id=1, name="Award", country="Germany", funding_type="Fully Funded", verification_status="verified",
+                official_info_url="https://example.org/award", verification_basis="official_source",
+                last_verified_date=date(2026, 10, 31), source_checks=[], data_flags=[],
                 eligible_degree_levels=["Master's"], discipline_scope="all", eligible_disciplines=None,
                 institution_scope="national", host_institution=None, host_university_id=None)
     return SimpleNamespace(**{**data, **overrides})
@@ -215,12 +217,15 @@ class ApiTests(unittest.TestCase):
         self.db.add_all([self.university, self.other_university])
         self.db.flush()
         common = dict(degree_level="Master", field_of_study="Computer Science", duration_months=24,
-                      tuition_amount=10000, tuition_currency="EUR")
+                      tuition_amount=10000, tuition_currency="EUR", source_url="https://example.org/program",
+                      last_verified=date(2026, 10, 31))
         self.first = Program(name="First", university_id=self.university.id, **common)
         self.second = Program(name="Second", university_id=self.university.id, **common)
         self.elsewhere = Program(name="Elsewhere", university_id=self.other_university.id, **common)
         fields = dict(country="Germany", eligible_degree_levels=["Master's"], discipline_scope="all",
-                      verification_status="verified", funding_type="Fully Funded", duration="2 years")
+                      verification_status="verified", funding_type="Fully Funded", duration="2 years",
+                      official_info_url="https://example.org/award", verification_basis="official_source",
+                      last_verified_date=date(2026, 10, 31), source_checks=[], data_flags=[])
         self.national = Scholarship(name="National", institution_scope="national", tuition_coverage="Full tuition fee waiver", **fields)
         self.own = Scholarship(name="Own", institution_scope="single_institution", host_institution="TU Example",
                                host_university_id=self.university.id, tuition_coverage="Full tuition fee waiver", **fields)

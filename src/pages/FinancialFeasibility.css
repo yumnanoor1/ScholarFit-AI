@@ -151,6 +151,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   align-items: start;
+  margin-top: 20px;
   gap: 20px;
 }
 
@@ -996,11 +997,58 @@
 }
 
 .fin-cost-row {
-  grid-template-columns: 32px minmax(0, 1fr) 150px 130px 110px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  gap: 12px 24px;
   padding: 14px 16px;
   border: 0;
   border-radius: 0;
   background: #fff;
+}
+
+.fin-cost-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.fin-cost-copy strong {
+  color: var(--color-dark);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fin-cost-copy small,
+.fin-cost-copy a {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fin-cost-copy a {
+  width: fit-content;
+  color: var(--brand-blue);
+}
+
+.fin-cost-input {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  align-items: center;
+  gap: 8px;
+}
+
+.fin-cost-input input,
+.fin-cost-input select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--color-dark);
+  font: inherit;
+  font-size: 13px;
 }
 
 .fin-cost-row + .fin-cost-row {
@@ -1103,14 +1151,141 @@
   color: var(--color-text-muted);
 }
 
+.fin-summary .fin-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.fin-summary .fin-card > h2 {
+  margin: 0;
+  color: var(--color-dark);
+  font-family: var(--font-family-heading);
+  font-size: 1.05rem;
+}
+
+.fin-result-status {
+  margin: 0;
+  padding: 11px 12px;
+  border-left: 3px solid var(--brand-blue);
+  border-radius: 8px;
+  color: var(--color-dark);
+  background: var(--brand-surface);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.fin-result-status.is-feasible {
+  border-left-color: var(--color-success);
+  color: var(--color-success-text);
+  background: var(--color-success-bg);
+}
+
+.fin-result-status.is-partially_feasible {
+  border-left-color: var(--color-warning);
+  color: var(--color-warning-text);
+  background: var(--color-warning-bg);
+}
+
+.fin-result-status.is-not_feasible {
+  border-left-color: var(--color-danger);
+  color: var(--color-danger-text);
+  background: var(--color-danger-bg);
+}
+
+.fin-result-explanation {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.fin-result-values {
+  display: grid;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-light);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.fin-result-values > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.fin-result-values > div + div {
+  border-top: 1px solid var(--color-border-light);
+}
+
+.fin-result-values dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.fin-result-values dd {
+  margin: 0;
+  color: var(--color-dark);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.fin-missing-data {
+  display: grid;
+  gap: 7px;
+  padding: 11px 12px;
+  border-left: 3px solid var(--color-warning);
+  border-radius: 8px;
+  background: var(--color-warning-bg);
+}
+
+.fin-missing-data > strong {
+  color: var(--color-dark);
+  font-size: 13px;
+}
+
+.fin-missing-data ul,
+.fin-uncertainties {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fin-uncertainties {
+  padding: 10px 12px 10px 30px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 8px;
+}
+
+.fin-summary .fin-note {
+  margin: 0;
+}
+
 @media (max-width: 760px) {
   .fin-cost-row {
-    grid-template-columns: 32px minmax(0, 1fr) 130px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fin-cost-input {
+    grid-template-columns: minmax(0, 1fr) 88px;
   }
 }
 
 @media (max-width: 480px) {
   .fin-cost-row {
-    grid-template-columns: 32px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fin-cost-input {
+    grid-template-columns: minmax(0, 1fr) 80px;
   }
 }

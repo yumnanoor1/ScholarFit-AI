@@ -4,6 +4,10 @@ FitScholar AI Assistant. Answers a student's question from their own saved data 
 There is no language model here, and nothing is invented: every figure and requirement is read from the existing
 services (profile improvement guidance, scholarship eligibility, deadlines). This module
 only picks which of their results answers the question and words the reply.
+
+The one exception is general scholarship-information questions, which are answered from approved official
+documents by rag_service (a language model may word that answer). Those documents must have been ingested,
+approved and indexed beforehand; otherwise the reply says no approved source was found.
 """
 import re
 from datetime import date
@@ -13,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
+from app.services import rag_service
 from app.services.profile_completion import profile_completion
 from app.services.scholarship_eligibility import evaluate_scholarship
 
@@ -90,6 +95,11 @@ def detect_intent(message: str) -> str:
         return "documents"
     if has("improve", "profile", "weak", "strength", "gap", "better student"):
         return "improve_profile"
+    if has("scholarship", "fellowship", "stipend", "funding", "award") and has(
+            "cover", "coverage", "benefit", "include", "offer", "provide", "how to apply", "how do i apply",
+            "how can i apply", "tell me about", "what is", "what does", "what are", "who can", "who is", "requirements for",
+            "explain", "describe", "overview", "about this", "is about", "more about", "more information", "more info"):
+        return "scholarship_info"
     return "help"
 
 
@@ -386,6 +396,37 @@ def _next_action(context, guidance, completion, scholarship_results, message):
                   notes=[NOT_GUARANTEED], suggestions=["What should I do after that?", "How can I improve my profile?"])
 
 
+# ---------- General scholarship information (RAG over approved official documents) ----------
+
+def _scholarship_info(db: Session, context: dict, message: str) -> dict:
+    scholarship_id = context.get("scholarship_id")
+    if isinstance(scholarship_id, bool) or not isinstance(scholarship_id, int) or scholarship_id <= 0:
+        scholarship_id = None
+    # The ID only narrows the search; every approval and eligibility filter still runs in the database query
+    ctx = _context(context, "scholarship_info")
+    result = rag_service.answer_question(db, message, scholarship_id=scholarship_id)
+    if result.status == rag_service.STATUS_UNAVAILABLE:
+        return _reply(ctx, "scholarship_info",
+                      "I can't search the official scholarship documents right now. Please try again later, or open the scholarship's page.",
+                      action=action("Explore Scholarships", "/scholarships"), suggestions=SUGGESTIONS)
+    if result.status == rag_service.STATUS_NO_SOURCES:
+        return _reply(ctx, "scholarship_info",
+                      "I couldn't find an approved official source that answers this, so I won't guess. "
+                      "Please check the scholarship's official page.",
+                      action=action("Explore Scholarships", "/scholarships"), suggestions=SUGGESTIONS)
+    sources, seen = [], set()
+    for chunk in result.chunks:
+        line = f"{chunk.scholarship_name}: {chunk.citation_url}"
+        if line not in seen:
+            seen.add(line)
+            sources.append(line)
+    notes = ["Confirm every detail on the official page before relying on it."]
+    if not result.generated:
+        notes.insert(0, "These are excerpts from approved sources, not a written summary.")
+    return _reply(ctx, "scholarship_info", result.text, sections=[{"heading": "Sources", "items": sources}],
+                  action=action("Explore Scholarships", "/scholarships"), notes=notes, suggestions=SUGGESTIONS)
+
+
 # ---------- Entry point ----------
 
 def respond(db: Session, user: User, profile: StudentProfile, message: str, context: dict, guidance: Guidance,
@@ -394,6 +435,8 @@ def respond(db: Session, user: User, profile: StudentProfile, message: str, cont
     intent = detect_intent(message)
     if intent == "help":
         return _help(context)
+    if intent == "scholarship_info":
+        return _scholarship_info(db, context, message)
     completion = profile_completion(db, user)
     if intent == "financial":
         return _financial(context)

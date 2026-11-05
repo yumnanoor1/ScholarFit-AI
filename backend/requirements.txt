@@ -15,3 +15,4 @@ openpyxl
 torch
 sentence-transformers
 pgvector
+google-genai==2.34.0

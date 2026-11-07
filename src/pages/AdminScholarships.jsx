@@ -81,9 +81,9 @@ function Duplicates({ token }) {
               </thead>
               <tbody>
                 <tr>
-                  <td>Saved by students / program links</td>
-                  <td>{comparison.first_references.saved_by_students} / {comparison.first_references.program_links}</td>
-                  <td>{comparison.second_references.saved_by_students} / {comparison.second_references.program_links}</td>
+                  <td>Saved by students / internal links</td>
+                  <td>{comparison.first_references.saved_by_students} / {comparison.first_references.internal_links}</td>
+                  <td>{comparison.second_references.saved_by_students} / {comparison.second_references.internal_links}</td>
                 </tr>
                 {comparison.differences.map((item) => (
                   <tr key={item.field}><td>{item.field}</td><td>{JSON.stringify(item.first)}</td><td>{JSON.stringify(item.second)}</td></tr>

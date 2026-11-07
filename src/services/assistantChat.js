@@ -7,12 +7,13 @@ export const WELCOME_QUESTIONS = [
   'Why am I not eligible for a scholarship?',
   'Which requirements am I missing?',
   'How can I improve my chances of getting a scholarship?',
+  'What are my best scholarship matches?',
 ];
 
 export const STORAGE_KEY = 'fitscholar_assistant_chat';
 const MAX_STORED_MESSAGES = 30;
 
-export const EMPTY_CONTEXT = { topic: null, program_id: null, scholarship_id: null, shown_actions: [] };
+export const EMPTY_CONTEXT = { topic: null, scholarship_id: null, shown_actions: [] };
 
 export function canPersistConversation(ownerId, userId) {
   return userId != null && ownerId === userId;
@@ -35,7 +36,7 @@ export function validateAssistantReply(reply) {
 /** Where an assistant action button goes. The financial page gets IDs only when the assistant knows them. */
 export function actionNavigation(action, buildFinancialRouteState) {
   if (!action?.route || !action.route.startsWith('/')) return null;
-  if (action.route === '/financial' && action.state?.programId) {
+  if (action.route === '/financial' && action.state?.scholarshipId) {
     return { path: action.route, options: { state: buildFinancialRouteState(action.state) } };
   }
   return { path: action.route, options: undefined };
@@ -54,7 +55,10 @@ export function loadConversation(storage, userId) {
   try {
     const saved = JSON.parse(storage.getItem(STORAGE_KEY) || 'null');
     if (saved && saved.userId === userId && Array.isArray(saved.messages)) {
-      return { messages: saved.messages, context: { ...EMPTY_CONTEXT, ...(saved.context || {}) } };
+      const savedContext = { ...(saved.context || {}) };
+      delete savedContext.program_id;
+      delete savedContext.programId;
+      return { messages: saved.messages, context: { ...EMPTY_CONTEXT, ...savedContext } };
     }
   } catch {
     // an unreadable saved chat is simply a new chat

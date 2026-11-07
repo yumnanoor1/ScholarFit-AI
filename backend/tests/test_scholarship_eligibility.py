@@ -3,7 +3,7 @@ Scholarship eligibility tests. Service tests need no database; API tests use in-
 Run from the backend folder:  python -m unittest discover -s tests -v
 """
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 from fastapi import HTTPException
@@ -23,7 +23,8 @@ TODAY = date(2026, 10, 29)
 
 def make_profile(**overrides):
     data = dict(nationality="Pakistan", date_of_birth=date(2001, 5, 1), degree_level="Bachelor's",
-                field_of_study="Computer Science", cgpa=3.4, cgpa_scale=4.0, ielts_score=7.0, toefl_score=None)
+                field_of_study="Computer Science", preferred_fields=["Computer Science"], cgpa=3.4,
+                cgpa_scale=4.0, ielts_score=7.0, toefl_score=None)
     data.update(overrides)
     return SimpleNamespace(**data)
 
@@ -33,11 +34,13 @@ def make_scholarship(**overrides):
         id=1, name="Test Scholarship", provider="Test Provider", country="Germany", degree_level="Master's",
         verification_status="verified", eligible_nationalities="Open to students of all nationalities",
         pakistan_eligible="Yes - open to all nationalities", eligible_fields="All fields",
-        min_academic_requirement="Minimum CGPA 3.0", bachelors_requirement="Yes - required for Master's admission",
+        required_previous_degree="Bachelor's",
+        min_academic_requirement="Minimum CGPA 3.0/4.0", bachelors_requirement="Yes - required for Master's admission",
         english_requirement="Yes - IELTS 6.5 overall", work_experience="Not specified", age_requirement="Not specified",
         deadline="2027-01-15", funding_type="Fully Funded", tuition_coverage="Full tuition fee waiver",
         living_stipend="No", other_benefits=None, last_verified="2026-09-30", official_url="https://example.org",
-        source_name="Official page",
+        source_name="Official page", official_info_url="https://example.org/scholarship",
+        verification_basis="official_source", last_verified_date=TODAY - timedelta(days=30),
     )
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -70,6 +73,24 @@ class OverallStatusTests(unittest.TestCase):
         result = evaluate(scholarship, make_profile(nationality="France"))
         self.assertEqual(requirement(result, "nationality")["status"], "not_satisfied")
 
+    def test_structured_nationality_scope_without_its_required_list_needs_review(self):
+        for scholarship in (
+            make_scholarship(nationality_scope="listed", eligible_countries=None, eligible_regions=None,
+                             eligible_nationalities=None, pakistan_eligible=None),
+            make_scholarship(nationality_scope="all_except", excluded_countries=None, excluded_regions=None,
+                             eligible_nationalities=None, pakistan_eligible=None),
+        ):
+            result = evaluate(scholarship)
+            self.assertEqual(requirement(result, "nationality")["status"], "not_evaluated")
+
+    def test_conflicting_all_nationalities_scope_needs_review(self):
+        scholarship = make_scholarship(
+            nationality_scope="all", excluded_countries=["Pakistan"],
+            eligible_nationalities=None, pakistan_eligible=None,
+        )
+        result = evaluate(scholarship)
+        self.assertEqual(requirement(result, "nationality")["status"], "not_evaluated")
+
     def test_non_eu_rule(self):
         scholarship = make_scholarship(eligible_nationalities="Open to all non-EU/EEA nationalities")
         self.assertEqual(requirement(evaluate(scholarship, make_profile(nationality="Germany")), "nationality")["status"],
@@ -78,14 +99,30 @@ class OverallStatusTests(unittest.TestCase):
                          "satisfied")
 
     def test_unmet_degree_level(self):
-        result = evaluate(make_scholarship(degree_level="PhD"))
+        result = evaluate(make_scholarship(degree_level="PhD", required_previous_degree="Master's"))
         self.assertEqual(result["status"], "not_eligible")
         self.assertEqual(requirement(result, "degree_level")["status"], "not_satisfied")
 
-    def test_missing_cgpa(self):
-        result = evaluate(profile=make_profile(cgpa=0.0))  # the frontend sends 0.0 when CGPA is unknown
-        self.assertEqual(result["status"], "missing_information")
-        self.assertEqual(requirement(result, "academic")["status"], "missing_information")
+    def test_phd_is_eligible_for_a_student_with_a_masters_degree(self):
+        result = evaluate(make_scholarship(degree_level="PhD", required_previous_degree="Master's"),
+                         make_profile(degree_level="Master's"))
+        self.assertEqual(requirement(result, "degree_level")["status"], "satisfied")
+
+    def test_multiple_offered_degree_levels_are_supported(self):
+        result = evaluate(
+            make_scholarship(degree_level="Master's", eligible_degree_levels=["Master's", "PhD"]),
+            make_profile(),
+        )
+        self.assertEqual(requirement(result, "degree_level")["status"], "satisfied")
+
+    def test_missing_previous_degree_requirement_needs_review(self):
+        result = evaluate(make_scholarship(required_previous_degree=None))
+        self.assertEqual(requirement(result, "degree_level")["status"], "not_evaluated")
+
+    def test_zero_cgpa_is_compared_as_a_real_value(self):
+        result = evaluate(profile=make_profile(cgpa=0.0))
+        self.assertEqual(result["status"], "not_eligible")
+        self.assertEqual(requirement(result, "academic")["status"], "not_satisfied")
 
     def test_missing_english_score_is_not_a_failure(self):
         result = evaluate(profile=make_profile(ielts_score=None))
@@ -96,6 +133,15 @@ class OverallStatusTests(unittest.TestCase):
         result = evaluate(profile=make_profile(ielts_score=6.0))
         self.assertEqual(result["status"], "not_eligible")
 
+    def test_other_language_test_is_not_reported_as_missing_or_assumed_equivalent(self):
+        result = evaluate(profile=make_profile(
+            ielts_score=None,
+            language_test={"test_type": "PTE", "overall_score": 70},
+        ))
+        english = requirement(result, "english")
+        self.assertEqual(english["status"], "not_evaluated")
+        self.assertIn("cannot be compared directly", english["reason"])
+
     def test_missing_nationality(self):
         result = evaluate(profile=make_profile(nationality=None))
         self.assertEqual(requirement(result, "nationality")["status"], "missing_information")
@@ -105,6 +151,24 @@ class OverallStatusTests(unittest.TestCase):
         self.assertEqual(result["status"], "not_evaluated")
         self.assertFalse(result["eligible"])
         self.assertTrue(result["satisfied"])  # requirements are still shown
+
+    def test_stale_official_evidence_needs_verification(self):
+        result = evaluate(make_scholarship(
+            last_verified_date=TODAY - timedelta(days=181),
+            deadline="15 January 2026",
+        ))
+        self.assertEqual(result["status"], "not_evaluated")
+        self.assertFalse(result["eligible"])
+        self.assertIn("over 180 days old", requirement(result, "source_evidence")["reason"])
+        self.assertEqual(result["deadline"]["status"], "closed")
+
+    def test_missing_official_source_or_verification_date_needs_verification(self):
+        missing_url = evaluate(make_scholarship(official_info_url=None))
+        missing_date = evaluate(make_scholarship(last_verified_date=None))
+        self.assertEqual(missing_url["status"], "not_evaluated")
+        self.assertIn("No valid official information page", requirement(missing_url, "source_evidence")["reason"])
+        self.assertEqual(missing_date["status"], "not_evaluated")
+        self.assertIn("No official-source verification date", requirement(missing_date, "source_evidence")["reason"])
 
     def test_insufficient_requirements(self):
         bare = make_scholarship(eligible_nationalities=None, pakistan_eligible=None, eligible_fields=None,
@@ -129,13 +193,102 @@ class FreeTextTests(unittest.TestCase):
 
     def test_grade_on_other_scale(self):
         scholarship = make_scholarship(min_academic_requirement="GPA of at least 5.0/7.0 for 15%; 6.0/7.0 for 30%")
-        self.assertEqual(requirement(evaluate(scholarship), "academic")["status"], "satisfied")  # 3.4/4 = 85% > 5/7
-        low = make_profile(cgpa=2.5)  # 62.5% < 71%
+        self.assertEqual(requirement(evaluate(scholarship), "academic")["status"], "not_evaluated")
+        same_scale = make_profile(cgpa=5.5, cgpa_scale=7.0)
+        low = make_profile(cgpa=4.9, cgpa_scale=7.0)
+        self.assertEqual(requirement(evaluate(scholarship, same_scale), "academic")["status"], "satisfied")
         self.assertEqual(requirement(evaluate(scholarship, low), "academic")["status"], "not_satisfied")
 
     def test_percentage_requirement(self):
         scholarship = make_scholarship(min_academic_requirement="Minimum 75% academic achievement")
-        self.assertEqual(requirement(evaluate(scholarship), "academic")["status"], "satisfied")
+        self.assertEqual(requirement(evaluate(scholarship), "academic")["status"], "not_evaluated")
+        self.assertEqual(requirement(evaluate(scholarship, make_profile(cgpa=80, cgpa_scale=100)), "academic")["status"],
+                         "satisfied")
+        self.assertEqual(requirement(evaluate(scholarship, make_profile(cgpa=70, cgpa_scale=100)), "academic")["status"],
+                         "not_satisfied")
+
+    def test_cgpa_without_a_published_scale_needs_review(self):
+        result = evaluate(make_scholarship(min_academic_requirement="Minimum CGPA 3.0"))
+        self.assertEqual(requirement(result, "academic")["status"], "not_evaluated")
+
+    def test_structured_gpa_compares_only_on_the_same_scale(self):
+        scholarship = make_scholarship(
+            academic_condition="numeric", min_gpa=3.0, min_gpa_scale=4.0,
+            min_academic_requirement="Minimum CGPA 3.0/4.0",
+        )
+        result = evaluate(scholarship, make_profile(cgpa=8.0, cgpa_scale=10.0))
+        self.assertEqual(requirement(result, "academic")["status"], "not_evaluated")
+
+    def test_restricted_fields_use_target_preferences_not_current_field(self):
+        scholarship = make_scholarship(
+            discipline_scope="listed", eligible_disciplines=["Computer Science"],
+            eligible_fields="Computer Science",
+        )
+        result = evaluate(scholarship, make_profile(field_of_study="Biology",
+                                                     preferred_fields=["Computer Science"]))
+        self.assertEqual(requirement(result, "field")["status"], "satisfied")
+
+    def test_missing_target_field_does_not_fall_back_to_current_field(self):
+        scholarship = make_scholarship(
+            discipline_scope="listed", eligible_disciplines=["Computer Science"],
+            eligible_fields="Computer Science",
+        )
+        result = evaluate(scholarship, make_profile(preferred_fields=[]))
+        self.assertEqual(requirement(result, "field")["status"], "missing_information")
+
+    def test_target_field_mismatch_needs_manual_review(self):
+        scholarship = make_scholarship(
+            discipline_scope="listed", eligible_disciplines=["Computer Science"],
+            eligible_fields="Computer Science",
+        )
+        result = evaluate(scholarship, make_profile(preferred_fields=["Biology"]))
+        self.assertEqual(requirement(result, "field")["status"], "not_evaluated")
+
+    def test_duolingo_minimum_is_compared(self):
+        scholarship = make_scholarship(
+            english_requirement_type="test_required",
+            english_requirement="Duolingo English Test 120",
+            accepted_english_tests=["Duolingo English Test"],
+            min_duolingo=120, min_ielts=None, min_toefl=None,
+        )
+        profile = make_profile(ielts_score=None, language_test={
+            "test_type": "Duolingo English Test", "overall_score": 125,
+        })
+        self.assertEqual(requirement(evaluate(scholarship, profile), "english")["status"], "satisfied")
+        profile.language_test["overall_score"] = 110
+        self.assertEqual(requirement(evaluate(scholarship, profile), "english")["status"], "not_satisfied")
+
+    def test_new_toefl_scale_needs_manual_review(self):
+        scholarship = make_scholarship(
+            english_requirement_type="test_required", english_requirement="TOEFL iBT 90",
+            min_ielts=None, min_toefl=90,
+        )
+        profile = make_profile(ielts_score=None, language_test={
+            "test_type": "TOEFL iBT", "overall_score": 5,
+        })
+        self.assertEqual(requirement(evaluate(scholarship, profile), "english")["status"], "not_evaluated")
+
+    def test_moi_is_not_automatically_treated_as_an_exemption(self):
+        scholarship = make_scholarship(
+            english_requirement_type="test_required",
+            english_requirement="IELTS 6.5 overall; MOI may be accepted",
+            min_ielts=6.5,
+        )
+        profile = make_profile(ielts_score=None, language_test={
+            "test_type": "No Test / Not Taken", "medium_of_instruction": "Yes",
+        })
+        english = requirement(evaluate(scholarship, profile), "english")
+        self.assertEqual(english["status"], "not_evaluated")
+        self.assertIn("not treated as a waiver", english["reason"])
+
+    def test_section_score_requirements_are_not_inferred_from_overall_score(self):
+        scholarship = make_scholarship(
+            english_requirement_type="test_required",
+            english_requirement="IELTS 6.5 overall and no band below 6.0",
+            min_ielts=6.5,
+        )
+        english = requirement(evaluate(scholarship), "english")
+        self.assertEqual(english["status"], "not_evaluated")
 
     def test_university_set_english_is_admission_scope(self):
         result = evaluate(make_scholarship(english_requirement="Yes - per the chosen programme's own requirement"))
@@ -193,7 +346,7 @@ class StatedRestrictionTests(unittest.TestCase):
 
     def test_adelaide_real_requirements_still_decide(self):
         self.assertEqual(evaluate(self.adelaide(), make_profile(nationality="Australia"))["status"], "not_eligible")
-        self.assertEqual(evaluate(self.adelaide(), make_profile(cgpa=2.0))["status"], "not_eligible")
+        self.assertEqual(evaluate(self.adelaide(), make_profile(cgpa=4.9, cgpa_scale=7.0))["status"], "not_eligible")
 
     def test_any_field_without_a_limit_stays_satisfied(self):
         for text in ("All fields of study", "Any subject available as a postgraduate course at the University of Cambridge",
@@ -267,14 +420,16 @@ class StatedRestrictionTests(unittest.TestCase):
 
     def test_field_specific_grade_tier(self):
         turkey = make_scholarship(min_academic_requirement="Minimum 75% academic achievement (minimum 90% for Health Sciences fields: Medicine, Dentistry, Pharmacy)")  # 1
-        self.assertEqual(requirement(evaluate(turkey), "academic")["status"], "satisfied")
-        result = evaluate(turkey, make_profile(field_of_study="Pharmacy"))
+        self.assertEqual(requirement(evaluate(turkey, make_profile(cgpa=80, cgpa_scale=100)), "academic")["status"], "satisfied")
+        result = evaluate(turkey, make_profile(field_of_study="Biology", preferred_fields=["Pharmacy"],
+                                                cgpa=80, cgpa_scale=100))
         self.assertEqual(requirement(result, "academic")["status"], "not_evaluated")
         self.assert_verify_manually(result)
-        self.assertEqual(evaluate(turkey, make_profile(field_of_study="Pharmacy", cgpa=2.0))["status"], "not_eligible")
+        self.assertEqual(evaluate(turkey, make_profile(field_of_study="Pharmacy", preferred_fields=["Pharmacy"],
+                                                        cgpa=70, cgpa_scale=100))["status"], "not_eligible")
 
     def test_missing_profile_data_comes_before_manual_checks(self):
-        self.assertEqual(evaluate(self.adelaide(), make_profile(cgpa=0.0))["status"], "missing_information")
+        self.assertEqual(evaluate(self.adelaide(), make_profile(cgpa=0.0, cgpa_scale=7.0))["status"], "not_eligible")
 
     def test_restriction_never_overrides_an_unverified_record(self):
         self.assert_verify_manually(evaluate(self.adelaide(verification_status="unverified")))

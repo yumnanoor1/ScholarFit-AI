@@ -121,7 +121,7 @@ export const EMPTY_PROFILE: StudentProfile = {
   studyPreferences: {
     fields: [], customField: "", countries: [], regions: [], otherCountry: "", intake: "",
     studyMode: "", programPreference: "", fundingPreferences: [],
-    maxTuitionBudget: "", maxLivingCostBudget: "", currency: "", duration: "",
+    maxTuitionBudget: "", maxLivingCostBudget: "", currency: "USD", duration: "",
     additionalPreferences: "", intendedDegree: "Master's", languageOfInstruction: "",
     admissionYear: "", preferredProgramDuration: "",
     fundingPreference: "",

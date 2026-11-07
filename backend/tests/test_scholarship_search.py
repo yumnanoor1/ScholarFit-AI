@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models.opportunity import Program, Scholarship, ScholarshipProgramLink, University
+from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
 from app.routers import scholarships as api
 from app.core.security import issue_session_token
@@ -39,10 +39,6 @@ class SearchTests(unittest.TestCase):
         Base.metadata.create_all(bind=cls.engine)
         db = sessionmaker(bind=cls.engine)()
         cls.db = db
-        cls.university = University(name="TU Example", country="Germany")
-        db.add(cls.university)
-        db.flush()
-        cls.program = Program(name="MSc CS", university_id=cls.university.id, degree_level="Master", field_of_study="Computer Science")
         cls.german = add(db, name="Alpha Stipend", provider="DAAD Agency", country="Germany", last_verified_date=date(2026, 9, 1),
                          eligible_disciplines=["Engineering"], discipline_scope="listed", nationality_scope="all", eligible_fields="Engineering only",
                          pakistan_eligible="Yes", accommodation_status="covered", travel_status="covered",
@@ -54,35 +50,35 @@ class SearchTests(unittest.TestCase):
                           application_deadline_date=date(2026, 12, 1), deadline="1 December 2026")
         cls.pakistan = add(db, name="Gamma Award", provider="Berlin Fund", country="Germany", eligible_countries=["Pakistan"], nationality_scope="listed",
                            pakistan_eligible="Yes - listed", funding_level="not_specified", deadline_type="annual", application_deadline_date=None,
-                           deadline="Typically in March", last_verified_date=None, eligible_nationalities="Citizens of Pakistan")
+                           deadline="Typically in March", last_verified_date=date(2026, 7, 1), eligible_nationalities="Citizens of Pakistan")
         cls.closed = add(db, name="Delta Türkiye Bursu", provider="Ankara Office", country="Turkey", application_deadline_date=date(2020, 1, 1),
                          deadline="1 January 2020", last_verified_date=date(2026, 8, 1))
         cls.hidden = add(db, name="Epsilon Hidden", provider="Unknown", country="Germany", verification_status="unverified")
         cls.conflict = add(db, name="Zeta Conflict", provider="Paris House", country="European Union (multi-country, incl. France)",
-                           min_academic_requirement="Minimum CGPA 3.5/4.0", eligible_degree_levels=["Master's (Research)"])
-        cls.original = add(db, name="Eta Original", provider="Rome", country="Italy")
-        cls.copy = add(db, name="Eta Copy", provider="Rome", country="Italy")
+                           min_academic_requirement="Minimum CGPA 3.5/4.0", eligible_degree_levels=["Master's (Research)"],
+                           last_verified_date=date(2026, 8, 1))
+        cls.original = add(db, name="Eta Original", provider="Rome", country="Italy", last_verified_date=date(2026, 8, 1))
+        cls.copy = add(db, name="Eta Copy", provider="Rome", country="Italy", last_verified_date=date(2026, 8, 1))
         cls.alice = User(email="alice@example.com", hashed_password="x", full_name="Alice")
         cls.bob = User(email="bob@example.com", hashed_password="x", full_name="Bob")
         cls.carol = User(email="carol@example.com", hashed_password="x", full_name="Carol")
-        db.add_all([cls.program, cls.alice, cls.bob, cls.carol])
+        db.add_all([cls.alice, cls.bob, cls.carol])
         db.flush()
         cls.copy.duplicate_of_id = cls.original.id
         cls.alice_profile = StudentProfile(user_id=cls.alice.id, nationality="Pakistan", degree_level="Bachelor's", cgpa=3.4, cgpa_scale=4.0,
-                                           ielts_score=7.0, field_of_study="Computer Science", date_of_birth=date(2001, 5, 1))
+                                           ielts_score=7.0, field_of_study="Computer Science", preferred_fields=["Engineering"],
+                                           date_of_birth=date(2001, 5, 1))
         cls.bob_profile = StudentProfile(user_id=cls.bob.id, nationality="Pakistan", degree_level="Bachelor's", cgpa=3.4, cgpa_scale=4.0,
                                          ielts_score=5.0, field_of_study="Computer Science")
-        db.add_all([cls.alice_profile, cls.bob_profile,
-                    ScholarshipProgramLink(scholarship_id=cls.german.id, program_id=cls.program.id, outcome="confirmed", relationship_type="named_program",
-                                           evidence="Evidence", source_url="https://example.org", verification_status="verified", last_verified=date(2026, 10, 31))])
+        db.add_all([cls.alice_profile, cls.bob_profile])
         db.commit()
 
     @classmethod
     def tearDownClass(cls):
         cls.db.close()
 
-    def search(self, profile=None, signed_in=False, program=None, sort=None, skip=0, limit=20, **filters):
-        result = search_scholarships(self.db, filters, profile, signed_in, program, sort, skip, limit, today=TODAY)
+    def search(self, profile=None, signed_in=False, sort=None, skip=0, limit=20, **filters):
+        result = search_scholarships(self.db, filters, profile, signed_in, sort=sort, skip=skip, limit=limit, today=TODAY)
         return ScholarshipSearchResult.model_validate(result).model_dump()
 
     def names(self, **options):
@@ -199,28 +195,28 @@ class SearchTests(unittest.TestCase):
         result = self.search(q="zzzz")
         self.assertEqual((result["total"], result["items"]), (0, []))
 
-    # ---- Program compatibility ----
+    def test_empty_catalogue_returns_no_records(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(bind=engine)
+        empty_db = sessionmaker(bind=engine)()
+        try:
+            result = search_scholarships(empty_db, {}, None, False, today=TODAY)
+            self.assertEqual((result["total"], result["items"]), (0, []))
+            self.assertEqual(filter_options(empty_db, today=TODAY)["verification"], [])
+        finally:
+            empty_db.close()
+            engine.dispose()
 
-    def test_not_a_match_is_hidden_unless_asked_for(self):
-        names = self.names(program=self.program, profile=self.alice_profile, signed_in=True)
-        self.assertIn("Alpha Stipend", names)
-        self.assertNotIn("Delta Türkiye Bursu", names)
-        asked = self.search(program=self.program, match=["not_a_match"], profile=self.alice_profile, signed_in=True)["items"]
-        self.assertIn("Delta Türkiye Bursu", [item["scholarship"]["name"] for item in asked])
-        self.assertTrue(all(item["score"] is None for item in asked))
-
-    def test_outcome_filter(self):
-        rows = self.search(program=self.program, match=["confirmed"])["items"]
-        self.assertEqual([item["scholarship"]["name"] for item in rows], ["Alpha Stipend"])
-        self.assertEqual(rows[0]["program_match"]["label"], "Confirmed Match")
-
-    def test_potential_stays_potential(self):
-        rows = self.search(program=self.program, match=["potential"])["items"]
-        self.assertTrue(rows)
-        self.assertTrue(all(item["program_match"]["outcome"] == "potential" for item in rows))
-
-    def test_no_program_means_no_compatibility(self):
-        self.assertTrue(all(item["program_match"] is None for item in self.search()["items"]))
+    def test_stale_record_is_not_in_verified_search(self):
+        stale = add(self.db, name="Stale Award", last_verified_date=date(2026, 1, 1))
+        self.db.add(stale)
+        self.db.flush()
+        try:
+            self.assertNotIn("Stale Award", self.names())
+            self.assertIn("Stale Award", self.names(verification=["unverified"]))
+        finally:
+            self.db.delete(stale)
+            self.db.commit()
 
     # ---- Eligibility and isolation ----
 
@@ -248,7 +244,7 @@ class SearchTests(unittest.TestCase):
 
     def route(self, user=None, **options):
         defaults = dict(q=None, host_country=[], nationality=None, nationality_scope=[], degree=[], discipline=[], academic_condition=[],
-                        funding=[], benefit=[], deadline=[], verification=[], program_id=None, match=[], eligibility=[], sort=None, skip=0, limit=20)
+                        funding=[], benefit=[], deadline=[], verification=[], eligibility=[], sort=None, skip=0, limit=20)
         return api.search(**{**defaults, **options}, db=self.db, current_user=user)
 
     def test_route_uses_the_token_user(self):
@@ -269,15 +265,11 @@ class SearchTests(unittest.TestCase):
                 self.route(None, **options)
             self.assertEqual(error.exception.status_code, 401)
 
-    def test_match_needs_a_program(self):
-        with self.assertRaises(HTTPException) as error:
-            self.route(match=["confirmed"])
-        self.assertEqual(error.exception.status_code, 422)
-
-    def test_unknown_program(self):
-        with self.assertRaises(HTTPException) as error:
-            self.route(program_id=99999)
-        self.assertEqual(error.exception.status_code, 404)
+    def test_route_has_no_program_search_controls(self):
+        route = next(item for item in api.router.routes if item.path == "/scholarships/search")
+        query_names = [item.name for item in route.dependant.query_params]
+        self.assertNotIn("program_id", query_names)
+        self.assertNotIn("match", query_names)
 
     def test_optional_user(self):
         self.assertIsNone(get_optional_user(None, self.db))
@@ -314,7 +306,11 @@ class SearchTests(unittest.TestCase):
     def test_sort_by_verified(self):
         names = self.visible("verified")
         self.assertEqual(names[0], "Beta Grant")
-        self.assertEqual(names[:3], ["Beta Grant", "Alpha Stipend", "Delta Türkiye Bursu"])   # newest first, no date last
+        self.assertEqual(names[:3], ["Beta Grant", "Alpha Stipend", "Delta Türkiye Bursu"])   # newest verified review first
+
+    def test_sort_by_verified_does_not_promote_unverified_dates(self):
+        names = self.names(sort="verified", verification=["verified", "unverified"])
+        self.assertGreater(names.index("Epsilon Hidden"), names.index("Delta Türkiye Bursu"))
 
     def test_sort_by_score_puts_excluded_last(self):
         rows = self.search(profile=self.alice_profile, signed_in=True, sort="recommendation")["items"]
@@ -354,7 +350,7 @@ class SearchTests(unittest.TestCase):
         listener = lambda conn, cursor, statement, *rest: statements.append(statement)  # noqa: E731
         event.listen(self.engine, "before_cursor_execute", listener)
         try:
-            self.search(profile=self.alice_profile, signed_in=True, program=self.program, sort="name")
+            self.search(profile=self.alice_profile, signed_in=True, sort="name")
         finally:
             event.remove(self.engine, "before_cursor_execute", listener)
         self.assertLessEqual(len(statements), 3, statements)
@@ -366,7 +362,7 @@ class SearchTests(unittest.TestCase):
         self.assertNotIn("Veterinary Science", [item["value"] for item in options["disciplines"]])
         self.assertNotIn("rolling", [item["value"] for item in options["deadlines"]])
         self.assertTrue(all(item["count"] > 0 for item in options["funding"]))
-        self.assertEqual(options["programs"][0]["university"], "TU Example")
+        self.assertNotIn("programs", options)
 
     def test_old_listing_is_unchanged(self):
         rows = api.list_scholarships(country=None, funding_type=None, degree_level=None, pakistan_eligible_only=False,

@@ -109,7 +109,7 @@ class DegreeAndFieldTests(unittest.TestCase):
         self.assertEqual(status("degree_level", structured(), make_profile(degree_level=None)), "missing_information")
 
     def test_not_for_masters(self):
-        record = structured(degree_level="PhD", eligible_degree_levels=["PhD"], required_previous_degree=None)
+        record = structured(degree_level="PhD", eligible_degree_levels=["PhD"], required_previous_degree="Master's")
         self.assertEqual(status("degree_level", record), "not_satisfied")
 
     def test_previous_degree(self):
@@ -129,11 +129,11 @@ class DegreeAndFieldTests(unittest.TestCase):
 
     def test_listed_field(self):
         record = structured(discipline_scope="listed", eligible_disciplines=["Accounting"], eligible_fields="Accounting")
-        self.assertEqual(status("field", record, make_profile(field_of_study="accounting")), "satisfied")
-        other = evaluate(record, make_profile(field_of_study="Finance"))
+        self.assertEqual(status("field", record, make_profile(preferred_fields=["accounting"])), "satisfied")
+        other = evaluate(record, make_profile(preferred_fields=["Finance"]))
         self.assertEqual(requirement(other, "field")["status"], "not_evaluated")  # names aren't a shared vocabulary
         self.assertEqual(other["not_satisfied"], [])
-        self.assertEqual(status("field", record, make_profile(field_of_study=None)), "missing_information")
+        self.assertEqual(status("field", record, make_profile(preferred_fields=[])), "missing_information")
 
     def test_restricted_list_is_never_a_match(self):
         record = structured(discipline_scope="restricted", eligible_disciplines=["Engineering"], eligible_fields="Primarily engineering")
@@ -172,7 +172,7 @@ class AcademicTests(unittest.TestCase):
     def test_health_tier_stays_in_force(self):
         record = structured(min_gpa=None, min_gpa_scale=None, min_percentage=75.0,
                             min_academic_requirement="Minimum 75% academic achievement (minimum 90% for Health Sciences fields)")
-        profile = make_profile(cgpa=80, cgpa_scale=100, field_of_study="Pharmacy")
+        profile = make_profile(cgpa=80, cgpa_scale=100, preferred_fields=["Pharmacy"])
         self.assertEqual(status("academic", record, profile), "not_evaluated")
 
     def test_number_in_a_class_condition_isnt_compared(self):
@@ -371,10 +371,11 @@ class DeadlineTests(unittest.TestCase):
 
 class GuidanceTests(unittest.TestCase):
     def test_new_requirements_reach_profile_improvement(self):
-        profile = make_profile(skills=None, research_interests=None, preferred_countries=None, field_of_study=None)
+        profile = make_profile(skills=None, research_interests=None, preferred_countries=None,
+                               preferred_fields=[], field_of_study=None)
         record = structured(discipline_scope="listed", eligible_disciplines=["Accounting"], gender_restriction="women",
                             residency_requirement="Must live in Pakistan.", official_url="https://example.org")
-        ids = [item["id"] for item in build_guidance(profile, [], [record], today=TODAY)["recommendations"]]
+        ids = [item["id"] for item in build_guidance(profile, [record], today=TODAY)["recommendations"]]
         self.assertIn("missing-information-field", ids)
         self.assertIn("manual-verification-restrictions", ids)
 

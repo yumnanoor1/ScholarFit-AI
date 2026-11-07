@@ -7,7 +7,6 @@ class AssistantContext(BaseModel):
     """What the conversation is about, sent back by the browser so follow-ups make sense.
     It holds catalogue IDs only; the student's own data is always read from the signed-in account."""
     topic: Optional[str] = Field(None, max_length=40)
-    program_id: Optional[int] = Field(None, gt=0)
     scholarship_id: Optional[int] = Field(None, gt=0)
     shown_actions: List[str] = Field(default_factory=list, max_length=12)
 

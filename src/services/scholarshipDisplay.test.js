@@ -127,7 +127,12 @@ test('official links stay separate', () => {
 });
 
 test('the Apply link prefers the application page', () => {
-  const mapped = mapScholarshipToFrontend(record({ official_application_url: 'https://apply.example.org/', official_info_url: 'https://info.example.org/' }));
+  const mapped = mapScholarshipToFrontend(record({
+    verification_basis: 'official_source',
+    official_info_url: 'https://info.example.org/',
+    last_verified_date: '2026-10-01',
+    official_application_url: 'https://apply.example.org/',
+  }));
   assert.equal(mapped.applicationUrl, 'https://apply.example.org/');
   assert.equal(mapped.applicationUrlStatus, 'official-verified');
 });
@@ -165,7 +170,7 @@ test('verification labels follow the evidence', () => {
   assert.equal(getVerificationText(record({ verification_basis: 'official_source' })), 'Recorded from the official source');
   assert.equal(getVerificationText(record({ verification_basis: 'mixed_sources' })), 'Based on official and secondary sources');
   assert.equal(getVerificationText(record({ verification_basis: 'secondary_only' })), 'Based on secondary sources only');
-  assert.equal(getVerificationText(record()), null);
+  assert.equal(getVerificationText(record({ verification_basis: null })), null);
 });
 
 test('duplicates point at the record they repeat', () => {

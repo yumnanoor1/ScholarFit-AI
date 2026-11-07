@@ -235,7 +235,8 @@ class SessionTests(AuthCase):
 
 GOOD = {"APP_ENV": "production", "SECRET_KEY": "k" * 64, "DATABASE_URL": "postgresql://app:strong@db.internal/fit",
         "FRONTEND_URL": "https://fitscholar.example", "SMTP_HOST": "smtp.example.com", "SMTP_FROM": "no-reply@example.com",
-        "GOOGLE_CLIENT_ID": "fitscholar.apps.googleusercontent.com"}
+        "GOOGLE_CLIENT_ID": "fitscholar.apps.googleusercontent.com",
+        "MINILM_MODEL_REVISION": "0123456789abcdef0123456789abcdef01234567"}
 
 
 class SettingsTests(unittest.TestCase):
@@ -263,6 +264,14 @@ class SettingsTests(unittest.TestCase):
         self.assert_stops("SMTP_HOST", SMTP_HOST=None)
         self.assert_stops("SMTP_USE_TLS", SMTP_USE_TLS="false")
         self.assert_stops("GOOGLE_CLIENT_ID", GOOGLE_CLIENT_ID=None)
+        self.assert_stops("MINILM_MODEL_REVISION", MINILM_MODEL_REVISION=None)
+
+    def test_invalid_model_revision_fails_without_echoing_the_value(self):
+        invalid_revision = "g" * 40
+        with self.assertRaises(RuntimeError) as stopped:
+            self.check(MINILM_MODEL_REVISION=invalid_revision)
+        self.assertIn("MINILM_MODEL_REVISION", str(stopped.exception))
+        self.assertNotIn(invalid_revision, str(stopped.exception))
 
     def test_the_error_never_contains_a_value(self):
         with self.assertRaises(RuntimeError) as stopped:
@@ -271,10 +280,29 @@ class SettingsTests(unittest.TestCase):
 
     def test_a_misspelt_environment_stops_the_api(self):
         self.assert_stops("APP_ENV", APP_ENV="prodution")
+        self.assert_stops("APP_ENV", APP_ENV="prod")
 
     def test_development_needs_nothing_more(self):
-        with mock.patch.dict(os.environ, {"APP_ENV": "development"}):
+        with mock.patch.dict(
+            os.environ,
+            {"APP_ENV": "development", "MINILM_MODEL_REVISION": "main"},
+            clear=True,
+        ):
             validate_settings()
+
+    def test_unset_environment_is_rejected(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "APP_ENV must be explicitly set"):
+                validate_settings()
+
+    def test_production_validation_does_not_load_the_model(self):
+        with (
+            mock.patch("app.services.rag_service._load_model_with_revision") as load_model,
+            mock.patch("app.services.rag_service._gemini_client") as gemini_client,
+        ):
+            self.check()
+        load_model.assert_not_called()
+        gemini_client.assert_not_called()
 
     def test_production_allows_only_the_site_itself(self):
         with mock.patch.dict(os.environ, {"APP_ENV": "production", "FRONTEND_URL": "https://fitscholar.example/"}):

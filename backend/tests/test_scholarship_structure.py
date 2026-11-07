@@ -15,7 +15,13 @@ from sqlalchemy.pool import StaticPool
 import migrate_scholarship_structure as migration
 from app.database import Base
 from app.models.opportunity import Scholarship
-from app.schemas.opportunity import ScholarshipResponse, ScholarshipStructured, ScholarshipUpdate, is_web_url
+from app.schemas.opportunity import (
+    ScholarshipCreate,
+    ScholarshipResponse,
+    ScholarshipStructured,
+    ScholarshipUpdate,
+    is_web_url,
+)
 from app.services.financial_feasibility import calculate_feasibility
 from app.schemas.financial import ExpenseInput, ExpenseInputs, MoneyInput
 from app.services.scholarship_eligibility import evaluate_scholarship, scholarship_deadline
@@ -160,7 +166,54 @@ class ValidationTests(unittest.TestCase):
                     "javascript:alert(1)", "https://www.anu.edu.au/ (general portal)"):
             self.assertFalse(is_web_url(bad), bad)
             with self.assertRaises(ValidationError):
-                ScholarshipStructured(official_info_url=bad)
+                ScholarshipCreate(name="Test", country="Finland", official_info_url=bad)
+
+    def test_metadata_urls_use_shared_validation_and_sanitization(self):
+        unsafe = "FAKE-URL-CREDENTIAL-98765"
+        credentialed_urls = (
+            {"official_url": f"https://student:{unsafe}@official.example/apply"},
+            {"official_info_url": f"https://student:{unsafe}@official.example/info"},
+            {"official_application_url": f"https://student:{unsafe}@official.example/apply"},
+            {"additional_source_urls": [f"https://student:{unsafe}@official.example/doc"]},
+        )
+        for fields in credentialed_urls:
+            with self.subTest(field=next(iter(fields))):
+                with self.assertRaises(ValidationError) as error:
+                    ScholarshipCreate(name="Test", country="Finland", **fields)
+                self.assertNotIn(unsafe, str(error.exception))
+
+        with self.assertRaises(ValidationError):
+            ScholarshipUpdate(official_url="ftp://official.example/page")
+        with self.assertRaises(ValidationError):
+            ScholarshipUpdate(official_info_url="https://[malformed")
+        with self.assertRaises(ValidationError):
+            ScholarshipUpdate(additional_source_urls=["https://official.example/good", "not a URL"])
+
+        created = ScholarshipCreate(
+            name="Test",
+            country="Finland",
+            official_url="https://official.example/home?language=en#overview",
+            official_info_url="https://official.example/info?api_key=remove&language=en",
+            official_application_url="http://official.example/apply?round=2#form",
+            additional_source_urls=[
+                "https://official.example/guide?language=fi#section",
+                "http://official.example/call?token=remove&page=3",
+            ],
+        )
+        self.assertEqual(created.official_url, "https://official.example/home?language=en")
+        self.assertEqual(created.official_info_url, "https://official.example/info?language=en")
+        self.assertEqual(created.official_application_url, "http://official.example/apply?round=2")
+        self.assertEqual(
+            created.additional_source_urls,
+            [
+                "https://official.example/guide?language=fi",
+                "http://official.example/call?page=3",
+            ],
+        )
+        self.assertEqual(
+            ScholarshipUpdate(official_url="https://official.example/path?tab=details").official_url,
+            "https://official.example/path?tab=details",
+        )
 
     def test_admin_updates_use_the_same_rules(self):
         with self.assertRaises(ValidationError):
@@ -258,6 +311,7 @@ class MigrationTests(unittest.TestCase):
             self.assertEqual(row.last_verified_date, date(2026, 9, 30))
             self.assertEqual(row.verification_basis, "official_source")
             self.assertEqual(row.structured_data_version, migration.STRUCTURED_DATA_VERSION)
+            self.assertEqual(row.record_version, 1)
 
     def test_repeat_run_changes_nothing_and_keeps_later_edits(self):
         migration.add_missing_columns(self.engine)
@@ -316,6 +370,8 @@ def make_scholarship(**overrides):
     data = dict.fromkeys(column.name for column in Scholarship.__table__.columns)
     data.update(id=1, name="Test", provider="Test Provider", country="Germany", degree_level="Master's",
                 verification_status="verified", eligible_nationalities="Open to students of all nationalities",
+                verification_basis="official_source", official_info_url="https://example.org/scholarship",
+                last_verified_date=date(2026, 10, 1),
                 pakistan_eligible="Yes - open to all", eligible_fields="All fields",
                 min_academic_requirement="Minimum CGPA 3.0", english_requirement="Yes - IELTS 6.5 overall",
                 deadline="Varies; e.g. one university's window closes 31 August 2026", funding_type="Fully Funded",
@@ -359,7 +415,11 @@ class ConsumerCompatibilityTests(unittest.TestCase):
 
     def test_structured_deadline_keeps_eligibility_separate(self):
         result = evaluate_scholarship(
-            make_scholarship(deadline_type="fixed", application_deadline_date=date(2026, 2, 20)), self.profile(), today=TODAY)
+            make_scholarship(deadline_type="fixed", application_deadline_date=date(2026, 2, 20),
+                             required_previous_degree="Bachelor's", academic_condition="numeric",
+                             min_gpa=3.0, min_gpa_scale=4.0,
+                             min_academic_requirement="Minimum CGPA 3.0/4.0"),
+            self.profile(), today=TODAY)
         self.assertEqual((result["status"], result["deadline"]["status"]), ("eligible", "closed"))
 
     def test_response_works_for_old_and_new_rows(self):

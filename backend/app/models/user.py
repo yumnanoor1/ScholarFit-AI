@@ -31,7 +31,7 @@ class StudentProfile(Base):
     degree_level = Column(String)           # Bachelor | Master | PhD
     field_of_study = Column(String)
     cgpa = Column(Float)
-    cgpa_scale = Column(Float, default=4.0)
+    cgpa_scale = Column(Float)
 
     # Language
     ielts_score = Column(Float, nullable=True)
@@ -42,6 +42,16 @@ class StudentProfile(Base):
     research_interests = Column(Text)
     preferred_countries = Column(Text)       # comma separated (e.g. "Germany,UK")
     budget_usd = Column(Float, nullable=True)
+    preferred_fields = Column(JSON, nullable=True)
+    preferred_degree_levels = Column(JSON, nullable=True)
+    preferred_funding_types = Column(JSON, nullable=True)
+    funding_preference = Column(String, nullable=True)
+    language_test = Column(JSON, nullable=True)
+    tuition_budget_amount = Column(Float, nullable=True)
+    tuition_budget_currency = Column(String, nullable=True)
+    living_budget_amount = Column(Float, nullable=True)
+    living_budget_currency = Column(String, nullable=True)
+    form_details = Column(JSON, nullable=True)
 
     # Used by scholarship eligibility (nationality and age limits)
     nationality = Column(String, nullable=True)       # country of citizenship, e.g. "Pakistan"

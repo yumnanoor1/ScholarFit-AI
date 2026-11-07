@@ -1,34 +1,21 @@
-import { useNavigate } from 'react-router-dom';
-import { ArrowRight, BriefcaseBusiness, GraduationCap, X } from 'lucide-react';
+import { BriefcaseBusiness, X } from 'lucide-react';
 import { useProfile } from '../../context/ProfileContext';
-import UniversityLogo from '../common/UniversityLogo';
-import { getScholarshipLogo } from '../../services/programFit';
+import ScholarshipLogo from '../common/ScholarshipLogo';
+import { getScholarshipLogo } from '../../services/scholarshipLogos';
 import { getOpportunityOrganization, getOpportunityTitle } from '../../services/opportunityJourney';
 
 export default function ActiveOpportunityBar() {
-  const navigate = useNavigate();
-  const {
-    selectedOpportunities,
-    activeOpportunity,
-    activeOpportunityId,
-    setActiveOpportunity,
-    removeSelectedOpportunity,
-    appliedOpportunityIds,
-    markOpportunityApplied,
-  } = useProfile();
+  const { selectedOpportunities, activeOpportunity, activeOpportunityId, setActiveOpportunity, removeSelectedOpportunity } = useProfile();
 
-  if (!activeOpportunity) return null;
+  if (!activeOpportunity || activeOpportunity.kind !== 'scholarship') return null;
 
-  const isApplied = appliedOpportunityIds.includes(activeOpportunity.id);
-  const OpportunityIcon = activeOpportunity.kind === 'scholarship' ? BriefcaseBusiness : GraduationCap;
+  const OpportunityIcon = BriefcaseBusiness;
 
   return (
-    <section className="active-opportunity-bar" aria-label="Active application opportunity">
-      {activeOpportunity.kind === 'scholarship'
-        ? <UniversityLogo src={getScholarshipLogo(activeOpportunity)} size={30} fallback={<OpportunityIcon size={16} />} />
-        : <UniversityLogo university={activeOpportunity.university} size={30} fallback={<OpportunityIcon size={16} />} />}
+    <section className="active-opportunity-bar" aria-label="Selected scholarship">
+      <ScholarshipLogo src={getScholarshipLogo(activeOpportunity)} size={30} fallback={<OpportunityIcon size={16} />} />
       <div className="active-opportunity-copy">
-        <span>Active opportunity</span>
+        <span>Selected scholarship</span>
         <strong>{getOpportunityTitle(activeOpportunity)}</strong>
         <small>{getOpportunityOrganization(activeOpportunity)}{activeOpportunity.country ? ` · ${activeOpportunity.country}` : ''}</small>
       </div>
@@ -42,18 +29,6 @@ export default function ActiveOpportunityBar() {
           </select>
         </label>
       )}
-      <button
-        type="button"
-        className={`active-opportunity-applied ${isApplied ? 'is-applied' : ''}`}
-        aria-pressed={isApplied}
-        title={isApplied ? 'Marked as applied. Click to move back to planning' : 'Planning. Click to mark as applied'}
-        onClick={() => markOpportunityApplied(activeOpportunity.id, !isApplied)}
-      >
-        {isApplied ? 'Applied' : 'Planning'}
-      </button>
-      <button type="button" className="active-opportunity-open" onClick={() => navigate('/timeline')} aria-label="Open active opportunity timeline">
-        <ArrowRight size={15} aria-hidden="true" />
-      </button>
       <button
         type="button"
         className="active-opportunity-remove"

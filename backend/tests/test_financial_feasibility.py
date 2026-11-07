@@ -14,13 +14,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models.opportunity import Program, ProgramCost, Scholarship, University
+from app.models.opportunity import Program, ProgramCost, Scholarship, ScholarshipProgramLink, University
 from app.models.user import StudentProfile, User
 from app.routers import programs as programs_api
 from app.routers import financial_feasibility as api
 from app.routers.auth import get_current_user
 from app.schemas.financial import (
-    BudgetUpdate, CompareRequest, ExpenseInput, ExpenseInputs, FeasibilityRequest, MoneyInput,
+    BudgetUpdate, ExpenseInput, ExpenseInputs, MoneyInput, ScholarshipFeasibilityRequest,
 )
 from app.schemas.opportunity import ProgramCostUpdate
 from app.services import exchange_rates
@@ -43,6 +43,8 @@ def make_scholarship(**overrides):
     data = dict(
         id=7, name="Test Scholarship", country="Germany", provider="German Academic Exchange Service", funding_type="Fully Funded",
         verification_status="verified", last_verified="2026-09-30", official_url="https://example.org",
+        official_info_url="https://example.org", verification_basis="official_source",
+        last_verified_date=date(2026, 10, 30), source_checks=[], data_flags=[],
         tuition_coverage=None, living_stipend=None, duration="Duration of the Master's programme",
         accommodation=None, health_insurance=None, travel_airfare=None, visa_support=None, other_benefits=None,
     )
@@ -75,6 +77,35 @@ def eur(amount):
 
 def funding_line(result, category):
     return next(line for line in result["funding"] if line["category"] == category)
+
+
+def make_database_scholarship():
+    return Scholarship(
+        country="Germany",
+        name="Test Scholarship",
+        provider="Test Provider",
+        verification_status="verified",
+        official_info_url="https://example.org/scholarship",
+        verification_basis="official_source",
+        last_verified_date=date.today(),
+        source_checks=[],
+        data_flags=[],
+        tuition_coverage="Full tuition fee waiver",
+        duration="Duration of the Master's programme",
+    )
+
+
+def make_confirmed_program_link(scholarship, program):
+    return ScholarshipProgramLink(
+        scholarship_id=scholarship.id,
+        program_id=program.id,
+        outcome="confirmed",
+        relationship_type="named_program",
+        evidence="The official scholarship page lists this Master's programme.",
+        source_url="https://example.org/program-scholarships",
+        verification_status="verified",
+        last_verified=date.today(),
+    )
 
 
 class BudgetOutcomeTests(unittest.TestCase):
@@ -218,6 +249,12 @@ class ScholarshipTests(unittest.TestCase):
         self.assertEqual(result["confirmed_funding"], 0)
         self.assertFalse(result["scholarship"]["counted"])
 
+    def test_verified_status_without_current_official_evidence_is_not_counted(self):
+        result = self.run_with(verification_basis="provider_submitted", tuition_coverage="Full tuition fee waiver")
+        self.assertEqual(result["confirmed_funding"], 0)
+        self.assertFalse(result["scholarship"]["counted"])
+        self.assertIn("official source", result["scholarship"]["verification_issue"])
+
     def test_scholarship_for_other_country_not_counted(self):
         result = self.run_with(country="Netherlands", tuition_coverage="Full tuition fee waiver")
         self.assertEqual(result["confirmed_funding"], 0)
@@ -312,15 +349,17 @@ class ApiTests(unittest.TestCase):
         uni = University(name="Test University", country="Germany")
         self.db.add(uni)
         self.db.flush()
-        self.program = Program(university_id=uni.id, name="MSc Test", duration_months=24,
-                               tuition_amount=10000, tuition_currency="EUR")
-        self.scholarship = Scholarship(country="Germany", name="Test Scholarship", verification_status="verified",
-                                       tuition_coverage="Full tuition fee waiver",
-                                       duration="Duration of the Master's programme")
+        today = date.today()
+        self.program = Program(university_id=uni.id, name="MSc Test", degree_level="Master's",
+                               field_of_study="Computer Science", duration_months=24,
+                               tuition_amount=10000, tuition_currency="EUR",
+                               source_url="https://example.edu/program", last_verified=today)
+        self.scholarship = make_database_scholarship()
         self.alice = User(email="alice@example.com", hashed_password="x", full_name="Alice")
         self.bob = User(email="bob@example.com", hashed_password="x", full_name="Bob")
         self.db.add_all([self.program, self.scholarship, self.alice, self.bob])
         self.db.flush()
+        self.db.add(make_confirmed_program_link(self.scholarship, self.program))
         self.db.add_all([
             StudentProfile(user_id=self.alice.id, budget_usd=11193),   # 10,000 EUR
             StudentProfile(user_id=self.bob.id, budget_usd=1119300),   # 1,000,000 EUR
@@ -331,46 +370,50 @@ class ApiTests(unittest.TestCase):
         self.db.close()
 
     def test_calculate_uses_database_records(self):
-        request = FeasibilityRequest(program_id=self.program.id, scholarship_id=self.scholarship.id,
-                                     budget=eur(30000), expenses=all_expenses())
+        request = ScholarshipFeasibilityRequest(scholarship_id=self.scholarship.id,
+                                                budget=eur(30000), expenses=all_expenses())
         result = api.calculate(request, db=self.db, current_user=self.alice)
-        self.assertEqual(result["program"]["name"], "MSc Test")
+        self.assertIsNone(result["program"])
+        self.assertEqual(result["total_estimated_cost"], 47300)
         self.assertEqual(result["confirmed_funding"], 20000)
-
-    def test_unknown_program(self):
-        with self.assertRaises(HTTPException) as error:
-            api.calculate(FeasibilityRequest(program_id=9999), db=self.db, current_user=self.alice)
-        self.assertEqual(error.exception.status_code, 404)
 
     def test_unknown_scholarship(self):
         with self.assertRaises(HTTPException) as error:
-            api.calculate(FeasibilityRequest(program_id=self.program.id, scholarship_id=9999),
+            api.calculate(ScholarshipFeasibilityRequest(scholarship_id=9999),
                           db=self.db, current_user=self.alice)
         self.assertEqual(error.exception.status_code, 404)
 
     def test_budget_comes_from_the_signed_in_students_profile(self):
         # A user_id in the body is ignored; Alice only ever gets her own budget
-        request = FeasibilityRequest.model_validate({"program_id": self.program.id, "user_id": self.bob.id,
+        request = ScholarshipFeasibilityRequest.model_validate({"scholarship_id": self.scholarship.id,
+                                                     "user_id": self.bob.id, "currency": "EUR",
                                                      "expenses": all_expenses().model_dump()})
         result = api.calculate(request, db=self.db, current_user=self.alice)
         self.assertEqual(result["budget"]["source"], "profile")
         self.assertAlmostEqual(result["budget"]["amount"], 10000, places=0)
 
-    def test_get_endpoint_reports_missing_living_costs(self):
-        result = api.feasibility_for_program(self.program.id, scholarship_id=None, currency=None,
-                                             budget_amount=None, budget_currency=None,
-                                             db=self.db, current_user=self.alice)
-        self.assertEqual(result["status"], "insufficient_data")
+    def test_profile_budget_preserves_its_saved_currency(self):
+        profile = self.db.query(StudentProfile).filter_by(user_id=self.alice.id).one()
+        profile.budget_usd = None
+        profile.tuition_budget_amount = 111310
+        profile.tuition_budget_currency = "SEK"
+        self.db.commit()
+        result = api.calculate(
+            ScholarshipFeasibilityRequest(scholarship_id=self.scholarship.id, expenses=all_expenses()),
+            db=self.db,
+            current_user=self.alice,
+        )
+        self.assertEqual(result["budget"]["source"], "not_provided")
+        self.assertIsNone(result["budget"]["amount"])
+        self.assertTrue(any("total study budget" in item for item in result["missing_data"]))
 
-    def test_compare_scenarios(self):
-        scenarios = CompareRequest(scenarios=[
-            FeasibilityRequest(program_id=self.program.id, budget=eur(30000), expenses=all_expenses()),
-            FeasibilityRequest(program_id=self.program.id, scholarship_id=self.scholarship.id,
-                               budget=eur(30000), expenses=all_expenses()),
-        ])
-        without, with_scholarship = api.compare(scenarios, db=self.db, current_user=self.alice)
-        self.assertEqual(without["status"], "not_feasible")
-        self.assertEqual(with_scholarship["confirmed_funding"], 20000)
+    def test_calculate_reports_missing_living_costs(self):
+        result = api.calculate(
+            ScholarshipFeasibilityRequest(scholarship_id=self.scholarship.id),
+            db=self.db,
+            current_user=self.alice,
+        )
+        self.assertEqual(result["status"], "insufficient_data")
 
     def test_invalid_token_is_rejected(self):
         with self.assertRaises(HTTPException) as error:
@@ -408,6 +451,23 @@ class ProgramCostTests(unittest.TestCase):
         program = make_program(costs=[self.cost(is_estimate=True)])
         result = calculate_feasibility(program, budget=eur(100000), expenses=all_expenses(living_costs=None))
         self.assertTrue(any("estimate published by the source" in note for note in result["uncertainties"]))
+
+    def test_stale_tuition_source_prevents_definitive_result(self):
+        result = calculate_feasibility(
+            make_program(last_verified=date(2025, 1, 1)), budget=eur(100000), expenses=all_expenses(),
+            today=date(2026, 11, 2),
+        )
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertTrue(any("tuition source needs verification" in item for item in result["missing_data"]))
+
+    def test_stale_living_cost_source_prevents_definitive_result(self):
+        program = make_program(costs=[self.cost(last_verified=date(2025, 1, 1))])
+        result = calculate_feasibility(
+            program, budget=eur(100000), expenses=all_expenses(living_costs=None), today=date(2026, 11, 2)
+        )
+        self.assertEqual(result["status"], "insufficient_data")
+        self.assertTrue(any("Living costs" in item and "source needs verification" in item
+                            for item in result["missing_data"]))
 
     def test_cost_in_currency_without_rate_is_not_zero(self):
         program = make_program(costs=[self.cost(currency="GBP")])
@@ -483,6 +543,18 @@ class ExchangeRateTests(unittest.TestCase):
                                        today=date(2027, 3, 1))
         self.assertTrue(result["exchange_rates"]["stale"])
         self.assertTrue(any("Exchange rates are from" in note for note in result["uncertainties"]))
+        self.assertEqual(result["status"], "insufficient_data")
+
+    def test_stale_rates_used_only_for_scholarship_benefit_block_definitive_result(self):
+        scholarship = make_scholarship(
+            living_stipend="Yes - USD 500 per month", tuition_coverage=None
+        )
+        result = calculate_feasibility(
+            make_program(), scholarship=scholarship, budget=eur(100000), expenses=all_expenses(),
+            today=date(2027, 3, 1),
+        )
+        self.assertTrue(result["exchange_rates"]["used"])
+        self.assertEqual(result["status"], "insufficient_data")
 
 
 class PlanApiTests(unittest.TestCase):
@@ -493,11 +565,17 @@ class PlanApiTests(unittest.TestCase):
         uni = University(name="Test University", country="Germany")
         self.db.add(uni)
         self.db.flush()
-        self.program = Program(university_id=uni.id, name="MSc Test", duration_months=24,
-                               tuition_amount=10000, tuition_currency="EUR")
+        today = date.today()
+        self.program = Program(university_id=uni.id, name="MSc Test", degree_level="Master's",
+                               field_of_study="Computer Science", duration_months=24,
+                               tuition_amount=10000, tuition_currency="EUR",
+                               source_url="https://example.edu/program", last_verified=today)
+        self.scholarship = make_database_scholarship()
         self.alice = User(email="alice@example.com", hashed_password="x", full_name="Alice")
         self.bob = User(email="bob@example.com", hashed_password="x", full_name="Bob")
-        self.db.add_all([self.program, self.alice, self.bob])
+        self.db.add_all([self.program, self.scholarship, self.alice, self.bob])
+        self.db.flush()
+        self.db.add(make_confirmed_program_link(self.scholarship, self.program))
         self.db.commit()
 
     def tearDown(self):
@@ -526,18 +604,25 @@ class PlanApiTests(unittest.TestCase):
 
     def test_calculation_uses_saved_budget_and_expenses(self):
         api.save_budget(BudgetUpdate(amount=30000, currency="EUR"), db=self.db, current_user=self.alice)
-        api.save_expenses(self.program.id, ExpenseInputs(living_costs=living()), db=self.db, current_user=self.alice)
-        result = api.feasibility_for_program(self.program.id, scholarship_id=None, currency=None, budget_amount=None,
-                                             budget_currency=None, db=self.db, current_user=self.alice)
+        api.save_expenses(self.scholarship.id, ExpenseInputs(living_costs=living()), db=self.db, current_user=self.alice)
+        result = api.calculate(
+            ScholarshipFeasibilityRequest(scholarship_id=self.scholarship.id),
+            db=self.db,
+            current_user=self.alice,
+        )
         self.assertEqual(result["budget"]["source"], "saved")
         self.assertEqual(result["total_estimated_cost"], 44000)
 
     def test_sent_budget_overrides_saved(self):
         api.save_budget(BudgetUpdate(amount=30000, currency="EUR"), db=self.db, current_user=self.alice)
-        result = api.calculate(FeasibilityRequest(program_id=self.program.id, budget=eur(5)), db=self.db, current_user=self.alice)
+        result = api.calculate(
+            ScholarshipFeasibilityRequest(scholarship_id=self.scholarship.id, budget=eur(5)),
+            db=self.db,
+            current_user=self.alice,
+        )
         self.assertEqual(result["budget"]["amount"], 5)
 
-    def test_expenses_for_unknown_program(self):
+    def test_expenses_for_unknown_scholarship(self):
         with self.assertRaises(HTTPException) as error:
             api.save_expenses(9999, ExpenseInputs(), db=self.db, current_user=self.alice)
         self.assertEqual(error.exception.status_code, 404)
@@ -573,13 +658,9 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ExpenseInput(amount=1, currency="EUR", period="weekly")
 
-    def test_bad_program_id(self):
+    def test_bad_scholarship_id(self):
         with self.assertRaises(ValidationError):
-            FeasibilityRequest(program_id=0)
-
-    def test_too_many_scenarios(self):
-        with self.assertRaises(ValidationError):
-            CompareRequest(scenarios=[FeasibilityRequest(program_id=1)] * 7)
+            ScholarshipFeasibilityRequest(scholarship_id=0)
 
 
 if __name__ == "__main__":

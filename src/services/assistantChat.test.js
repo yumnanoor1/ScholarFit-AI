@@ -24,20 +24,24 @@ function fakeStorage() {
   };
 }
 
-test('offers the five suggested questions', () => {
-  assert.equal(WELCOME_QUESTIONS.length, 5);
+test('offers the suggested questions', () => {
+  assert.equal(WELCOME_QUESTIONS.length, 6);
   assert.equal(WELCOME_QUESTIONS[1], "What's my best next action?");
+  assert.equal(WELCOME_QUESTIONS[5], 'What are my best scholarship matches?');
 });
 
 test('action buttons navigate to existing routes', () => {
   assert.deepEqual(actionNavigation({ label: 'x', route: '/documents' }, buildFinancialRouteState), { path: '/documents', options: undefined });
+  assert.deepEqual(actionNavigation({ label: 'x', route: '/recommendations' }, buildFinancialRouteState), { path: '/recommendations', options: undefined });
   assert.equal(actionNavigation({ label: 'x', route: 'https://evil.example' }, buildFinancialRouteState), null);
   assert.equal(actionNavigation(null, buildFinancialRouteState), null);
 });
 
-test('financial action passes IDs only when known', () => {
-  const withIds = actionNavigation({ route: '/financial', state: { programId: 4, scholarshipId: null } }, buildFinancialRouteState);
-  assert.deepEqual(withIds.options.state, { programId: 4, scholarshipId: null, universityId: null });
+test('financial action passes only a known scholarship ID', () => {
+  const withIds = actionNavigation({ route: '/financial', state: { programId: 4, scholarshipId: 6 } }, buildFinancialRouteState);
+  assert.deepEqual(withIds.options.state, { scholarshipId: 6 });
+  const programOnly = actionNavigation({ route: '/financial', state: { programId: 4 } }, buildFinancialRouteState);
+  assert.equal(programOnly.options, undefined);
   const without = actionNavigation({ route: '/financial', state: null }, buildFinancialRouteState);
   assert.equal(without.options, undefined);
 });

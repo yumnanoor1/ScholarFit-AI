@@ -24,3 +24,19 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def application_tables():
+    """Return application tables, leaving RAG and discovery tables to explicit migrations."""
+    from app.models.scholarship_knowledge import SCHOLARSHIP_KNOWLEDGE_TABLE_NAMES
+    from app.models.scholarship_discovery import SCHOLARSHIP_DISCOVERY_TABLE_NAMES
+
+    return [
+        table for table in Base.metadata.tables.values()
+        if table.name not in SCHOLARSHIP_KNOWLEDGE_TABLE_NAMES | SCHOLARSHIP_DISCOVERY_TABLE_NAMES
+    ]
+
+
+def create_application_schema(bind=None):
+    """Create application tables, leaving RAG and discovery tables to explicit migrations."""
+    Base.metadata.create_all(bind=bind or engine, tables=application_tables())

@@ -15,7 +15,6 @@ export const EMPTY_FILTERS = {
   deadline: [],
   verification: [],
   eligibility: [],
-  match: [],
 };
 
 export const SORT_OPTIONS = [
@@ -31,14 +30,13 @@ export const SORT_OPTIONS = [
 const ELIGIBILITY_LABELS = { eligible: 'Eligible', verify_manually: 'Verify manually', not_eligible: 'Not eligible' };
 
 /** Query string for GET /scholarships/search. Empty values are left out. */
-export function buildSearchQuery(filters, { programId = null, sort = '', page = 1 } = {}) {
+export function buildSearchQuery(filters = EMPTY_FILTERS, { sort = '', page = 1 } = {}) {
   const params = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => {
+  Object.keys(EMPTY_FILTERS).forEach((key) => {
+    const value = filters[key] ?? EMPTY_FILTERS[key];
     if (Array.isArray(value)) value.forEach((item) => params.append(key, item));
-    else if (value.trim()) params.set(key, value.trim().replace(/\s+/g, ' '));
+    else if (typeof value === 'string' && value.trim()) params.set(key, value.trim().replace(/\s+/g, ' '));
   });
-  if (programId != null) params.set('program_id', String(programId));
-  else params.delete('match');
   if (sort) params.set('sort', sort);
   params.set('skip', String((page - 1) * PAGE_SIZE));
   params.set('limit', String(PAGE_SIZE));
@@ -66,7 +64,6 @@ export function getActiveFilters(filters, options) {
     degree: ['Degree', options?.degree_levels], discipline: ['Field', options?.disciplines],
     academic_condition: ['Academic rule', options?.academic_conditions], funding: ['Funding', options?.funding],
     benefit: ['Includes', options?.benefits], deadline: ['Deadline', options?.deadlines], verification: ['Records', options?.verification],
-    match: ['Program', options?.match_outcomes],
   };
   const active = [];
   if (filters.q.trim()) active.push({ key: 'q', value: filters.q, label: `Search: ${filters.q.trim()}` });

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from app.schemas.eligibility import DeadlineStatus
 from app.schemas.opportunity import ScholarshipResponse
-from app.schemas.recommendation import EligibilitySummary, Exclusion, ProfileGap, ProgramMatchSummary, SelectedProgram
+from app.schemas.recommendation import EligibilitySummary, Exclusion, ProfileGap
 
 SortOption = Literal["relevance", "recommendation", "name", "deadline", "funding", "country", "verified"]
 FundingFilter = Literal["fully_funded", "substantially_funded", "partially_funded", "tuition_only", "incomplete"]
@@ -28,7 +28,6 @@ class ScholarshipSearchItem(BaseModel):
     score: Optional[int]
     category_label: Optional[str]
     exclusions: List[Exclusion]
-    program_match: Optional[ProgramMatchSummary]
 
 
 class ScholarshipSearchResult(BaseModel):
@@ -39,7 +38,6 @@ class ScholarshipSearchResult(BaseModel):
     signed_in: bool
     profile_incomplete: bool
     profile_gaps: List[ProfileGap]
-    program: Optional[SelectedProgram]
     items: List[ScholarshipSearchItem]
 
 
@@ -47,12 +45,6 @@ class FilterOption(BaseModel):
     value: str
     label: str
     count: int
-
-
-class ProgramOption(BaseModel):
-    id: int
-    name: str
-    university: Optional[str]
 
 
 class ScholarshipFilterOptions(BaseModel):
@@ -65,6 +57,4 @@ class ScholarshipFilterOptions(BaseModel):
     benefits: List[FilterOption]
     deadlines: List[FilterOption]
     verification: List[FilterOption]
-    match_outcomes: List[FilterOption]
     nationalities: List[str]
-    programs: List[ProgramOption]

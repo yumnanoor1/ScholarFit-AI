@@ -344,7 +344,14 @@ test('the record overrides an older verified catalog entry', () => {
 });
 
 test('a verified saved scholarship stays verified, and a missing status is not', () => {
-  const verified = [{ scholarship_id: 5, scholarship: { id: 5, name: 'S', verification_status: 'verified' } }];
+  const verified = [{ scholarship_id: 5, scholarship: {
+    id: 5,
+    name: 'S',
+    verification_status: 'verified',
+    verification_basis: 'official_source',
+    official_info_url: 'https://example.org/scholarship',
+    last_verified_date: '2026-10-01',
+  } }];
   assert.equal(resolveSavedItem('sch-db-5', verified, () => null).sourceStatus, 'official-verified');
   const unknown = [{ scholarship_id: 5, scholarship: { id: 5, name: 'S', verification_status: null } }];
   assert.equal(resolveSavedItem('sch-db-5', unknown, () => null).sourceStatus, 'unverified');

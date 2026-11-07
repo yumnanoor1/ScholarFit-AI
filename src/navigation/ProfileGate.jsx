@@ -12,7 +12,7 @@ export default function ProfileGate({ gate = 'complete' }) {
   if (access === 'wait') return <Loader message="Checking your profile..." />;
   if (access === 'failed') {
     return (
-      <div className="page-container" role="alert">
+      <div className="page-container profile-gate-error" role="alert">
         <h1>We couldn’t check your profile</h1>
         <p>Please check your connection and try again.</p>
         <RetryButton />

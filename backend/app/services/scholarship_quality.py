@@ -9,11 +9,14 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy import text, update
 
 from app.models.opportunity import Scholarship, ScholarshipAuditLog, ScholarshipProgramLink, University
 from app.models.user import SavedScholarship
+from app.models.scholarship_knowledge import ScholarshipSourceDocument
 from app.schemas.opportunity import ScholarshipResponse
 from app.services.scholarship_eligibility import FULL_DATE_RE, ISO_DATE_RE, MONTHS, check_nationality, evaluate_scholarship
+from app.services.source_url_safety import safe_source_url
 
 STALE_AFTER_DAYS = 180
 DUPLICATE_NAME_OVERLAP = 0.8
@@ -103,8 +106,10 @@ def find_issues(scholarship, today=None, duplicate_ids=frozenset()) -> list:
     if scholarship.verification_status == "verified" and scholarship.verification_basis != "official_source":
         issues.append(_issue("weak_evidence", "Not fully officially sourced", "medium", f"Verification basis: {scholarship.verification_basis or 'not recorded'}."))
     for check in scholarship.source_checks or []:
-        if check.get("status") == "broken":
-            issues.append(_issue("broken_url", "Broken link", "high", f"{check['url']} answered {check.get('http_status')} when checked."))
+        if isinstance(check, dict) and check.get("status") == "broken":
+            checked_url = safe_source_url(check.get("url")) or "[redacted invalid source URL]"
+            issues.append(_issue("broken_url", "Broken link", "high",
+                                 f"{checked_url} answered {check.get('http_status')} when checked."))
     if not scholarship.official_application_url and scholarship.application_channel not in ("automatic", "nomination"):
         issues.append(_issue("missing_application_url", "No application link", "medium", "No application page is recorded."))
     if scholarship.deadline_type in (None, "not_specified") or (scholarship.deadline_type == "fixed" and not scholarship.application_deadline_date):
@@ -163,10 +168,53 @@ def record_audit(db, scholarship_id, action, admin, changes=None, note=None):
                                actor_id=admin.id, actor_email=admin.email))
 
 
+def record_discovery_audit(db, scholarship_id, action, changes=None, note=None):
+    db.add(ScholarshipAuditLog(
+        scholarship_id=scholarship_id,
+        action=action,
+        changes=changes or None,
+        note=note,
+        actor_id=None,
+        actor_email="system:scholarship-discovery",
+    ))
+
+
+def update_scholarship_if_current(db, item, values: dict) -> int:
+    """Atomically update a record only if its version is still current."""
+    previous_version = item.record_version
+    version_filter = (
+        Scholarship.record_version.is_(None)
+        if previous_version is None
+        else Scholarship.record_version == previous_version
+    )
+    next_version = (previous_version or 0) + 1
+    result = db.execute(
+        update(Scholarship)
+        .where(Scholarship.id == item.id, version_filter)
+        .values(**{**values, "record_version": next_version})
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Someone changed this record after you opened it. Reload it so nothing is lost.",
+        )
+    db.expire(item)
+    return next_version
+
+
 def reference_counts(db, scholarship_id) -> dict:
     """How much depends on a record. Counts only, so no student is identified."""
+    program_link_count = db.query(ScholarshipProgramLink).filter(
+        ScholarshipProgramLink.scholarship_id == scholarship_id
+    ).count()
     return {"saved_by_students": db.query(SavedScholarship).filter(SavedScholarship.scholarship_id == scholarship_id).count(),
-            "program_links": db.query(ScholarshipProgramLink).filter(ScholarshipProgramLink.scholarship_id == scholarship_id).count(),
+            "program_links": program_link_count,
+            "internal_links": program_link_count,
+            "knowledge_documents": db.query(ScholarshipSourceDocument).filter(
+                ScholarshipSourceDocument.scholarship_id == scholarship_id
+            ).count(),
             "duplicates_pointing_here": db.query(Scholarship).filter(Scholarship.duplicate_of_id == scholarship_id).count()}
 
 
@@ -186,6 +234,8 @@ def create_record(db, values: dict, admin) -> Scholarship:
     """New records always start unverified: the verification endpoint is the only way to verified."""
     _check_references(db, values)
     values = {key: value for key, value in values.items() if key not in GUARDED_FIELDS}
+    _lock_identity(db, values.get("name"), values.get("country"))
+    _reject_duplicate_identity(db, values.get("name"), values.get("country"))
     item = Scholarship(**values, verification_status="unverified", verification_basis="not_verified",
                        structured_data_version=1, record_version=1)
     db.add(item)
@@ -194,6 +244,74 @@ def create_record(db, values: dict, admin) -> Scholarship:
     db.commit()
     db.refresh(item)
     return item
+
+
+def find_identity_record(db, name, country):
+    normalized_name = _normalized_identity(name)
+    normalized_country = _normalized_identity(country)
+    return next(
+        (
+            item for item in db.query(Scholarship).filter(Scholarship.archived_at.is_(None)).all()
+            if _normalized_identity(item.name) == normalized_name
+            and _normalized_identity(item.country) == normalized_country
+        ),
+        None,
+    )
+
+
+def create_discovered_record(db, values: dict, evidence_note: str, evidence: dict, *, commit=True) -> Scholarship:
+    """Create an explicitly unverified discovery candidate without impersonating an administrator."""
+    _check_references(db, values)
+    values = {key: value for key, value in values.items() if key not in GUARDED_FIELDS}
+    _lock_identity(db, values.get("name"), values.get("country"))
+    _reject_duplicate_identity(db, values.get("name"), values.get("country"))
+    item = Scholarship(
+        **values,
+        verification_status="unverified",
+        verification_basis="not_verified",
+        structured_data_version=1,
+        record_version=1,
+        data_flags=[],
+    )
+    conflicts = find_conflicts(item)
+    if conflicts:
+        item.data_flags = ["conflicting_information"]
+    db.add(item)
+    db.flush()
+    record_discovery_audit(
+        db,
+        item.id,
+        "discovery_created",
+        changes={"evidence": evidence, "conflicts": conflicts},
+        note=evidence_note,
+    )
+    if commit:
+        db.commit()
+        db.refresh(item)
+    return item
+
+
+def flag_discovery_proposal(db, item, proposed_values: dict, evidence_note: str, evidence: dict, *, commit=True):
+    """Keep reviewed fields untouched and attach a machine-proposed change to the audit trail."""
+    changes = field_changes(
+        {field: getattr(item, field) for field in proposed_values},
+        proposed_values,
+    )
+    flags = set(item.data_flags or [])
+    if changes:
+        flags.add("conflicting_information")
+        update_scholarship_if_current(db, item, {"data_flags": sorted(flags)})
+    record_discovery_audit(
+        db,
+        item.id,
+        "discovery_proposal" if changes else "discovery_duplicate_skipped",
+        changes={"proposed_values": changes, "evidence": evidence} if changes else {"evidence": evidence},
+        note=evidence_note,
+    )
+    if commit:
+        db.commit()
+        db.refresh(item)
+    return bool(changes)
 
 
 def _review_flags(changed: set, flags: list, reviewed: list) -> tuple:
@@ -210,6 +328,35 @@ def _review_flags(changed: set, flags: list, reviewed: list) -> tuple:
             keep.add(flag)
             raised.append(group)
     return sorted(keep), raised
+
+
+def _normalized_identity(value):
+    return " ".join((value or "").casefold().split())
+
+
+def _reject_duplicate_identity(db, name, country, exclude_id=None):
+    normalized_name = _normalized_identity(name)
+    normalized_country = _normalized_identity(country)
+    duplicate = next(
+        (
+            item for item in db.query(Scholarship).filter(Scholarship.archived_at.is_(None)).all()
+            if item.id != exclude_id
+            and _normalized_identity(item.name) == normalized_name
+            and _normalized_identity(item.country) == normalized_country
+        ),
+        None,
+    )
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A scholarship with this name and host country already exists")
+
+
+def _lock_identity(db, name, country):
+    if db.get_bind().dialect.name == "postgresql":
+        identity = f"{_normalized_identity(name)}\x1f{_normalized_identity(country)}"
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
+            {"identity": identity},
+        )
 
 
 def update_record(db, item, data, admin) -> list:
@@ -233,16 +380,25 @@ def update_record(db, item, data, admin) -> list:
         raise HTTPException(status_code=422, detail=f"Use the verification or duplicate controls for: {', '.join(guarded)}")
     if "name" in changes and not (sent.get("name") or "").strip() or "country" in changes and not (sent.get("country") or "").strip():
         raise HTTPException(status_code=422, detail="Name and host country can't be empty")
+    target_name = sent.get("name", item.name)
+    target_country = sent.get("country", item.country)
+    _lock_identity(db, target_name, target_country)
+    _reject_duplicate_identity(db, target_name, target_country, item.id)
     _check_references(db, {"host_university_id": sent.get("host_university_id", item.host_university_id),
                            "institution_scope": sent.get("institution_scope", item.institution_scope),
                            "host_institution": sent.get("host_institution", item.host_institution)})
     if not changes and not reviewed:
         return []
-    for field in changes:
-        setattr(item, field, sent[field])
-    item.data_flags, raised = _review_flags(set(changes), item.data_flags or [], reviewed)
-    item.record_version = (item.record_version or 0) + 1
-    record_audit(db, item.id, "updated", admin, changes, note)
+    old_flags = item.data_flags or []
+    updated_flags, raised = _review_flags(set(changes), old_flags, reviewed)
+    values = {field: sent[field] for field in changes}
+    if updated_flags != old_flags or (changes and item.data_flags is None):
+        values["data_flags"] = updated_flags
+    if not values:
+        return []
+    update_scholarship_if_current(db, item, values)
+    audit_changes = changes or {"data_flags": [old_flags, updated_flags]}
+    record_audit(db, item.id, "updated", admin, audit_changes, note)
     db.commit()
     db.refresh(item)
     warnings = [f"{GROUP_LABELS[group]}: the wording and structured values were changed separately, so this is held for review."
@@ -261,10 +417,12 @@ def delete_record(db, item, admin):
 
 def set_archived(db, item, admin, reason: Optional[str]):
     archiving = reason is not None
-    item.archived_at = datetime.now(timezone.utc) if archiving else None
-    item.archived_by_id = admin.id if archiving else None
-    item.archive_reason = reason
-    item.record_version = (item.record_version or 0) + 1
+    values = {
+        "archived_at": datetime.now(timezone.utc) if archiving else None,
+        "archived_by_id": admin.id if archiving else None,
+        "archive_reason": reason,
+    }
+    update_scholarship_if_current(db, item, values)
     record_audit(db, item.id, "archived" if archiving else "restored", admin, note=reason)
     db.commit()
     db.refresh(item)

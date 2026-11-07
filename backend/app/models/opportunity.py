@@ -118,7 +118,7 @@ class Scholarship(Base):
     notes = Column(Text)
 
     # verified | unverified (unverified ko students ko recommend nahi karenge)
-    verification_status = Column(String, default="verified", index=True)
+    verification_status = Column(String, default="unverified", index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -192,7 +192,7 @@ class Scholarship(Base):
     host_university_id = Column(Integer, ForeignKey("universities.id", ondelete="SET NULL"))   # set only when it's in our catalog
 
     # Administration. See services/scholarship_quality.py
-    record_version = Column(Integer)            # rises with each admin change, so a stale form can't overwrite newer work
+    record_version = Column(Integer, nullable=False, default=1, server_default="1")  # optimistic concurrency token
     data_flags = Column(JSON)                   # open review flags, e.g. conflicting_information, review:english
     source_checks = Column(JSON)                # last link check per URL; never changes verification
     archived_at = Column(DateTime(timezone=True))   # archived records leave every listing but keep their ID and references

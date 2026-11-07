@@ -3,6 +3,7 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 psycopg[binary]
+dnspython==2.9.0
 python-dotenv
 pydantic[email]
 passlib[bcrypt]
@@ -14,3 +15,6 @@ pandas
 openpyxl
 torch
 sentence-transformers
+pgvector
+google-genai==2.34.0
+PyMuPDF>=1.24,<2

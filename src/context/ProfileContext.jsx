@@ -2,11 +2,8 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { EMPTY_PROFILE } from '../data/profileModel';
-import { mockScholarships, mockUniversities } from '../data/mockData';
-import { saveApplicationTaskStatuses } from '../services/applicationWorkflow';
 import {
   ACTIVE_OPPORTUNITY_KEY,
-  APPLIED_OPPORTUNITIES_KEY,
   COMPARISON_OPPORTUNITIES_KEY,
   DOCUMENT_RECORDS_KEY,
   SAVED_OPPORTUNITIES_KEY,
@@ -85,68 +82,6 @@ function getPreferredCountries(value) {
   return countries.map((country) => country.trim().toLowerCase()).filter(Boolean);
 }
 
-function calculateMatchStatistics(profile) {
-  const preferredCountries = getPreferredCountries(profile.preferredCountries);
-  const preferredRegions = profile.studyPreferences?.regions || [];
-  const hasProfileCriteria = profile.profileComplete ||
-    Boolean(profile.cgpa || profile.englishScore || profile.fieldOfInterest || preferredCountries.length || preferredRegions.length);
-  if (!hasProfileCriteria) {
-    return { eligibleCount: 0, fundedCount: 0, medianTuition: 'No matches' };
-  }
-
-  const countriesByRegion = {
-    Europe: ['germany', 'switzerland', 'netherlands', 'sweden', 'finland', 'austria', 'hungary', 'france', 'italy', 'united kingdom'],
-    'North America': ['canada', 'united states', 'usa'],
-    'Asia-Pacific': ['australia', 'new zealand', 'japan', 'singapore', 'south korea']
-  };
-  const countryMatches = (country) => (
-    (preferredCountries.length === 0 && preferredRegions.length === 0) ||
-    country === 'Global' ||
-    preferredCountries.includes(country.toLowerCase()) ||
-    preferredRegions.some((region) => countriesByRegion[region]?.includes(country.toLowerCase()))
-  );
-  const cgpa = Number.parseFloat(profile.cgpa);
-  const testScore = Number.parseFloat(profile.englishScore);
-  const testName = profile.englishTest || 'IELTS';
-
-  const matchingUniversities = mockUniversities.filter((university) => {
-    if (!countryMatches(university.country)) return false;
-    if (profile.preferredDegree && university.degree !== profile.preferredDegree) return false;
-
-    const requiredCgpa = Number.parseFloat(university.cgpaReq);
-    if (Number.isFinite(cgpa) && Number.isFinite(requiredCgpa) && cgpa < requiredCgpa) return false;
-
-    const scoreRequirement = university.englishReq.match(new RegExp(`${testName}\\s*(\\d+(?:\\.\\d+)?)`, 'i'));
-    if (scoreRequirement && Number.isFinite(testScore) && testScore < Number(scoreRequirement[1])) return false;
-
-    return true;
-  });
-
-  const fundedScholarships = mockScholarships.filter((scholarship) => (
-    scholarship.eligibility === 'Eligible' &&
-    scholarship.amount > 0 &&
-    countryMatches(scholarship.country)
-  ));
-  const tuitionCosts = matchingUniversities
-    .map((university) => Number(university.tuition.replace(/[^\d.]/g, '')))
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-  const middle = Math.floor(tuitionCosts.length / 2);
-  const medianTuition = tuitionCosts.length === 0
-    ? null
-    : tuitionCosts.length % 2 === 0
-      ? (tuitionCosts[middle - 1] + tuitionCosts[middle]) / 2
-      : tuitionCosts[middle];
-
-  return {
-    eligibleCount: matchingUniversities.length + fundedScholarships.length,
-    fundedCount: profile.fundingPreference === 'Self-Funded' ? 0 : fundedScholarships.length,
-    medianTuition: medianTuition === null
-      ? 'No matches'
-      : `$${Math.round(medianTuition).toLocaleString()} / year`
-  };
-}
-
 export function ProfileProvider({ children }) {
   const { user, token } = useAuth();
   const userId = user?.id;
@@ -171,8 +106,6 @@ export function ProfileProvider({ children }) {
   const [comparisonOpportunityIds, setComparisonOpportunityIds] = useState(initialData.comparisonOpportunityIds);
   const [selectedOpportunities, setSelectedOpportunities] = useState(initialData.selectedOpportunities);
   const [activeOpportunityId, setActiveOpportunityId] = useState(initialData.activeOpportunityId);
-  const [appliedOpportunityIds, setAppliedOpportunityIds] = useState(initialData.appliedOpportunityIds);
-  const [opportunityTaskStatuses, setOpportunityTaskStatuses] = useState(initialData.opportunityTaskStatuses);
   const [documentRecords, setDocumentRecords] = useState(initialData.documentRecords);
   const [loading, setLoading] = useState(false);
 
@@ -191,8 +124,6 @@ export function ProfileProvider({ children }) {
     setComparisonOpportunityIds(data.comparisonOpportunityIds);
     setSelectedOpportunities(data.selectedOpportunities);
     setActiveOpportunityId(data.activeOpportunityId);
-    setAppliedOpportunityIds(data.appliedOpportunityIds);
-    setOpportunityTaskStatuses(data.opportunityTaskStatuses);
     setDocumentRecords(data.documentRecords);
   }
 
@@ -268,11 +199,13 @@ export function ProfileProvider({ children }) {
 
         if (exists && data) {
           setHasBackendProfile(true);
-          const mappedProfile = mapBackendToFrontendProfile(data, profileUser, cachedDraft);
+          const mappedProfile = mapBackendToFrontendProfile(data, profileUser);
           const nextProfile = withCompletion({
             ...mappedProfile,
-            // Unfinished work in this browser is still the student's latest draft
-            profileDraft: cachedDraft.profileDraft?.personalInfo ? cachedDraft.profileDraft : mappedProfile.verifiedProfile,
+            profileDraft: cachedDraft.unsyncedDraft && cachedDraft.profileDraft?.personalInfo
+              ? cachedDraft.profileDraft
+              : mappedProfile.verifiedProfile,
+            unsyncedDraft: Boolean(cachedDraft.unsyncedDraft),
           }, status);
           setProfile(nextProfile);
           writeUserProfile(userId, nextProfile);
@@ -363,14 +296,20 @@ export function ProfileProvider({ children }) {
         ...(preferences.otherCountry ? [preferences.otherCountry] : [])
       ];
       const chosenFunding = preferences.fundingPreferences || [];
-      const overallScore = english.overallScore || '';
+      const overallScore = english.overallScore ?? '';
       const legacyEnglishTest = english.testType === 'TOEFL iBT' ? 'TOEFL' : english.testType || profile.englishTest;
       const graduationDate = academic.academicStatus === 'graduated'
         ? academic.graduationDate
         : academic.expectedGraduationDate;
-      const approximateBudget = preferences.maxTuitionBudget
-        ? `${preferences.currency || 'USD'} ${preferences.maxTuitionBudget} / year`
+      const approximateBudget = preferences.maxTuitionBudget !== undefined
+        ? preferences.maxTuitionBudget === '' || preferences.maxTuitionBudget === null
+          ? ''
+          : `${preferences.currency || 'USD'} ${preferences.maxTuitionBudget} / year`
         : profile.approximateBudget;
+      const targetFields = [
+        ...(preferences.fields || []).filter((field) => field !== 'Other'),
+        ...(preferences.customField ? [preferences.customField] : []),
+      ];
       const isCvSource = progress.source === 'cv';
 
       const finalProfile = {
@@ -383,16 +322,23 @@ export function ProfileProvider({ children }) {
         degree: academic.degreeTitle || academic.major || profile.degree,
         degreeLevel: academic.currentDegree || profile.degreeLevel,
         university: academic.institution || profile.university,
-        cgpa: academic.cgpa || profile.cgpa,
+        cgpa: academic.cgpa !== undefined ? academic.cgpa : profile.cgpa,
         graduationYear: graduationDate || academic.currentYear || profile.graduationYear,
         englishTest: legacyEnglishTest,
-        englishScore: english.testType === 'No Test / Not Taken' ? '' : overallScore || profile.englishScore,
-        fieldOfInterest: preferences.fields?.filter((field) => field !== 'Other').join(', ') || preferences.customField || academic.major || profile.fieldOfInterest,
+        englishScore: english.testType === 'No Test / Not Taken'
+          ? ''
+          : english.overallScore !== undefined ? overallScore : profile.englishScore,
+        fieldOfInterest: preferences.fields !== undefined
+          ? targetFields.join(', ')
+          : profile.fieldOfInterest,
         skills: [academic.technicalSkills, academic.programmingLanguages].filter(Boolean).join(', ').split(',').map((skill) => skill.trim()).filter(Boolean),
-        projects: academic.projects ? academic.projects.split(',').map((project) => project.trim()).filter(Boolean) : profile.projects,
+        projects: academic.projects !== undefined
+          ? String(academic.projects || '').split(',').map((project) => project.trim()).filter(Boolean)
+          : profile.projects,
         preferredCountries: preferences.countries ? preferredCountries : getPreferredCountries(profile.preferredCountries),
-        preferredDegree: "Master's",
-        fundingPreference: chosenFunding.join(', ') || profile.fundingPreference,
+        preferredDegree: preferences.intendedDegree || preferences.preferredDegreeLevels?.[0] || profile.preferredDegree || '',
+        fundingPreference: preferences.fundingPreference || profile.fundingPreference,
+        fundingPreferences: chosenFunding,
         approximateBudget,
         profileCompletionPercentage: profile.profileCompletionPercentage,
         profileSetupStep: progress.complete ? 0 : progress.step + 1,
@@ -407,21 +353,31 @@ export function ProfileProvider({ children }) {
         verifiedProfile: progress.complete ? updatedData : profile.verifiedProfile,
       };
 
-      // When the student submits their completed profile, persist to the real backend
+      let persisted = false;
+      const currentUser = {
+        name: user?.name || user?.full_name || '',
+        full_name: user?.full_name || '',
+        email: user?.email || '',
+      };
+      const applyPersistedResponse = (response) => {
+        Object.assign(finalProfile, mapBackendToFrontendProfile(response, currentUser));
+        persisted = true;
+      };
+
       if (progress.complete) {
         if (token) {
           const backendPayload = mapFrontendToBackendProfile(updatedData, profile);
 
           if (hasBackendProfile) {
-            await updateProfileApi(token, backendPayload);
+            applyPersistedResponse(await updateProfileApi(token, backendPayload));
           } else {
             try {
-              await createProfileApi(token, backendPayload);
+              applyPersistedResponse(await createProfileApi(token, backendPayload));
               if (isStillSignedIn()) setHasBackendProfile(true);
             } catch (createErr) {
               // If it already exists on server, gracefully switch to PUT update
               if (createErr.status === 400 && String(createErr.message).includes('already exists')) {
-                await updateProfileApi(token, backendPayload);
+                applyPersistedResponse(await updateProfileApi(token, backendPayload));
                 if (isStillSignedIn()) setHasBackendProfile(true);
               } else {
                 throw createErr;
@@ -431,7 +387,19 @@ export function ProfileProvider({ children }) {
 
           finalProfile.hasBackendProfile = true;
           // Finishing is the API's decision, made from what it stored
-          const status = await refreshCompletion();
+          let status;
+          try {
+            status = await refreshCompletion();
+          } catch (statusError) {
+            delete finalProfile.unsyncedDraft;
+            writeUserProfile(userId, finalProfile);
+            if (isStillSignedIn()) setProfile(finalProfile);
+            return {
+              success: false,
+              persisted: true,
+              error: `Your profile was saved, but its completion status could not be refreshed: ${statusError?.message || 'Please try again.'}`,
+            };
+          }
           Object.assign(finalProfile, withCompletion(finalProfile, status));
           if (status.required && !status.complete) {
             writeUserProfile(userId, finalProfile);
@@ -444,26 +412,41 @@ export function ProfileProvider({ children }) {
           }
         }
       } else if (hasBackendProfile && token) {
-        // If profile was already created in database, perform a best-effort update for drafts
+        const backendPayload = mapFrontendToBackendProfile(updatedData, profile);
+        applyPersistedResponse(await updateProfileApi(token, backendPayload));
         try {
-          const backendPayload = mapFrontendToBackendProfile(updatedData, profile);
-          await updateProfileApi(token, backendPayload);
           Object.assign(finalProfile, withCompletion(finalProfile, await refreshCompletion()));
-        } catch {
-          // Non-blocking for intermediate step drafts
+        } catch (statusError) {
+          delete finalProfile.unsyncedDraft;
+          writeUserProfile(userId, finalProfile);
+          if (isStillSignedIn()) setProfile(finalProfile);
+          return {
+            success: false,
+            persisted: true,
+            error: `Your changes were saved, but profile completion could not be refreshed: ${statusError?.message || 'Please try again.'}`,
+          };
         }
       }
 
+      if (!persisted) finalProfile.unsyncedDraft = true;
+      else delete finalProfile.unsyncedDraft;
       writeUserProfile(userId, finalProfile);
       if (isStillSignedIn()) setProfile(finalProfile);
 
       return {
         success: true,
+        persisted,
         profile: finalProfile,
-        matchStatistics: calculateMatchStatistics(finalProfile),
       };
     } catch (err) {
-      console.error('Failed to save profile:', err);
+      const unsyncedDraft = {
+        ...profile,
+        profileDraft: updatedData,
+        unsyncedDraft: true,
+      };
+      writeUserProfile(userId, unsyncedDraft);
+      if (isStillSignedIn()) setProfile(unsyncedDraft);
+      console.error('Failed to save profile:', err?.message);
       return {
         success: false,
         error: err?.message || 'Your profile could not be saved. Please try again.',
@@ -524,6 +507,7 @@ export function ProfileProvider({ children }) {
     if (typeof id !== 'string' || !id) {
       throw new Error('A comparison opportunity must have a stable ID.');
     }
+    if (!/^sch-db-\d+$/.test(id)) throw new Error('Only persisted scholarships can be compared.');
     setComparisonOpportunityIds((current) => {
       const next = current.includes(id)
         ? current.filter((selectedId) => selectedId !== id)
@@ -549,11 +533,10 @@ export function ProfileProvider({ children }) {
   };
 
   const selectOpportunity = (opportunity) => {
-    if (!opportunity || typeof opportunity.id !== 'string') {
-      throw new Error('A selected opportunity must have a stable ID.');
+    if (!opportunity || typeof opportunity.id !== 'string' || !/^sch-db-\d+$/.test(opportunity.id)) {
+      throw new Error('Only a persisted scholarship can be selected for preparation.');
     }
-    const kind = opportunity.kind || (opportunity.id.startsWith('sch-') ? 'scholarship' : 'program');
-    const snapshot = { ...opportunity, kind };
+    const snapshot = { ...opportunity, kind: 'scholarship' };
     const next = selectedOpportunities.some((item) => item.id === snapshot.id)
       ? selectedOpportunities.map((item) => item.id === snapshot.id ? snapshot : item)
       : [...selectedOpportunities, snapshot];
@@ -576,26 +559,6 @@ export function ProfileProvider({ children }) {
     writeUserStorage(SELECTED_OPPORTUNITIES_KEY, userId, next);
     setSelectedOpportunities(next);
     if (activeOpportunityId === id) setActiveOpportunity(null);
-  };
-
-  const markOpportunityApplied = (id, applied) => {
-    const next = applied
-      ? [...new Set([...appliedOpportunityIds, id])]
-      : appliedOpportunityIds.filter((item) => item !== id);
-    writeUserStorage(APPLIED_OPPORTUNITIES_KEY, userId, next);
-    setAppliedOpportunityIds(next);
-  };
-
-  const setOpportunityTaskStatus = (opportunityId, taskId, status) => {
-    if (!['todo', 'in-progress', 'done'].includes(status)) {
-      throw new Error(`Unsupported task status: ${status}`);
-    }
-    const next = {
-      ...opportunityTaskStatuses,
-      [opportunityId]: { ...opportunityTaskStatuses[opportunityId], [taskId]: status },
-    };
-    saveApplicationTaskStatuses(userId, opportunityId, next[opportunityId]);
-    setOpportunityTaskStatuses(next);
   };
 
   // Stores file metadata only; file contents must go to backend storage. One record per document ID, shared by all opportunities.
@@ -632,7 +595,6 @@ export function ProfileProvider({ children }) {
       updateProfile,
       saveCvUpload,
       saveExtractedProfile,
-      matchStatistics: calculateMatchStatistics(profileWithAccount),
       savedOpportunities,
       savedRecords,
       hasSavedSnapshot,
@@ -651,10 +613,6 @@ export function ProfileProvider({ children }) {
       selectOpportunity,
       setActiveOpportunity,
       removeSelectedOpportunity,
-      appliedOpportunityIds,
-      markOpportunityApplied,
-      opportunityTaskStatuses,
-      setOpportunityTaskStatus,
     }}>
       {children}
       {saveError && <p className="save-error-notice" role="alert">{saveError}</p>}

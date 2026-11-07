@@ -1,8 +1,8 @@
 import { startTransition } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bookmark, Calculator, FileText, GitCompare,
-  GraduationCap, Home, LogOut, Map,
+  Award, Bookmark, Calculator, FileText, GitCompare,
+  Home, LogOut,
   Settings, ShieldCheck, UserRound,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -14,7 +14,7 @@ const navigationGroups = [
   {
     label: 'Discover',
     links: [
-      { to: '/universities', label: 'Explore', icon: GraduationCap, match: ['/universities', '/scholarships', '/recommendations'] },
+      { to: '/scholarships', label: 'Scholarships', icon: Award, match: ['/scholarships', '/recommendations'] },
       { to: '/saved', label: 'Saved', icon: Bookmark },
     ],
   },
@@ -23,7 +23,6 @@ const navigationGroups = [
     links: [
       { to: '/compare', label: 'Compare', icon: GitCompare },
       { to: '/financial', label: 'Financial Planner', icon: Calculator },
-      { to: '/pathway', label: 'Application Pathway', icon: Map, match: ['/pathway', '/timeline'] },
       { to: '/documents', label: 'Documents', icon: FileText },
     ],
   },

@@ -4,12 +4,25 @@ import { useProfile } from '../context/ProfileContext';
 import { apiService } from '../services/api';
 import { getUnavailableEligibility } from '../services/opportunityApi';
 
-// The profile fields the backend evaluates. ProfileContext updates them only after the backend save resolves.
-export function useEligibilityProfileKey(kind) {
-  const { profile } = useProfile();
+const normalizePreference = (value) => typeof value === 'string'
+  ? value.trim().toLowerCase() || null
+  : null;
+
+const normalizeFundingPreference = (value) => typeof value === 'string'
+  ? value.trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ') || null
+  : null;
+
+const normalizePreferenceList = (values) => [...new Set(
+  (Array.isArray(values) ? values : [])
+    .map(normalizePreference)
+    .filter(Boolean),
+)].sort();
+
+export function buildEligibilityProfileKey(profile) {
   const academic = profile?.academicBackground || {};
   const english = profile?.englishProficiency || {};
   const personal = profile?.personalInfo || {};
+  const preferences = profile?.studyPreferences || {};
 
   return JSON.stringify([
     profile?.profileStatus,
@@ -22,8 +35,20 @@ export function useEligibilityProfileKey(kind) {
     academic.gradingScale,
     english.testType,
     english.overallScore,
-    ...(kind === 'scholarship' ? [personal.citizenshipCountry, personal.dateOfBirth, academic.major] : []),
+    normalizePreference(english.mediumOfInstruction),
+    personal.citizenshipCountry,
+    personal.dateOfBirth,
+    normalizePreferenceList(preferences.fields),
+    normalizePreferenceList(preferences.preferredDegreeLevels),
+    normalizeFundingPreference(preferences.fundingPreference),
+    normalizePreferenceList(preferences.fundingPreferences),
   ]);
+}
+
+// The profile fields the backend evaluates. ProfileContext updates them only after the backend save resolves.
+export function useEligibilityProfileKey() {
+  const { profile } = useProfile();
+  return buildEligibilityProfileKey(profile);
 }
 
 /**
@@ -31,9 +56,9 @@ export function useEligibilityProfileKey(kind) {
  * profile fields the backend evaluates change. Results from an older request are never
  * shown for a newer key.
  */
-function useEligibility({ kind, id, fetchAll, fetchOne }) {
+function useEligibility({ id, fetchAll, fetchOne }) {
   const { token } = useAuth();
-  const profileKey = useEligibilityProfileKey(kind);
+  const profileKey = useEligibilityProfileKey();
   const requestKey = `${token || ''}|${id ?? 'all'}|${profileKey}`;
   const [response, setResponse] = useState(null);
 
@@ -51,10 +76,10 @@ function useEligibility({ kind, id, fetchAll, fetchOne }) {
   const results = current?.results;
 
   const getEvaluation = useCallback((itemId) => {
-    if (state !== 'ok') return getUnavailableEligibility(state || 'error', kind);
-    if (results) return results[String(itemId)] || getUnavailableEligibility('not-found', kind);
-    return current.evaluation || getUnavailableEligibility('not-found', kind);
-  }, [state, results, current, kind]);
+    if (state !== 'ok') return getUnavailableEligibility(state || 'error');
+    if (results) return results[String(itemId)] || getUnavailableEligibility('not-found');
+    return current.evaluation || getUnavailableEligibility('not-found');
+  }, [state, results, current]);
 
   return useMemo(() => ({
     loading: !current,
@@ -65,27 +90,12 @@ function useEligibility({ kind, id, fetchAll, fetchOne }) {
 }
 
 /**
- * Backend eligibility for the logged-in student.
- * - useProgramEligibility()          -> all programs (GET /eligibility/programs)
- * - useProgramEligibility(programId) -> one program  (GET /eligibility/programs/{id})
- */
-export function useProgramEligibility(programId = null) {
-  return useEligibility({
-    kind: 'program',
-    id: programId,
-    fetchAll: apiService.getProgramEligibilities,
-    fetchOne: apiService.getProgramEligibilityById,
-  });
-}
-
-/**
  * Backend scholarship eligibility for the logged-in student.
  * - useScholarshipEligibility()   -> every verified scholarship (GET /eligibility/scholarships)
  * - useScholarshipEligibility(id) -> one scholarship, id like "sch-db-12" (GET /eligibility/scholarships/{id})
  */
 export function useScholarshipEligibility(scholarshipId = null) {
   return useEligibility({
-    kind: 'scholarship',
     id: scholarshipId,
     fetchAll: apiService.getScholarshipEligibilities,
     fetchOne: apiService.getScholarshipEligibilityById,
@@ -95,7 +105,7 @@ export function useScholarshipEligibility(scholarshipId = null) {
 /** Loads a recommendation result again whenever the student, the request or the profile changes. */
 function useRecommendationRequest(requestId, load) {
   const { token } = useAuth();
-  const profileKey = useEligibilityProfileKey('scholarship');
+  const profileKey = useEligibilityProfileKey();
   const requestKey = `${token || ''}|${requestId}|${profileKey}`;
   const [response, setResponse] = useState(null);
 
@@ -112,9 +122,9 @@ function useRecommendationRequest(requestId, load) {
 }
 
 /** Scholarships ranked for the logged-in student (GET /recommendations/scholarships). */
-export function useScholarshipRecommendations(programId = null) {
-  const load = useCallback((token) => apiService.getRecommendations(programId, token), [programId]);
-  const result = useRecommendationRequest(`list|${programId ?? ''}`, load);
+export function useScholarshipRecommendations() {
+  const load = useCallback((token) => apiService.getRecommendations(token), []);
+  const result = useRecommendationRequest('list', load);
   return useMemo(() => {
     const items = [...(result.data?.recommendations || []), ...(result.data?.excluded || [])];
     const byId = Object.fromEntries(items.map((item) => [`sch-db-${item.scholarship_id}`, item]));
@@ -123,9 +133,9 @@ export function useScholarshipRecommendations(programId = null) {
 }
 
 /** One scholarship's result (GET /recommendations/scholarships/{id}). */
-export function useScholarshipRecommendation(id, programId = null) {
-  const load = useCallback((token) => apiService.getScholarshipRecommendation(id, programId, token), [id, programId]);
-  return useRecommendationRequest(`one|${id}|${programId ?? ''}`, load);
+export function useScholarshipRecommendation(id) {
+  const load = useCallback((token) => apiService.getScholarshipRecommendation(id, token), [id]);
+  return useRecommendationRequest(`one|${id}`, load);
 }
 
 /**
@@ -134,7 +144,7 @@ export function useScholarshipRecommendation(id, programId = null) {
  */
 export function useScholarshipEligibilities(ids) {
   const { token } = useAuth();
-  const profileKey = useEligibilityProfileKey('scholarship');
+  const profileKey = useEligibilityProfileKey();
   const idsKey = ids.join(',');
   const requestKey = `${token || ''}|${idsKey}|${profileKey}`;
   const [response, setResponse] = useState(null);
@@ -154,7 +164,7 @@ export function useScholarshipEligibilities(ids) {
   const getEvaluation = useCallback((id) => {
     const result = current?.results[id];
     if (result?.state === 'ok') return result.evaluation;
-    return getUnavailableEligibility(result?.state || (current ? 'not-found' : 'error'), 'scholarship');
+    return getUnavailableEligibility(result?.state || (current ? 'not-found' : 'error'));
   }, [current]);
 
   return useMemo(() => ({ loading: Boolean(idsKey) && !current, getEvaluation }), [idsKey, current, getEvaluation]);

@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, Bookmark, CalendarDays, CircleCheck, Clock, Gauge, Layers, Wallet,
+  ArrowLeft, BookOpen, Bookmark, CalendarDays, CheckCircle2, CircleAlert, CircleHelp,
+  Clock, FileText, Globe2, GraduationCap, Languages, Layers, Link2, ShieldCheck, Wallet,
 } from 'lucide-react';
 import { apiService } from '../services/api';
-import { evaluateOpportunityEligibility, getOpportunityTitle } from '../services/opportunityJourney';
+import { getOpportunityTitle } from '../services/opportunityJourney';
 import { useProfile } from '../context/ProfileContext';
 import OfficialApplicationLink from '../components/opportunities/OfficialApplicationLink';
 import EligibilityBadge from '../components/opportunities/EligibilityBadge';
-import { useScholarshipEligibility } from '../hooks/useProgramEligibility';
+import { useScholarshipEligibility } from '../hooks/useScholarshipEligibility';
 import { getScholarshipDeadlineLabel } from '../services/eligibilityBadges';
-import { fetchScholarshipPrograms, getSelectedProgramId, parseScholarshipId } from '../services/opportunityApi';
-import ScholarshipProgramMatches from '../components/opportunities/ScholarshipProgramMatches';
+import { parseScholarshipId } from '../services/opportunityApi';
 import ScholarshipRecommendationCard from '../components/opportunities/ScholarshipRecommendationCard';
 import { OpportunityCompareCheckbox } from '../components/opportunities/ComparisonControls';
 import SavedStatusNotice from '../components/opportunities/SavedStatusNotice';
@@ -20,44 +20,105 @@ import './UniversityDetails.css';
 
 // Per-requirement result labels (the overall result uses EligibilityBadge)
 const REQUIREMENT_LABELS = {
-  satisfied: { label: 'Met', tone: 'success' },
-  'not-satisfied': { label: 'Not met', tone: 'danger' },
-  'missing-information': { label: 'Missing info', tone: 'warning' },
-  'awaiting-verification': { label: 'Verify manually', tone: 'neutral' },
+  satisfied: { label: 'Met', tone: 'success', icon: CheckCircle2 },
+  'not-satisfied': { label: 'Not met', tone: 'danger', icon: CircleAlert },
+  'missing-information': { label: 'Missing info', tone: 'warning', icon: CircleAlert },
+  'awaiting-verification': { label: 'Verify manually', tone: 'neutral', icon: CircleHelp },
 };
 
+const INFO_ICONS = [
+  [/deadline|open|clos/i, CalendarDays],
+  [/degree|academic|field|study/i, GraduationCap],
+  [/english|language/i, Languages],
+  [/nationality|citizen|country/i, Globe2],
+  [/document|application|nomination/i, FileText],
+  [/fund|tuition|stipend|travel|coverage/i, Wallet],
+];
+
 const UNAVAILABLE_NOTICES = {
-  'logged-out': ['Log in to check your eligibility for this scholarship.', '/login', 'Log in'],
-  'no-profile': ['Complete your profile to check your eligibility for this scholarship.', '/profile', 'Complete profile'],
+  'logged-out': ['Log in to check eligibility.', '/login', 'Log in'],
+  'no-profile': ['Complete your profile to check eligibility.', '/profile', 'Complete profile'],
 };
+
+function InfoValue({ value }) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (text.length <= 110) return text;
+  const summary = `${text.slice(0, 107).replace(/\s+\S*$/, '')}…`;
+  return (
+    <details className="sd-value-details">
+      <summary title={text}>{summary}</summary>
+      <p>{text}</p>
+    </details>
+  );
+}
+
+function FactValue({ label, value }) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  let summary = '';
+
+  if (label === 'Funding scope' && /full.*(?:participation|tuition)|(?:participation|tuition).*full/i.test(text)) {
+    summary = 'Full tuition and participation costs covered.';
+  } else if (label === 'Application deadline' && /individually by each (?:consortium|course)/i.test(text) && /october.*january/i.test(text)) {
+    summary = 'Varies by course; applications usually open Oct–Jan.';
+  } else if (label === 'Duration') {
+    const match = text.match(/(\d+\s*[-–]\s*\d+)\s*academic years?.*?\(([\d,\sor]+)\s*ECTS credits?\)/i);
+    if (match) summary = `${match[1].replace(/\s*-\s*/, '–')} years; ${match[2].replace(/\s+or\s+/i, ' or ')} ECTS.`;
+  }
+
+  if (!summary || summary === text) return <InfoValue value={value} />;
+  return (
+    <details className="sd-value-details">
+      <summary>{summary}</summary>
+      <p>{text}</p>
+    </details>
+  );
+}
 
 function InfoList({ rows }) {
   return (
     <dl className="sd-info">
-      {rows.map(([label, value]) => (
-        <div key={label}>
-          <dt>{label}</dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
+      {rows.map(([label, value]) => {
+        const Icon = INFO_ICONS.find(([pattern]) => pattern.test(label))?.[1] || BookOpen;
+        return (
+          <div key={label}>
+            <dt><Icon size={14} aria-hidden="true" />{label}</dt>
+            <dd><InfoValue value={value} /></dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }
 
-function Section({ title, children }) {
+function CompactInfoList({ rows, previewCount = 4 }) {
+  const preview = rows.slice(0, previewCount);
+  const remaining = rows.slice(previewCount);
+  return (
+    <>
+      <InfoList rows={preview} />
+      {remaining.length > 0 && (
+        <details className="sd-details">
+          <summary>Show {remaining.length} more</summary>
+          <InfoList rows={remaining} />
+        </details>
+      )}
+    </>
+  );
+}
+
+function Section({ title, icon: Icon = BookOpen, children }) {
   return (
     <section className="sd-section">
-      <h2>{title}</h2>
+      <h2><Icon size={17} aria-hidden="true" />{title}</h2>
       {children}
     </section>
   );
 }
-
 export default function ScholarshipDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
   const {
-    profile, activeOpportunityId, selectOpportunity, appliedOpportunityIds, markOpportunityApplied, isOpportunitySaved, toggleSaveOpportunity,
+    activeOpportunityId, selectOpportunity, isOpportunitySaved, toggleSaveOpportunity,
   } = useProfile();
   const [requestResult, setRequestResult] = useState(null);
   // Backend scholarships (sch-db-N) are evaluated by GET /eligibility/scholarships/{id}
@@ -91,15 +152,11 @@ export default function ScholarshipDetails() {
     );
   }
 
-  // Older sample scholarships keep the local check
-  const eligibility = isBackendId ? backendEligibility.evaluation : evaluateOpportunityEligibility(profile, data);
-  const eligibilityState = isBackendId ? backendEligibility.state : 'ok';
-  const deadline = isBackendId ? getScholarshipDeadlineLabel(eligibility?.deadline) : null;
+  const eligibility = backendEligibility.evaluation;
+  const eligibilityState = backendEligibility.state;
+  const deadline = getScholarshipDeadlineLabel(eligibility?.deadline);
   const isActive = activeOpportunityId === data.id;
   const saved = isOpportunitySaved(data.id);
-  // Backend records carry their own source status; old sample records do not
-  const isBackend = data.sourceStatus === 'official-verified' || data.sourceStatus === 'unverified';
-  const isVerified = data.sourceStatus === 'official-verified';
   const requirementRows = [
     ['Degree level', data.degree],
     ['Eligible nationalities', data.eligibleNationalities],
@@ -128,12 +185,10 @@ export default function ScholarshipDetails() {
     {
       label: 'Application deadline',
       icon: CalendarDays,
-      value: `${data.deadline || 'Not available'}${isBackend ? '' : ' (unverified sample)'}`,
+      value: deadline?.label || data.deadline || 'Not available',
       note: deadline?.note,
     },
     data.duration && { label: 'Duration', icon: Clock, value: data.duration },
-    !isBackend && { label: 'Profile fit', icon: Gauge, value: `${data.matchScore ?? 'Unavailable'}% (mock match)` },
-    !isBackendId && { label: 'Eligibility', icon: CircleCheck, value: eligibility.message || 'Awaiting verification' },
   ].filter(Boolean);
 
   return (
@@ -166,12 +221,12 @@ export default function ScholarshipDetails() {
 
       <SavedStatusNotice />
       {data.archived && <p className="saved-unverified-warning">This scholarship is no longer listed, so its details may be out of date.</p>}
-      {data.sourceStatus === 'unverified' && (
-        <p className="saved-unverified-warning">This scholarship is currently unverified.</p>
+      {data.sourceStatus !== 'official-verified' && (
+        <p className="saved-unverified-warning">Not verified. Check details with the provider before applying.</p>
       )}
       {data.duplicateOf && (
         <p className="scholarship-eligibility-note">
-          This looks like the same scholarship as <Link to={`/scholarships/${data.duplicateOf}`}>another listing</Link>, which has fuller details.
+          Possible duplicate. <Link to={`/scholarships/${data.duplicateOf}`}>View the other listing</Link>.
         </p>
       )}
 
@@ -181,8 +236,8 @@ export default function ScholarshipDetails() {
             <span className="sd-fact-icon" aria-hidden="true"><Icon size={18} /></span>
             <div>
               <dt>{label}</dt>
-              <dd>{value}</dd>
-              {note && <dd className="sd-fact-note">{note}</dd>}
+              <dd><FactValue label={label} value={value} /></dd>
+              {note && <dd className="sd-fact-note"><InfoValue value={note} /></dd>}
             </div>
           </div>
         ))}
@@ -192,9 +247,9 @@ export default function ScholarshipDetails() {
         <div className="sd-main">
           {isBackendId && (
             <section className="sd-section" aria-live="polite">
-              <h2>Your eligibility</h2>
+              <h2><ShieldCheck size={17} aria-hidden="true" />Your eligibility</h2>
               {backendEligibility.loading ? (
-                <p role="status">Checking your profile against this scholarship...</p>
+                <p role="status">Checking eligibility…</p>
               ) : eligibilityState !== 'ok' ? (
                 <p className="university-notice" role="status">
                   <span>{UNAVAILABLE_NOTICES[eligibilityState]?.[0] || eligibility?.message || 'Eligibility could not be checked right now.'}</span>
@@ -211,36 +266,46 @@ export default function ScholarshipDetails() {
                   <ul className="scholarship-requirement-list">
                     {eligibility.requirements.map((item) => {
                       const badge = REQUIREMENT_LABELS[item.status] || REQUIREMENT_LABELS['awaiting-verification'];
+                      const StatusIcon = badge.icon;
                       return (
                         <li key={item.id}>
-                          <span className={`program-status is-${badge.tone}`}>{badge.label}</span>
+                          <span className={`program-status is-${badge.tone}`}><StatusIcon size={13} aria-hidden="true" />{badge.label}</span>
                           <div>
                             <strong>{item.label}</strong>
-                            <p>{item.message}{item.scope === 'admission' ? ' (checked by the university during admission)' : ''}</p>
-                            {item.sourceText && <small>Record says: {item.sourceText}</small>}
+                            {(item.message || item.sourceText) && (
+                              <details className="sd-details">
+                                <summary>Details</summary>
+                                {item.message && <p>{item.message}</p>}
+                                {item.sourceText && <p><strong>Source:</strong> {item.sourceText}</p>}
+                              </details>
+                            )}
                           </div>
                         </li>
                       );
                     })}
                   </ul>
-                  {eligibility.deadline?.message && eligibility.deadline.status !== 'closed' && (
-                    <p className="scholarship-eligibility-note"><strong>Deadline:</strong> {eligibility.deadline.message}</p>
+                  {eligibility.notes.length > 0 && (
+                    <details className="sd-details">
+                      <summary>{eligibility.notes.length} additional note{eligibility.notes.length === 1 ? '' : 's'}</summary>
+                      <ul className="sd-note-list">{eligibility.notes.map((note) => <li key={note}>{note}</li>)}</ul>
+                    </details>
                   )}
-                  {eligibility.notes.map((note) => <p key={note} className="scholarship-eligibility-note">{note}</p>)}
                 </>
               )}
             </section>
           )}
 
-          {isBackendId && <ScholarshipRecommendationCard scholarshipId={id} programId={getSelectedProgramId(activeOpportunityId)} />}
+          {isBackendId && <ScholarshipRecommendationCard scholarshipId={id} />}
 
           {data.requirementSummaryRows && (
-            <Section title="Requirements at a glance"><InfoList rows={data.requirementSummaryRows} /></Section>
+            <Section title="Key requirements" icon={GraduationCap}>
+              <CompactInfoList rows={data.requirementSummaryRows} previewCount={6} />
+            </Section>
           )}
 
           {(data.fundingRows || benefitRows.length > 0) && (
-            <Section title="What it covers">
-              <InfoList rows={data.fundingRows || benefitRows} />
+            <Section title="What it covers" icon={Wallet}>
+              <CompactInfoList rows={data.fundingRows || benefitRows} previewCount={4} />
               {data.fundingRows && benefitRows.length > 0 && (
                 <details className="sd-details">
                   <summary>Original funding wording</summary>
@@ -250,32 +315,27 @@ export default function ScholarshipDetails() {
             </Section>
           )}
 
-          {(!isBackendId || eligibilityState !== 'ok') && (
-            <Section title="Requirements">
+          {(!isBackendId || eligibilityState !== 'ok') && !data.requirementSummaryRows && (
+            <Section title="Requirements" icon={GraduationCap}>
               {requirementRows.length > 0
-                ? <InfoList rows={requirementRows} />
+                ? <CompactInfoList rows={requirementRows} previewCount={6} />
                 : <p>{eligibility?.message || 'No structured scholarship requirements are available. Verify eligibility directly with the provider.'}</p>}
             </Section>
           )}
 
-          {applicationRows.length > 0 && <Section title="Applying"><InfoList rows={applicationRows} /></Section>}
-
-          {isBackendId && (
-            <Section title="Linked programs">
-              <ScholarshipProgramMatches load={fetchScholarshipPrograms} recordId={id} side="program" />
+          {applicationRows.length > 0 && (
+            <Section title="Applying" icon={FileText}>
+              <CompactInfoList rows={applicationRows} previewCount={4} />
             </Section>
           )}
+
         </div>
 
         <aside className="sd-aside">
-          <OfficialApplicationLink
-            opportunity={data}
-            applied={appliedOpportunityIds.includes(data.id)}
-            onToggleApplied={(value) => markOpportunityApplied(data.id, value)}
-          />
+          <OfficialApplicationLink opportunity={data} />
 
           {data.officialLinks?.length > 0 && (
-            <Section title="Official links">
+            <Section title="Official links" icon={Link2}>
               <ul className="sd-links">
                 {data.officialLinks.map((link) => (
                   <li key={link.url}>
@@ -286,21 +346,6 @@ export default function ScholarshipDetails() {
             </Section>
           )}
 
-          <Section title="Source">
-            {isBackend ? (
-              <>
-                <p>
-                  {data.verificationText || (isVerified ? 'Recorded from the official source' : 'Not yet verified against the official source')}
-                  {data.sourceName ? ` (${data.sourceName})` : ''}
-                  {data.lastVerified ? `, last verified ${data.lastVerified}` : ''}.
-                  {' '}Confirm current terms and dates with the provider before applying.
-                </p>
-                {data.verificationNotes && <p>{data.verificationNotes}</p>}
-              </>
-            ) : (
-              <p>Funding values and dates are sample listing data, not confirmed awards or official deadlines.</p>
-            )}
-          </Section>
         </aside>
       </div>
     </div>

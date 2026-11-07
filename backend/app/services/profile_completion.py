@@ -19,8 +19,12 @@ def _filled(value) -> bool:
 
 
 def _valid_cgpa(profile: StudentProfile) -> bool:
-    # 0 is what the profile form falls back to when no grade was entered
-    return profile.cgpa is not None and profile.cgpa_scale is not None and 0 < profile.cgpa <= profile.cgpa_scale
+    return (
+        profile.cgpa is not None
+        and profile.cgpa_scale is not None
+        and profile.cgpa_scale > 0
+        and 0 <= profile.cgpa <= profile.cgpa_scale
+    )
 
 
 def _has_country(profile: StudentProfile) -> bool:

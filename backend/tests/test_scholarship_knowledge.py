@@ -24,6 +24,7 @@ from app.models.scholarship_knowledge import (
     ScholarshipDocumentVersionApproval,
     ScholarshipSourceDocument,
 )
+from app.models.scholarship_discovery import SCHOLARSHIP_DISCOVERY_TABLE_NAMES
 from app.models import scholarship_knowledge as knowledge_model
 from app.models.user import User
 from app.services.scholarship_quality import delete_record, reference_counts
@@ -872,6 +873,7 @@ class StartupSchemaTests(unittest.TestCase):
         self.assertIn("scholarships", table_names)
         self.assertIn("users", table_names)
         self.assertTrue(SCHOLARSHIP_KNOWLEDGE_TABLE_NAMES.isdisjoint(table_names))
+        self.assertTrue(SCHOLARSHIP_DISCOVERY_TABLE_NAMES.isdisjoint(table_names))
 
     def test_sqlite_schema_is_not_reported_as_pgvector_ready(self):
         engine = _sqlite_engine()

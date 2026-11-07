@@ -15,7 +15,13 @@ from sqlalchemy.pool import StaticPool
 import migrate_scholarship_structure as migration
 from app.database import Base
 from app.models.opportunity import Scholarship
-from app.schemas.opportunity import ScholarshipResponse, ScholarshipStructured, ScholarshipUpdate, is_web_url
+from app.schemas.opportunity import (
+    ScholarshipCreate,
+    ScholarshipResponse,
+    ScholarshipStructured,
+    ScholarshipUpdate,
+    is_web_url,
+)
 from app.services.financial_feasibility import calculate_feasibility
 from app.schemas.financial import ExpenseInput, ExpenseInputs, MoneyInput
 from app.services.scholarship_eligibility import evaluate_scholarship, scholarship_deadline
@@ -160,7 +166,54 @@ class ValidationTests(unittest.TestCase):
                     "javascript:alert(1)", "https://www.anu.edu.au/ (general portal)"):
             self.assertFalse(is_web_url(bad), bad)
             with self.assertRaises(ValidationError):
-                ScholarshipStructured(official_info_url=bad)
+                ScholarshipCreate(name="Test", country="Finland", official_info_url=bad)
+
+    def test_metadata_urls_use_shared_validation_and_sanitization(self):
+        unsafe = "FAKE-URL-CREDENTIAL-98765"
+        credentialed_urls = (
+            {"official_url": f"https://student:{unsafe}@official.example/apply"},
+            {"official_info_url": f"https://student:{unsafe}@official.example/info"},
+            {"official_application_url": f"https://student:{unsafe}@official.example/apply"},
+            {"additional_source_urls": [f"https://student:{unsafe}@official.example/doc"]},
+        )
+        for fields in credentialed_urls:
+            with self.subTest(field=next(iter(fields))):
+                with self.assertRaises(ValidationError) as error:
+                    ScholarshipCreate(name="Test", country="Finland", **fields)
+                self.assertNotIn(unsafe, str(error.exception))
+
+        with self.assertRaises(ValidationError):
+            ScholarshipUpdate(official_url="ftp://official.example/page")
+        with self.assertRaises(ValidationError):
+            ScholarshipUpdate(official_info_url="https://[malformed")
+        with self.assertRaises(ValidationError):
+            ScholarshipUpdate(additional_source_urls=["https://official.example/good", "not a URL"])
+
+        created = ScholarshipCreate(
+            name="Test",
+            country="Finland",
+            official_url="https://official.example/home?language=en#overview",
+            official_info_url="https://official.example/info?api_key=remove&language=en",
+            official_application_url="http://official.example/apply?round=2#form",
+            additional_source_urls=[
+                "https://official.example/guide?language=fi#section",
+                "http://official.example/call?token=remove&page=3",
+            ],
+        )
+        self.assertEqual(created.official_url, "https://official.example/home?language=en")
+        self.assertEqual(created.official_info_url, "https://official.example/info?language=en")
+        self.assertEqual(created.official_application_url, "http://official.example/apply?round=2")
+        self.assertEqual(
+            created.additional_source_urls,
+            [
+                "https://official.example/guide?language=fi",
+                "http://official.example/call?page=3",
+            ],
+        )
+        self.assertEqual(
+            ScholarshipUpdate(official_url="https://official.example/path?tab=details").official_url,
+            "https://official.example/path?tab=details",
+        )
 
     def test_admin_updates_use_the_same_rules(self):
         with self.assertRaises(ValidationError):

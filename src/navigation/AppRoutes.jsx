@@ -38,7 +38,6 @@ const ScholarshipDetails = lazy(() => import('../pages/ScholarshipDetails'));
 const SavedOpportunities = lazy(() => import('../pages/SavedOpportunities'));
 const Compare = lazy(() => import('../pages/Compare'));
 const FinancialFeasibility = lazy(() => import('../pages/FinancialFeasibility'));
-const ApplicationPathway = lazy(() => import('../pages/ApplicationPathway'));
 const Recommendations = lazy(() => import('../pages/Recommendations'));
 const ProfileImprovement = lazy(() => import('../pages/ProfileImprovement'));
 const AdminScholarships = lazy(() => import('../pages/AdminScholarships'));
@@ -46,7 +45,7 @@ const AdminScholarshipEdit = lazy(() => import('../pages/AdminScholarshipEdit'))
 const Settings = lazy(() => import('../pages/Settings'));
 const Explore = lazy(() => import('../pages/Explore'));
 
-const ACTIVE_BAR_PATHS = ['/recommendations', '/financial', '/documents', '/pathway'];
+const ACTIVE_BAR_PATHS = ['/recommendations', '/financial', '/documents'];
 
 export default function AppRoutes() {
   const { pathname } = useLocation();
@@ -183,16 +182,10 @@ export default function AppRoutes() {
                         />
 
                         <Route
-                          path="/pathway"
-                          element={<ApplicationPathway />}
-                        />
-
-                        <Route
                           path="/recommendations"
                           element={<Explore><Recommendations /></Explore>}
                         />
 
-                        <Route path="/timeline" element={<Navigate to="/pathway" replace />} />
                         <Route path="/universities/*" element={<Navigate to="/scholarships" replace />} />
 
                         <Route

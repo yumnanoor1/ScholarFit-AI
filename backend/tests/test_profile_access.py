@@ -98,13 +98,22 @@ class CompletionRuleTests(ProfileAccessCase):
         for label, field_values in (("Nationality", {"nationality": ""}), ("Current or highest degree", {"degree_level": None}),
                                     ("Field of study", {"field_of_study": " "}), ("University", {"institution": None}),
                                     ("Study status", {"academic_status": None}), ("Graduation date", {"graduation_date": ""}),
-                                    ("CGPA and grading scale", {"cgpa": None}), ("Preferred study destination", {"preferred_countries": " , "})):
+                                    ("Preferred study destination", {"preferred_countries": " , "})):
             with self.subTest(label):
                 user = self.add_user(f"{label.split()[0].lower()}-{len(label)}@example.com", **{**COMPLETE, **field_values})
                 self.assertEqual(self.status_of(user).missing, [label])
 
-    def test_the_forms_fallback_values_are_not_answers(self):
-        self.assertTrue(self.status_of(self.add_user("zero@example.com", **{**COMPLETE, "cgpa": 0.0})).complete)
+    def test_zero_cgpa_with_valid_scale_is_a_valid_answer(self):
+        status = self.status_of(self.add_user("zero@example.com", **{**COMPLETE, "cgpa": 0.0}))
+        self.assertTrue(status.complete)
+        self.assertNotIn("CGPA and grading scale", status.missing)
+
+    def test_missing_cgpa_is_not_complete(self):
+        status = self.status_of(self.add_user("missing-cgpa@example.com", **{**COMPLETE, "cgpa": None}))
+        self.assertFalse(status.complete)
+        self.assertIn("CGPA and grading scale", status.missing)
+
+    def test_general_is_not_a_valid_field_of_study(self):
         self.assertIn("Field of study", self.status_of(self.add_user("general@example.com", **{**COMPLETE, "field_of_study": "General"})).missing)
 
     def test_an_unknown_study_status_or_impossible_grade_is_not_complete(self):
@@ -172,8 +181,9 @@ class GateTests(ProfileAccessCase):
                 self.assertEqual(call(self.app, "GET", path, token)[0], 200)
 
     def test_university_and_program_routers_are_not_active(self):
-        paths = {route.path for route in self.app.routes}
-        self.assertFalse(any(path.startswith(("/universities", "/programs")) for path in paths))
+        for path in ("/universities/", "/programs/"):
+            with self.subTest(path=path):
+                self.assertEqual(call(self.app, "GET", path)[0], 404)
 
     def test_finishing_the_profile_unlocks_straight_away(self):
         token = self.token(self.partial)
@@ -401,7 +411,6 @@ class OpenRouteTests(ProfileAccessCase):
         status, body = call(self.app, "GET", "/scholarships/search", token)
         self.assertEqual(status, 200)
         self.assertIn("items", body)
-        self.assertEqual(call(self.app, "GET", "/universities/", token)[0], 200)
 
     def test_personal_search_needs_a_finished_profile(self):
         path = "/scholarships/search?sort=recommendation"

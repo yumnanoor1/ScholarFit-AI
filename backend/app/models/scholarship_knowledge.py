@@ -14,11 +14,12 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from sqlalchemy.sql import func
 from pgvector.sqlalchemy import Vector
 
 from app.database import Base
+from app.services.source_url_safety import validate_source_url
 
 EMBEDDING_DIMENSIONS = 384
 
@@ -57,6 +58,10 @@ class ScholarshipSourceDocument(Base):
 
     scholarship = relationship("Scholarship")
     versions = relationship("ScholarshipDocumentVersion", back_populates="source_document", passive_deletes=True)
+
+    @validates("source_url", "normalized_url")
+    def _validate_source_url(self, _key, value):
+        return validate_source_url(value)
 
 
 class ScholarshipDocumentVersion(Base):
@@ -850,8 +855,11 @@ _EMBEDDING_POSTGRES_DDL = (
         ) THEN
             RAISE EXCEPTION 'Embedding requires a current, verified, unarchived scholarship and approved version';
         END IF;
-        SELECT * INTO latest_approval FROM scholarship_document_version_approvals
-        WHERE document_version_id = NEW.document_version_id ORDER BY id DESC LIMIT 1;
+        SELECT a.* INTO latest_approval
+        FROM scholarship_document_version_approvals AS a
+        WHERE a.document_version_id = NEW.document_version_id
+        ORDER BY a.id DESC
+        LIMIT 1;
         IF NOT FOUND OR latest_approval.id <> NEW.approval_id
            OR latest_approval.decision <> 'approved'
            OR latest_approval.source_active_at_decision IS NOT TRUE THEN

@@ -90,7 +90,7 @@ export default function Dashboard() {
               <strong>{potentialCount == null ? '—' : potentialCount}</strong>
               <span className="dashboard-stat-detail">{eligibility.state === 'ok' ? 'Not ruled out by current checks' : 'Eligibility not assessed'}</span>
             </button>
-            <button type="button" className="dashboard-stat-card tone-amber" onClick={() => navigate('/pathway')}>
+            <button type="button" className="dashboard-stat-card tone-amber" onClick={() => navigate('/recommendations')}>
               <span className="dashboard-stat-icon stat-orange"><Clock3 size={19} /></span>
               <span className="dashboard-stat-label">Next verified deadline</span>
               <strong>{deadlines[0]?.deadlineDate || '—'}</strong>
@@ -164,7 +164,6 @@ export default function Dashboard() {
           <section className="dashboard-upcoming-deadlines" aria-labelledby="dashboard-deadlines-title">
             <div className="dashboard-rail-heading">
               <h2 id="dashboard-deadlines-title"><span className="dashboard-rail-icon is-amber" aria-hidden="true"><CalendarDays size={15} /></span>Verified deadlines</h2>
-              <button type="button" onClick={() => navigate('/pathway')}>Preparation <ArrowRight size={13} /></button>
             </div>
             {deadlines.length ? (
               <ul>{deadlines.map((item) => <li key={item.id}><span>{item.name}</span><strong>{item.deadlineDate}</strong><small>Verified source record</small></li>)}</ul>

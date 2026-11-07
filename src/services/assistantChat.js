@@ -7,6 +7,7 @@ export const WELCOME_QUESTIONS = [
   'Why am I not eligible for a scholarship?',
   'Which requirements am I missing?',
   'How can I improve my chances of getting a scholarship?',
+  'What are my best scholarship matches?',
 ];
 
 export const STORAGE_KEY = 'fitscholar_assistant_chat';

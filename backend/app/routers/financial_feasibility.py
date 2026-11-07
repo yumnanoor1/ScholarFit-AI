@@ -151,7 +151,6 @@ def _run(db: Session, user: User, request: ScholarshipFeasibilityRequest) -> dic
         raise HTTPException(status_code=404, detail="Scholarship not found")
     plan = _get_plan(db, user)
     saved_budget, budget_source = _budget(db, user, plan, request.budget)
-    profile = db.query(StudentProfile).filter(StudentProfile.user_id == user.id).first()
     currency = request.currency or (saved_budget.currency if saved_budget else "USD")
     today = date.today()
     cost_programs = _confirmed_cost_programs(db, scholarship, today)
@@ -174,7 +173,7 @@ def _run(db: Session, user: User, request: ScholarshipFeasibilityRequest) -> dic
         match=match,
         budget=request.budget,
         saved_budget=saved_budget if budget_source == "saved" else None,
-        profile_budget=profile.budget_usd if profile else None,
+        profile_budget=saved_budget if budget_source == "profile" else None,
         currency=currency,
         expenses=expenses,
         today=today,

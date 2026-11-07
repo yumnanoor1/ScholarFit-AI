@@ -375,7 +375,7 @@ class GuidanceTests(unittest.TestCase):
                                preferred_fields=[], field_of_study=None)
         record = structured(discipline_scope="listed", eligible_disciplines=["Accounting"], gender_restriction="women",
                             residency_requirement="Must live in Pakistan.", official_url="https://example.org")
-        ids = [item["id"] for item in build_guidance(profile, [], [record], today=TODAY)["recommendations"]]
+        ids = [item["id"] for item in build_guidance(profile, [record], today=TODAY)["recommendations"]]
         self.assertIn("missing-information-field", ids)
         self.assertIn("manual-verification-restrictions", ids)
 

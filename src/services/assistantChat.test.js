@@ -24,13 +24,15 @@ function fakeStorage() {
   };
 }
 
-test('offers the five suggested questions', () => {
-  assert.equal(WELCOME_QUESTIONS.length, 5);
+test('offers the suggested questions', () => {
+  assert.equal(WELCOME_QUESTIONS.length, 6);
   assert.equal(WELCOME_QUESTIONS[1], "What's my best next action?");
+  assert.equal(WELCOME_QUESTIONS[5], 'What are my best scholarship matches?');
 });
 
 test('action buttons navigate to existing routes', () => {
   assert.deepEqual(actionNavigation({ label: 'x', route: '/documents' }, buildFinancialRouteState), { path: '/documents', options: undefined });
+  assert.deepEqual(actionNavigation({ label: 'x', route: '/recommendations' }, buildFinancialRouteState), { path: '/recommendations', options: undefined });
   assert.equal(actionNavigation({ label: 'x', route: 'https://evil.example' }, buildFinancialRouteState), null);
   assert.equal(actionNavigation(null, buildFinancialRouteState), null);
 });

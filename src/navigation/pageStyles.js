@@ -10,5 +10,4 @@ import '../pages/UniversityDetails.css';
 import '../pages/Scholarships.css';
 import '../pages/Compare.css';
 import '../pages/FinancialFeasibility.css';
-import '../pages/ApplicationPathway.css';
 import '../pages/AdminScholarships.css';

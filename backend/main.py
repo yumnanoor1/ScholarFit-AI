@@ -6,6 +6,7 @@ from app.core.http_security import install_http_security
 from app.database import create_application_schema, engine
 from app import models  # noqa: F401
 from app.routers import auth, profile, scholarships, saved_scholarships, eligibility, financial_feasibility, recommendations, admin_scholarships, assistant
+from app.routers import health
 from app.services.scholarship_knowledge_schema import schema_is_ready
 # Unsafe production settings stop the API here, before anything else runs
 validate_settings()
@@ -49,6 +50,7 @@ app.include_router(financial_feasibility.router)
 app.include_router(recommendations.router)
 app.include_router(admin_scholarships.router)
 app.include_router(assistant.router)
+app.include_router(health.router)
 
 
 @app.get("/")

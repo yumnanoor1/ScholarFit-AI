@@ -4,12 +4,25 @@ import { useProfile } from '../context/ProfileContext';
 import { apiService } from '../services/api';
 import { getUnavailableEligibility } from '../services/opportunityApi';
 
-// The profile fields the backend evaluates. ProfileContext updates them only after the backend save resolves.
-export function useEligibilityProfileKey() {
-  const { profile } = useProfile();
+const normalizePreference = (value) => typeof value === 'string'
+  ? value.trim().toLowerCase() || null
+  : null;
+
+const normalizeFundingPreference = (value) => typeof value === 'string'
+  ? value.trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ') || null
+  : null;
+
+const normalizePreferenceList = (values) => [...new Set(
+  (Array.isArray(values) ? values : [])
+    .map(normalizePreference)
+    .filter(Boolean),
+)].sort();
+
+export function buildEligibilityProfileKey(profile) {
   const academic = profile?.academicBackground || {};
   const english = profile?.englishProficiency || {};
   const personal = profile?.personalInfo || {};
+  const preferences = profile?.studyPreferences || {};
 
   return JSON.stringify([
     profile?.profileStatus,
@@ -22,10 +35,20 @@ export function useEligibilityProfileKey() {
     academic.gradingScale,
     english.testType,
     english.overallScore,
+    normalizePreference(english.mediumOfInstruction),
     personal.citizenshipCountry,
     personal.dateOfBirth,
-    academic.major,
+    normalizePreferenceList(preferences.fields),
+    normalizePreferenceList(preferences.preferredDegreeLevels),
+    normalizeFundingPreference(preferences.fundingPreference),
+    normalizePreferenceList(preferences.fundingPreferences),
   ]);
+}
+
+// The profile fields the backend evaluates. ProfileContext updates them only after the backend save resolves.
+export function useEligibilityProfileKey() {
+  const { profile } = useProfile();
+  return buildEligibilityProfileKey(profile);
 }
 
 /**

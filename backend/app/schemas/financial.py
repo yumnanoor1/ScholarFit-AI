@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
+
+from app.services.source_url_safety import safe_source_url
 
 Period = Literal["monthly", "semester", "yearly", "total"]
 FeasibilityStatus = Literal["feasible", "partially_feasible", "not_feasible", "insufficient_data"]
@@ -121,6 +123,10 @@ class ScholarshipSummary(BaseModel):
     match_outcome: Optional[str] = None     # scholarship-program relationship; None when there's no information
     match_label: Optional[str] = None
     match_explanation: Optional[str] = None
+
+    @field_serializer("source_url")
+    def sanitize_source_url(self, value):
+        return safe_source_url(value)
 
 
 class BudgetSummary(BaseModel):

@@ -278,7 +278,7 @@ EXPECTED_FUNCTION_SOURCE_HASHES = {
     "scholarship_knowledge_revoke_scholarship_approval": "6f214b91711618ee20f56ab30159028c0e08def9ad42e7b251d801c6ec0f3884",
     "scholarship_knowledge_revoke_source_approval": "23bcec58104828fb745a8426b78dee1b40d1c35ef205d5d77448cac7966e0e9d",
     "scholarship_knowledge_protect_document_version": "4b1482a556c85d5faa17f4fe89369c0e4a2531cdb6e8bdc5a1f67e7a14e59e06",
-    "scholarship_knowledge_validate_embedding": "f96ec0144e61dc3445699420bced147725abf244f10c63fb331b8fd89bbe0b57",
+    "scholarship_knowledge_validate_embedding": "af9a4c9b9caa56fd22303e63b74a2c133138e5ed35ca83da5ca310327a4c6577",
 }
 
 

@@ -7,6 +7,7 @@ from app.models.scholarship_knowledge import (
     ScholarshipDocumentChunk,
     ScholarshipChunkEmbedding,
 )
+from app.models.scholarship_discovery import ScholarshipDiscoveryRun
 
 __all__ = [
     "User",
@@ -22,4 +23,5 @@ __all__ = [
     "ScholarshipDocumentVersionApproval",
     "ScholarshipDocumentChunk",
     "ScholarshipChunkEmbedding",
+    "ScholarshipDiscoveryRun",
 ]

@@ -2,7 +2,7 @@ import { startTransition } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Award, Bookmark, Calculator, FileText, GitCompare,
-  Home, LogOut, Map,
+  Home, LogOut,
   Settings, ShieldCheck, UserRound,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -23,7 +23,6 @@ const navigationGroups = [
     links: [
       { to: '/compare', label: 'Compare', icon: GitCompare },
       { to: '/financial', label: 'Financial Planner', icon: Calculator },
-      { to: '/pathway', label: 'Preparation Pathway', icon: Map, match: ['/pathway'] },
       { to: '/documents', label: 'Documents', icon: FileText },
     ],
   },

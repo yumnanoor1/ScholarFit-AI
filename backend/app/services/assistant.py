@@ -11,15 +11,17 @@ approved and indexed beforehand; otherwise the reply says no approved source was
 """
 import re
 from datetime import date
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Set
 
 from sqlalchemy.orm import Session
 
 from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
 from app.services import rag_service
+from app.services.source_url_safety import safe_source_url, safe_source_urls_in_text
 from app.services.profile_completion import profile_completion
 from app.services.scholarship_eligibility import evaluate_scholarship
+from app.services.scholarship_recommendations import NOT_A_PROBABILITY, recommend_for_student
 
 PROFILE_ROUTE = "/profile?edit=1"
 IMPROVEMENT_ROUTE = "/improvement"
@@ -32,6 +34,7 @@ SUGGESTIONS = [
     "Why am I not eligible for a scholarship?",
     "Which requirements am I missing?",
     "How can I improve my chances of getting a scholarship?",
+    "What are my best scholarship matches?",
 ]
 
 KIND_BY_TYPE = {"unmet": "required", "missing_information": "required", "manual_verification": "manual_check", "optional": "optional"}
@@ -43,6 +46,20 @@ GENERIC_LABELS = {
 PRIORITY_ORDER = {"High": 0, "Medium": 1, "Low": 2}
 STOP_WORDS = {"scholarship", "scholarships", "program", "programme", "programs", "master", "masters", "degree",
               "the", "for", "and", "award", "fellowship", "university", "msc"}
+SCHOLARSHIP_NAME_STOP_WORDS = STOP_WORDS | {
+    "grant", "grants", "awards", "fellowships", "what", "does", "do", "tell", "me", "about", "how",
+    "can", "i", "is", "are", "who", "where", "when", "why", "cover", "covers", "coverage", "benefit",
+    "benefits", "include", "includes", "offer", "offers", "provide", "provides", "apply", "application",
+    "requirement", "requirements", "eligible", "eligibility", "explain", "describe", "overview", "more",
+    "information", "info", "generally", "general", "usually", "typically", "all", "any", "other",
+    "another", "it", "its", "this", "that", "these", "those", "international", "student", "students",
+    "foundation", "fund", "trust", "merit", "need", "based", "graduate", "undergraduate", "global",
+    "world", "academic", "education", "excellence", "development", "foreign", "national", "study",
+    "studies", "research", "joint",
+}
+SCHOLARSHIP_REFERENCE_WORDS = {
+    "scholarship", "scholarships", "grant", "grants", "fellowship", "fellowships", "award", "awards",
+}
 
 Guidance = Callable[..., dict]
 
@@ -73,6 +90,98 @@ def _best_match(message: str, records) -> Optional[object]:
     return max(scored, key=lambda pair: pair[0])[1] if scored else None
 
 
+def _name_variants(name: str) -> List[str]:
+    return [name, re.split(r"\s*[(\u2013\u2014-]\s", name)[0]]
+
+
+def _exact_name_mentioned(message: str, name: str) -> bool:
+    text = " " + " ".join(_words(message)) + " "
+    return any(
+        phrase and f" {phrase} " in text
+        for phrase in (" ".join(_words(variant)) for variant in _name_variants(name))
+    )
+
+
+def _scholarship_name_tokens(text: str) -> Set[str]:
+    return {
+        word for word in _words(text)
+        if len(word) >= 4 and word not in SCHOLARSHIP_NAME_STOP_WORDS
+    }
+
+
+def _has_explicit_scholarship_name_anchor(message: str, token: str) -> bool:
+    words = _words(message)
+    return any(
+        (left == token and right in SCHOLARSHIP_REFERENCE_WORDS)
+        or (right == token and left in SCHOLARSHIP_REFERENCE_WORDS)
+        for left, right in zip(words, words[1:])
+    )
+
+
+def _resolve_scholarship_mention(message: str, records):
+    exact_matches = [record for record in records if _exact_name_mentioned(message, record.name)]
+    if exact_matches:
+        return (exact_matches[0], []) if len(exact_matches) == 1 else (None, exact_matches)
+
+    message_tokens = _scholarship_name_tokens(message)
+    overlaps = []
+    confident_matches = []
+    token_record_counts = {}
+    for record in records:
+        for token in _scholarship_name_tokens(record.name):
+            token_record_counts[token] = token_record_counts.get(token, 0) + 1
+
+    for record in records:
+        name_tokens = _scholarship_name_tokens(record.name)
+        overlap = message_tokens & name_tokens
+        if not overlap:
+            continue
+        overlaps.append((len(overlap), record))
+        has_distinctive_anchor = any(
+            len(token) >= 5
+            and token_record_counts[token] == 1
+            and _has_explicit_scholarship_name_anchor(message, token)
+            for token in overlap
+        )
+        if has_distinctive_anchor or (len(overlap) >= 2 and len(overlap) / len(name_tokens) >= 0.5):
+            confident_matches.append(record)
+
+    if len(confident_matches) == 1 and len(overlaps) == 1:
+        return confident_matches[0], []
+    if not overlaps:
+        return None, []
+
+    possible_matches = [record for _, record in sorted(overlaps, key=lambda item: (-item[0], item[1].name, item[1].id))]
+    return None, possible_matches
+
+
+def _is_general_scholarship_question(message: str) -> bool:
+    words = _words(message)
+    text = " ".join(words)
+    return (
+        "scholarships" in words
+        or any(term in words for term in ("grants", "fellowships", "awards"))
+        or any(phrase in text for phrase in (
+            "in general", "generally", "typically", "usually", "all scholarships", "any scholarship",
+            "a scholarship", "a grant", "a fellowship", "an award",
+        ))
+    )
+
+
+def _is_scholarship_follow_up(message: str) -> bool:
+    words = set(_words(message))
+    if "another" in words or "different" in words or ("new" in words and words & SCHOLARSHIP_REFERENCE_WORDS):
+        return False
+    text = " " + " ".join(_words(message)) + " "
+    return bool(words & {"it", "its", "this", "that", "these", "those"}) or any(
+        f" {phrase} " in text for phrase in ("the scholarship", "the grant")
+    )
+
+
+def _needs_scholarship_clarification(message: str) -> bool:
+    return bool(set(_words(message)) & SCHOLARSHIP_REFERENCE_WORDS)
+
+
 def detect_intent(message: str) -> str:
     text = " ".join(_words(message))
     has = lambda *terms: any(term in text for term in terms)  # noqa: E731
@@ -95,7 +204,20 @@ def detect_intent(message: str) -> str:
         return "documents"
     if has("improve", "profile", "weak", "strength", "gap", "better student"):
         return "improve_profile"
-    if has("scholarship", "fellowship", "stipend", "funding", "award") and has(
+    if has(
+            "best scholarship matches", "best scholarship match", "best scholarships", "top scholarships",
+            "recommended scholarships", "recommended scholarship", "scholarship recommendations",
+            "scholarship matches", "scholarship match", "scholarships match",
+            "scholarships to prioritize", "scholarship to prioritize",
+            "which scholarships should i prioritize", "what scholarships should i prioritize",
+            "which scholarships do you recommend", "what scholarships do you recommend",
+            "which scholarship is recommended", "which scholarships are recommended",
+            "what scholarship is recommended", "what scholarships are recommended",
+            "recommend scholarships", "recommend some scholarships", "recommend a scholarship",
+            "recommend me scholarships", "recommend me a scholarship",
+    ):
+        return "scholarship_recommendations"
+    if has("scholarship", "fellowship", "stipend", "funding", "award", "grant") and has(
             "cover", "coverage", "benefit", "include", "offer", "provide", "how to apply", "how do i apply",
             "how can i apply", "tell me about", "what is", "what does", "what are", "who can", "who is", "requirements for",
             "explain", "describe", "overview", "about this", "is about", "more about", "more information", "more info"):
@@ -329,6 +451,114 @@ def _deadlines(context, scholarship_results):
                   suggestions=["What's my best next action?"])
 
 
+def _scholarship_recommendations(db, profile, context):
+    result = recommend_for_student(db, profile)
+    ranked = []
+    for item in result["recommendations"]:
+        eligibility = item.get("eligibility") or {}
+        deadline = item.get("deadline") or {}
+        if (
+            item.get("recommended") is True
+            and item.get("score") is not None
+            and eligibility.get("status") != "not_eligible"
+            and deadline.get("status") != "closed"
+        ):
+            ranked.append(item)
+    ranked = ranked[:5]
+    eligible, needs_verification = [], []
+    for item in ranked:
+        eligibility = item.get("eligibility") or {}
+        if (
+            eligibility.get("status") == "eligible"
+            and eligibility.get("outcome") == "eligible"
+            and item.get("category") in {"strong", "good", "possible"}
+        ):
+            eligible.append(item)
+        else:
+            needs_verification.append(item)
+
+    excluded = result["excluded"]
+
+    def format_recommendation(item, rank, confirmed_eligible):
+        funding = item.get("funding") or {}
+        deadline = item.get("deadline") or {}
+        deadline_status = str(deadline.get("status") or "unknown").replace("_", " ")
+        deadline_date = deadline.get("date") or deadline.get("opens_on")
+        deadline_text = f"{deadline_status.capitalize()}"
+        if deadline_date:
+            deadline_text += f" ({deadline_date})"
+        funding_text = funding.get("label") or "Not confirmed"
+        if funding.get("summary"):
+            funding_text += f" — {funding['summary']}"
+
+        why = next(iter(item.get("positive") or []), None) or item.get("category_reason")
+        details = [
+            f"{rank}. {item['scholarship_name']} (ID {item['scholarship_id']}) — "
+            f"{item['score']}/100, {item.get('category_label') or item.get('category') or 'Match'}.",
+            f"Country: {item.get('country') or 'Not listed'}; "
+            f"funding: {funding_text}; deadline: {deadline_text}.",
+        ]
+        if confirmed_eligible and why:
+            details.append(f"Why it matches: {why}")
+        elif not confirmed_eligible:
+            eligibility = item.get("eligibility") or {}
+            status = str(eligibility.get("status") or "unknown").replace("_", " ")
+            explanation = item.get("category_reason") or eligibility.get("summary") or "Eligibility needs review."
+            details.append(f"Needs verification ({status}): {explanation}")
+        warnings = item.get("warnings") or []
+        if warnings:
+            details.append(f"Important warning: {'; '.join(warnings[:2])}")
+        return " ".join(details)
+
+    sections = [{
+        "heading": "Top eligible matches",
+        "items": [
+            format_recommendation(item, rank, True)
+            for rank, item in enumerate(eligible, start=1)
+        ] or ["No confirmed eligible matches were found in the verified records for your current profile."],
+    }]
+    if needs_verification:
+        sections.append({
+            "heading": f"Needs verification ({len(needs_verification)})",
+            "items": [
+                format_recommendation(item, rank, False)
+                for rank, item in enumerate(needs_verification, start=1)
+            ],
+        })
+    if excluded:
+        excluded_lines = []
+        for item in excluded[:3]:
+            reasons = [entry["reason"] for entry in item.get("exclusions", []) if entry.get("reason")]
+            reason = "; ".join(reasons[:2]) or item.get("category_reason") or "Needs verification."
+            excluded_lines.append(f"{item['scholarship_name']} (ID {item['scholarship_id']}): {reason}")
+        if len(excluded) > len(excluded_lines):
+            excluded_lines.append(f"{len(excluded) - len(excluded_lines)} more excluded scholarships.")
+        sections.append({
+            "heading": f"Excluded (not recommended) — {len(excluded)}",
+            "items": excluded_lines,
+        })
+
+    summary = f"Found {len(eligible)} confirmed eligible match(es)."
+    if needs_verification:
+        summary += f" {len(needs_verification)} additional candidate(s) need verification."
+    elif not eligible:
+        summary = "No confirmed eligible matches or candidates needing verification were found for your current profile."
+    notes = list(result.get("notes") or [])
+    if NOT_A_PROBABILITY not in notes:
+        notes.append(NOT_A_PROBABILITY)
+
+    return _reply(
+        _context(context, "scholarship_recommendations"),
+        "scholarship_recommendations",
+        summary,
+        title="Your scholarship matches",
+        sections=sections,
+        action=action("View Recommendations", "/recommendations"),
+        notes=notes,
+        suggestions=["What's my best next action?", "Which requirements am I missing?"],
+    )
+
+
 def _financial(context):
     state = {"scholarshipId": context.get("scholarship_id")} if context.get("scholarship_id") else None
     return _reply(_context(context, "financial"), "financial",
@@ -402,8 +632,49 @@ def _scholarship_info(db: Session, context: dict, message: str) -> dict:
     scholarship_id = context.get("scholarship_id")
     if isinstance(scholarship_id, bool) or not isinstance(scholarship_id, int) or scholarship_id <= 0:
         scholarship_id = None
+    records = db.query(Scholarship.id, Scholarship.name).all()
+
+    explicit_id = re.search(r"\bscholarship\s+id\s*[:#]?\s*(\d+)\b", message, re.I)
+    if explicit_id:
+        requested_id = int(explicit_id.group(1))
+        if not any(record.id == requested_id for record in records):
+            ctx = _context(context, "scholarship_info", scholarship_id=None)
+            return _reply(ctx, "scholarship_info",
+                          f"I couldn't find a scholarship with ID {requested_id}. Check the ID or provide its name.",
+                          action=action("Explore Scholarships", "/scholarships"), suggestions=SUGGESTIONS)
+        scholarship_id = requested_id
+    else:
+        match, ambiguous = _resolve_scholarship_mention(message, records)
+        if ambiguous:
+            matches = ambiguous[:5]
+            ctx = _context(context, "scholarship_info", scholarship_id=None)
+            options = [f"{item.name} (scholarship ID {item.id})" for item in matches]
+            if len(ambiguous) > len(matches):
+                options.append("More matches exist. Reply with the full scholarship name or its ID.")
+            return _reply(
+                ctx, "scholarship_info",
+                "I couldn't identify a single scholarship confidently. Please clarify by full name or scholarship ID before I search its documents.",
+                sections=[{"heading": "Possible matches", "items": options}],
+                action=action("Explore Scholarships", "/scholarships"),
+                suggestions=[f"Tell me about scholarship ID {item.id}" for item in matches[:3]],
+            )
+        if match:
+            scholarship_id = match.id
+        elif _is_general_scholarship_question(message):
+            scholarship_id = None
+        elif scholarship_id is not None and _is_scholarship_follow_up(message):
+            pass
+        elif _needs_scholarship_clarification(message):
+            ctx = _context(context, "scholarship_info", scholarship_id=None)
+            return _reply(
+                ctx, "scholarship_info",
+                "Please clarify which scholarship you mean by giving its full name or scholarship ID.",
+                action=action("Explore Scholarships", "/scholarships"), suggestions=SUGGESTIONS,
+            )
+        else:
+            scholarship_id = None
     # The ID only narrows the search; every approval and eligibility filter still runs in the database query
-    ctx = _context(context, "scholarship_info")
+    ctx = _context(context, "scholarship_info", scholarship_id=scholarship_id)
     result = rag_service.answer_question(db, message, scholarship_id=scholarship_id)
     if result.status == rag_service.STATUS_UNAVAILABLE:
         return _reply(ctx, "scholarship_info",
@@ -414,16 +685,59 @@ def _scholarship_info(db: Session, context: dict, message: str) -> dict:
                       "I couldn't find an approved official source that answers this, so I won't guess. "
                       "Please check the scholarship's official page.",
                       action=action("Explore Scholarships", "/scholarships"), suggestions=SUGGESTIONS)
+    if result.status == rag_service.STATUS_WEAK_EVIDENCE:
+        return _reply(ctx, "scholarship_info",
+                      "I found approved official documents, but not passages relevant enough to answer this "
+                      "question. I won't guess; please check the scholarship's official page or ask about a "
+                      "specific requirement, benefit, deadline, or application step.",
+                      action=action("Explore Scholarships", "/scholarships"), suggestions=SUGGESTIONS)
+    if result.status == rag_service.STATUS_CONFLICT:
+        conflict_items = []
+        for conflict in result.conflicts:
+            for statement in conflict.statements:
+                location = []
+                if statement.section_heading:
+                    location.append(statement.section_heading)
+                if statement.page_label:
+                    location.append(statement.page_label)
+                provenance = f"document {statement.source_document_id}, version {statement.document_version_id}"
+                if location:
+                    provenance += f", {'; '.join(location)}"
+                source_url = safe_source_url(statement.source_url) or "Source URL unavailable"
+                conflict_items.append(
+                    f"{conflict.scholarship_name} — {conflict.fact_label}: {statement.value}. "
+                    f"Source text: \"{safe_source_urls_in_text(statement.statement)}\" "
+                    f"({provenance}; source: {source_url})"
+                )
+        sections = [{"heading": "Conflicting official statements", "items": conflict_items}]
+        if result.chunks:
+            source_items, seen = [], set()
+            for chunk in result.chunks[:3]:
+                source_url = chunk.citation_url or "Source URL unavailable"
+                line = f"{chunk.scholarship_name}: {source_url}"
+                if line not in seen:
+                    seen.add(line)
+                    source_items.append(line)
+            sections.append({"heading": "Sources for other retrieved evidence", "items": source_items})
+        return _reply(
+            ctx, "scholarship_info", result.text, sections=sections,
+            action=action("Explore Scholarships", "/scholarships"),
+            notes=["Please verify conflicting details with the cited official source or scholarship authority."],
+            suggestions=SUGGESTIONS,
+        )
+    source_chunks = result.chunks if result.generated else result.chunks[:3]
     sources, seen = [], set()
-    for chunk in result.chunks:
-        line = f"{chunk.scholarship_name}: {chunk.citation_url}"
+    for chunk in source_chunks:
+        source_url = chunk.citation_url or "Source URL unavailable"
+        line = f"{chunk.scholarship_name}: {source_url}"
         if line not in seen:
             seen.add(line)
             sources.append(line)
+    sources_heading = "Retrieved sources" if result.generated else "Sources"
     notes = ["Confirm every detail on the official page before relying on it."]
     if not result.generated:
         notes.insert(0, "These are excerpts from approved sources, not a written summary.")
-    return _reply(ctx, "scholarship_info", result.text, sections=[{"heading": "Sources", "items": sources}],
+    return _reply(ctx, "scholarship_info", result.text, sections=[{"heading": sources_heading, "items": sources}],
                   action=action("Explore Scholarships", "/scholarships"), notes=notes, suggestions=SUGGESTIONS)
 
 
@@ -433,10 +747,14 @@ def respond(db: Session, user: User, profile: StudentProfile, message: str, cont
             today: Optional[date] = None) -> dict:
     today = today or date.today()
     intent = detect_intent(message)
+    if intent == "help" and context.get("scholarship_id") and _is_scholarship_follow_up(message):
+        intent = "scholarship_info"
     if intent == "help":
         return _help(context)
     if intent == "scholarship_info":
         return _scholarship_info(db, context, message)
+    if intent == "scholarship_recommendations":
+        return _scholarship_recommendations(db, profile, context)
     completion = profile_completion(db, user)
     if intent == "financial":
         return _financial(context)

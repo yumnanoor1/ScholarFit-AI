@@ -2,7 +2,9 @@ import re
 from datetime import date, datetime
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, Field, HttpUrl, field_serializer, field_validator, model_validator
+
+from app.services.source_url_safety import UnsafeSourceURL, safe_source_url, validate_source_url
 
 
 # ---------- UNIVERSITY ----------
@@ -325,20 +327,6 @@ class ScholarshipStructured(BaseModel):
     host_institution: Optional[str] = None
     host_university_id: Optional[int] = Field(None, gt=0)
 
-    @field_validator("official_info_url", "official_application_url")
-    @classmethod
-    def _web_url(cls, value):
-        if value is not None and not is_web_url(value):
-            raise ValueError("must be a single http or https URL")
-        return value
-
-    @field_validator("additional_source_urls")
-    @classmethod
-    def _web_urls(cls, value):
-        if value is not None and not all(is_web_url(item) for item in value):
-            raise ValueError("every entry must be a single http or https URL")
-        return value
-
     @field_validator("tuition_currency", "stipend_currency", "travel_currency")
     @classmethod
     def _currency(cls, value):
@@ -376,7 +364,7 @@ def is_web_url(value: str) -> bool:
 
 
 class ScholarshipBase(ScholarshipStructured):
-    model_config = {"extra": "forbid", "from_attributes": True}
+    model_config = {"extra": "forbid", "from_attributes": True, "hide_input_in_errors": True}
 
     country: Optional[str] = Field(None, min_length=1, max_length=100)
     name: Optional[str] = Field(None, min_length=1, max_length=255)
@@ -434,21 +422,47 @@ class ScholarshipBase(ScholarshipStructured):
             raise ValueError("verification date can't be in the future")
         return verified_on.isoformat()
 
-    @field_validator("official_info_url", "official_application_url")
+
+class ScholarshipWriteBase(ScholarshipBase):
+    @field_validator("official_url", "official_info_url", "official_application_url")
     @classmethod
-    def _valid_source_urls(cls, value):
-        if value is not None and not is_web_url(value.strip()):
-            raise ValueError("must be a single http or https URL")
-        return value.strip() if value is not None else None
+    def _sanitize_source_url(cls, value):
+        if value is None:
+            return None
+        try:
+            validate_source_url(value)
+        except UnsafeSourceURL:
+            raise ValueError("must be a valid HTTP or HTTPS URL without credentials") from None
+        safe_url = safe_source_url(value)
+        if safe_url is None:
+            raise ValueError("must be a valid HTTP or HTTPS URL without credentials")
+        return safe_url
+
+    @field_validator("additional_source_urls")
+    @classmethod
+    def _sanitize_additional_source_urls(cls, value):
+        if value is None:
+            return None
+        sanitized = []
+        for url in value:
+            try:
+                validate_source_url(url)
+            except UnsafeSourceURL:
+                raise ValueError("every entry must be a valid HTTP or HTTPS URL without credentials") from None
+            safe_url = safe_source_url(url)
+            if safe_url is None:
+                raise ValueError("every entry must be a valid HTTP or HTTPS URL without credentials")
+            sanitized.append(safe_url)
+        return sanitized
 
 
-class ScholarshipCreate(ScholarshipBase):
+class ScholarshipCreate(ScholarshipWriteBase):
     country: str
     name: str
     verification_status: Optional[Literal["verified", "unverified"]] = Field(None, exclude=True)
 
 
-class ScholarshipUpdate(ScholarshipBase):
+class ScholarshipUpdate(ScholarshipWriteBase):
     structured_data_version: Optional[int] = Field(None, exclude=True)
     verification_status: Optional[str] = None  # verified | unverified; only the verification endpoint can set "verified"
     expected_version: Optional[int] = None     # record_version the form was loaded with
@@ -468,6 +482,30 @@ class ScholarshipResponse(ScholarshipBase):
     structured_data_version: Optional[int] = None   # read-only; the frontend's sign that structured fields are filled
     record_version: Optional[int] = None
     archived: bool = False
+
+    @field_validator("official_url", "official_info_url", "official_application_url", mode="before")
+    @classmethod
+    def _sanitize_legacy_source_url(cls, value):
+        return safe_source_url(value)
+
+    @field_validator("additional_source_urls", mode="before")
+    @classmethod
+    def _sanitize_legacy_additional_source_urls(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, (list, tuple)):
+            return None
+        return [safe for url in value if (safe := safe_source_url(url)) is not None]
+
+    @field_serializer("official_url", "official_info_url", "official_application_url")
+    def _serialize_source_url(self, value):
+        return safe_source_url(value)
+
+    @field_serializer("additional_source_urls")
+    def _serialize_additional_source_urls(self, value):
+        if value is None:
+            return None
+        return [safe for url in value if (safe := safe_source_url(url)) is not None]
 
 
 class ScholarshipWriteResult(ScholarshipResponse):

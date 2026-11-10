@@ -4,11 +4,14 @@ No rows are modified. The new table is not created by application startup.
 """
 import argparse
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from app import models  # noqa: F401
 from app.database import engine as default_engine
 from app.models.scholarship_discovery import ScholarshipDiscoveryRun
+
+
+MIGRATION_LOCK_ID = 728341901270419
 
 
 def main(engine=default_engine, target_database=None, apply=False):
@@ -18,10 +21,16 @@ def main(engine=default_engine, target_database=None, apply=False):
         raise RuntimeError("The requested database does not match DATABASE_URL.")
 
     table = ScholarshipDiscoveryRun.__table__
-    exists = table.name in inspect(engine).get_table_names()
-    if not exists and apply:
-        table.create(bind=engine)
-        exists = True
+    with engine.begin() as connection:
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_id)"),
+            {"lock_id": MIGRATION_LOCK_ID},
+        )
+        exists = table.name in inspect(connection).get_table_names()
+        if not exists and apply:
+            table.create(bind=connection)
+            exists = True
+
     print(f"{table.name}: {'ready' if exists else 'missing (no changes made)'}")
     return exists
 

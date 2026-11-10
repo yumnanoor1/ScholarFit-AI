@@ -14,7 +14,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models.opportunity import Program, ProgramCost, Scholarship, ScholarshipProgramLink, University
+from app.models.opportunity import (
+    Program,
+    ProgramCost,
+    Scholarship,
+    ScholarshipAuditLog,
+    ScholarshipProgramLink,
+    University,
+)
+from app.models.scholarship_discovery_publication import ScholarshipDiscoveryPublication
 from app.models.user import StudentProfile, User
 from app.routers import programs as programs_api
 from app.routers import financial_feasibility as api
@@ -376,6 +384,112 @@ class ApiTests(unittest.TestCase):
         self.assertIsNone(result["program"])
         self.assertEqual(result["total_estimated_cost"], 47300)
         self.assertEqual(result["confirmed_funding"], 20000)
+
+    def test_inaccessible_unverified_scholarship_id_is_rejected(self):
+        candidate = Scholarship(
+            name="Unverified",
+            country="Germany",
+            verification_status="unverified",
+            verification_basis="not_verified",
+        )
+        self.db.add(candidate)
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as error:
+            api.calculate(
+                ScholarshipFeasibilityRequest(scholarship_id=candidate.id),
+                db=self.db,
+                current_user=self.alice,
+            )
+
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_published_discovery_is_accessible_for_feasibility(self):
+        candidate = Scholarship(
+            name="Published Discovery",
+            country="Germany",
+            verification_status="unverified",
+            verification_basis="not_verified",
+        )
+        self.db.add(candidate)
+        self.db.flush()
+        self.db.add(ScholarshipAuditLog(
+            scholarship_id=candidate.id,
+            action="discovery_created",
+            actor_email="system:scholarship-discovery",
+        ))
+        self.db.add(ScholarshipDiscoveryPublication(
+            canonical_scholarship_id=candidate.id,
+            status="published",
+        ))
+        self.db.commit()
+
+        result = api.calculate(
+            ScholarshipFeasibilityRequest(scholarship_id=candidate.id),
+            db=self.db,
+            current_user=self.alice,
+        )
+
+        self.assertEqual(result["scholarship"]["id"], candidate.id)
+        self.assertEqual(result["scholarship"]["verification_status"], "unverified")
+
+    def test_revoked_discovery_is_rejected_for_feasibility(self):
+        candidate = Scholarship(
+            name="Revoked Discovery",
+            country="Germany",
+            verification_status="unverified",
+            verification_basis="not_verified",
+        )
+        self.db.add(candidate)
+        self.db.flush()
+        self.db.add(ScholarshipAuditLog(
+            scholarship_id=candidate.id,
+            action="discovery_created",
+            actor_email="system:scholarship-discovery",
+        ))
+        self.db.add(ScholarshipDiscoveryPublication(
+            canonical_scholarship_id=candidate.id,
+            status="revoked",
+        ))
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as error:
+            api.calculate(
+                ScholarshipFeasibilityRequest(scholarship_id=candidate.id),
+                db=self.db,
+                current_user=self.alice,
+            )
+
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_expense_inputs_cannot_be_saved_for_an_inaccessible_discovery(self):
+        candidate = Scholarship(
+            name="Unpublished Discovery",
+            country="Germany",
+            verification_status="unverified",
+            verification_basis="not_verified",
+        )
+        self.db.add(candidate)
+        self.db.flush()
+        self.db.add(ScholarshipAuditLog(
+            scholarship_id=candidate.id,
+            action="discovery_created",
+            actor_email="system:scholarship-discovery",
+        ))
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as error:
+            api.save_expenses(
+                candidate.id,
+                ExpenseInputs(living_costs=living()),
+                db=self.db,
+                current_user=self.alice,
+            )
+
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertIsNone(api.get_plan(db=self.db, current_user=self.alice)["expenses"].get(
+            f"scholarship:{candidate.id}",
+        ))
 
     def test_unknown_scholarship(self):
         with self.assertRaises(HTTPException) as error:

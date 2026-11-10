@@ -17,4 +17,5 @@ torch
 sentence-transformers
 pgvector
 google-genai==2.34.0
+groq>=0.11.0,<1.0
 PyMuPDF>=1.24,<2

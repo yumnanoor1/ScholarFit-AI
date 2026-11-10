@@ -503,3 +503,72 @@ test('CV extraction merges found values into a review draft without erasing exis
   assert.equal(merged.academicBackground.technicalSkills, 'Python');
   assert.deepEqual(merged.studyPreferences.countries, ['Germany']);
 });
+
+test('CV text extraction normalizes academic months and reads ordered experience sections', async () => {
+  const text = [
+    '## Awards',
+    "Dean's List (2023)",
+    'Student Research Award',
+    'PROJECTS',
+    'Climate Dashboard — built a public-data dashboard with Python.',
+    'CERTIFICATIONS',
+    'Cloud Fundamentals',
+    'PROGRAMMING LANGUAGES',
+    'Python',
+    'TypeScript',
+    'LANGUAGES',
+    'English',
+    'French',
+    'PROFESSIONAL EXPERIENCE',
+    'Example Labs | Analyst | 2022-2023',
+    'Built data pipelines.',
+    'EDUCATION',
+    "Degree Level: Bachelor's",
+    'Degree Title: BSc Computer Science',
+    'Major: Computer Science',
+    'University: Example Institute',
+    'University Country: Canada',
+    'Academic Status: graduated',
+    'Degree Start Date: Sep 2020',
+    'Graduation Date: 2024-06',
+    'CGPA: 3.8/4.0',
+  ].join('\n');
+  const bytes = new TextEncoder().encode(text);
+  const result = await profileExtraction.extractProfileFromCv({
+    name: 'synthetic.doc',
+    size: bytes.length,
+    text: async () => text,
+  }, { user: { name: 'Jordan Example', email: 'jordan@example.test' } });
+
+  assert.equal(result.source, 'local-parser');
+  assert.equal(result.profile.academicBackground.degreeStartDate, '2020-09');
+  assert.equal(result.profile.academicBackground.graduationDate, '2024-06');
+  assert.equal(result.profile.academicBackground.cgpa, '3.8');
+  assert.equal(result.profile.academicBackground.gradingScale, '4.0');
+  assert.equal(result.profile.academicBackground.programmingLanguages, 'Python\nTypeScript');
+  assert.equal(result.profile.academicBackground.certifications, 'Cloud Fundamentals');
+  assert.equal(result.profile.academicBackground.projects, 'Climate Dashboard — built a public-data dashboard with Python.');
+  assert.equal(result.profile.academicBackground.workExperience, 'Example Labs | Analyst | 2022-2023\nBuilt data pipelines.');
+  assert.equal(result.profile.academicBackground.academicAchievements, "Dean's List (2023)\nStudent Research Award");
+  assert.equal(result.profile.academicBackground.programmingLanguages.includes('English'), false);
+  assert.equal(result.profile.personalInfo.currentCountry, '');
+});
+
+test('CV extraction keeps an existing profile when the document omits fields', async () => {
+  const existing = validProfile();
+  const text = 'Name: Jordan Example\nDegree Start Date: 2020-09';
+  const result = await profileExtraction.extractProfileFromCv({
+    name: 'synthetic.doc',
+    size: text.length,
+    text: async () => text,
+  }, {
+    user: { name: 'Jordan Example', email: 'jordan@example.test' },
+    existingProfile: existing,
+  });
+
+  assert.equal(result.profile.personalInfo.fullName, 'Jordan Example');
+  assert.equal(result.profile.personalInfo.email, 'student@example.com');
+  assert.equal(result.profile.academicBackground.cgpa, '3.4');
+  assert.equal(result.profile.academicBackground.degreeStartDate, '2020-09');
+  assert.deepEqual(result.profile.studyPreferences.countries, ['Germany']);
+});

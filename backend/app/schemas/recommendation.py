@@ -3,6 +3,7 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, field_serializer
 
 from app.schemas.eligibility import DeadlineStatus
+from app.schemas.opportunity import ScholarshipSourceProvenance
 from app.services.source_url_safety import safe_source_url
 
 Category = Literal["strong", "good", "possible", "needs_verification"]
@@ -58,6 +59,7 @@ class ScholarshipRecommendation(BaseModel):
     breakdown: List[ScoreDimension]
     verification_status: Optional[str]
     official_url: Optional[str]
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
 
     @field_serializer("official_url")
     def sanitize_official_url(self, value):

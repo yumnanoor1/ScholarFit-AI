@@ -7,7 +7,13 @@ from app.models.scholarship_knowledge import (
     ScholarshipDocumentChunk,
     ScholarshipChunkEmbedding,
 )
-from app.models.scholarship_discovery import ScholarshipDiscoveryRun
+from app.models.scholarship_discovery import ScholarshipDiscoveryReviewItem, ScholarshipDiscoveryRun
+from app.models.scholarship_discovery_publication import (
+    ScholarshipDiscoveryPublication,
+    ScholarshipDiscoveryPublicationEvent,
+    ScholarshipDiscoveryPublicationSource,
+    ScholarshipDiscoveryPublicationVersion,
+)
 
 __all__ = [
     "User",
@@ -24,4 +30,9 @@ __all__ = [
     "ScholarshipDocumentChunk",
     "ScholarshipChunkEmbedding",
     "ScholarshipDiscoveryRun",
+    "ScholarshipDiscoveryReviewItem",
+    "ScholarshipDiscoveryPublication",
+    "ScholarshipDiscoveryPublicationVersion",
+    "ScholarshipDiscoveryPublicationSource",
+    "ScholarshipDiscoveryPublicationEvent",
 ]

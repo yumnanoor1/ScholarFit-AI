@@ -15,11 +15,13 @@ from collections import Counter
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import or_
-from app.models.opportunity import Scholarship
+from app.schemas.opportunity import StudentScholarshipResponse
 from app.services.scholarship_eligibility import NOT_SATISFIED, check_nationality, evaluate_scholarship, scholarship_deadline
 from app.services.scholarship_recommendations import FUNDING_LABELS, FUNDING_VALUES, funding_summary, profile_gaps, recommend_scholarship
-from app.services.source_verification import is_currently_verified
+from app.services.student_scholarship_visibility import (
+    deduplicate_student_scholarships,
+    get_student_scholarships,
+)
 
 ALL_FIELDS = "all_fields"
 # Structured fields are searched first; these text columns are the fallback.
@@ -154,18 +156,30 @@ def search_scholarships(db, filters: dict, profile, signed_in: bool, sort: Optio
                         skip: int = 0, limit: int = 20, today=None) -> dict:
     today = today or date.today()
     terms = search_terms(filters.get("q"))
-    statuses = [item for item in filters.get("verification") or [] if item != "conflicting"] or ["verified"]
-    query = db.query(Scholarship).filter(Scholarship.archived_at.is_(None))
+    requested_statuses = filters.get("verification") or []
+    statuses = [item for item in requested_statuses if item != "conflicting"] or ["verified"]
+    records = get_student_scholarships(
+        db,
+        include_unverified="unverified" in requested_statuses,
+        today=today,
+    )
+    records = deduplicate_student_scholarships(records)
     hosts = filters.get("host_country") or []
-    if hosts:
-        query = query.filter(or_(*[Scholarship.country == host for host in hosts],
-                                 *[Scholarship.country.startswith(f"{host} (", autoescape=True) for host in hosts]))
     nationality = (filters.get("nationality") or "").strip()
     matched = []
     gaps_from = []
-    for scholarship in query.order_by(Scholarship.id).all():
-        effective_status = "verified" if is_currently_verified(scholarship, today) else "unverified"
-        if effective_status not in statuses:
+    for record in records:
+        scholarship = record.scholarship
+        effective_status = "verified" if record.independently_verified else "unverified"
+        if requested_statuses:
+            if effective_status not in statuses:
+                continue
+        elif not (record.independently_verified or record.publication_active):
+            continue
+        if hosts and not any(
+            scholarship.country == host or scholarship.country.startswith(f"{host} (")
+            for host in hosts
+        ):
             continue
         labels, structured_hit = match_search(scholarship, terms) if terms else ([], True)
         if labels is None or not _passes_record_filters(scholarship, filters):
@@ -179,15 +193,17 @@ def search_scholarships(db, filters: dict, profile, signed_in: bool, sort: Optio
         if not _passes_result_filters(item, filters):
             continue
         gaps_from.append(item)
-        matched.append((scholarship, item, labels, structured_hit, nationality_status, effective_status))
+        matched.append((record, item, labels, structured_hit, nationality_status, effective_status))
 
     # The same opportunity shows once when both records match
-    present = {scholarship.id for scholarship, *_ in matched}
+    present = {record.scholarship.id for record, *_ in matched}
     results = []
-    for scholarship, item, labels, structured_hit, nationality_status, effective_status in matched:
+    for record, item, labels, structured_hit, nationality_status, effective_status in matched:
+        scholarship = record.scholarship
         if scholarship.duplicate_of_id in present:
             continue
         results.append({**item, "scholarship": scholarship, "matched_fields": labels, "nationality_status": nationality_status,
+                        "_source_provenance": record.source_provenance(),
                         "_structured_hit": structured_hit,
                         "_verified": scholarship.last_verified_date if effective_status == "verified" else None})
 
@@ -208,8 +224,10 @@ def search_scholarships(db, filters: dict, profile, signed_in: bool, sort: Optio
 
 def _public(item, signed_in):
     """Only what Explore shows. Personal results are left out for visitors who aren't signed in."""
+    scholarship = StudentScholarshipResponse.model_validate(item["scholarship"]).model_dump()
+    scholarship["source_provenance"] = item["_source_provenance"]
     return {
-        "scholarship": item["scholarship"],
+        "scholarship": scholarship,
         "matched_fields": item["matched_fields"],
         "nationality_status": item["nationality_status"],
         "funding_tier": item["funding"]["tier"],
@@ -224,11 +242,24 @@ def _public(item, signed_in):
 
 
 def filter_options(db, today=None) -> dict:
-    """The filter choices the data really supports, with counts over the verified catalog."""
+    """The filter choices and counts over student-visible scholarships."""
     today = today or date.today()
-    rows = db.query(Scholarship).filter(Scholarship.archived_at.is_(None)).order_by(Scholarship.id).all()
-    visible = [item for item in rows if is_currently_verified(item, today)]
-    unverified = len(rows) - len(visible)
+    records = get_student_scholarships(
+        db,
+        include_unverified=True,
+        today=today,
+    )
+    rows = [record.scholarship for record in records]
+    visible = [
+        record.scholarship
+        for record in records
+        if record.independently_verified or record.publication_active
+    ]
+    unverified = sum(
+        not record.independently_verified
+        for record in records
+    )
+    verified = len(records) - unverified
     conflicts = sum(any(req.get("conflict") for req in evaluate_scholarship(item, None, today=today)["needs_verification"]) for item in visible)
 
     def options(counts, labels=None):
@@ -250,7 +281,7 @@ def filter_options(db, today=None) -> dict:
                      for name, check in BENEFITS.items() if any(check(item) for item in visible)],
         "deadlines": [{"value": name, "label": label, "count": deadlines[name]} for name, label in DEADLINE_LABELS.items() if deadlines[name]],
         "verification": [item for item in (
-            {"value": "verified", "label": "Verified", "count": len(visible)},
+            {"value": "verified", "label": "Verified", "count": verified},
             {"value": "unverified", "label": "Unverified", "count": unverified},
             {"value": "conflicting", "label": "Conflicting information", "count": conflicts}) if item["count"]],
         "nationalities": sorted({"Pakistan", *(name for item in rows for name in (item.eligible_countries or []) + (item.excluded_countries or []))}),

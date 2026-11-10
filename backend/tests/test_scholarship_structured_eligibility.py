@@ -55,8 +55,128 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(result["status"], "not_evaluated")
         self.assertEqual(requirement(result, "source_evidence")["status"], "not_evaluated")
 
+    def test_explicit_no_previous_degree_is_non_applicable_not_satisfied(self):
+        result = evaluate(structured(required_previous_degree="No previous degree required"))
+        requirement_names = [
+            item["requirement"]
+            for group in ("satisfied", "not_satisfied", "missing_information", "needs_verification")
+            for item in result[group]
+        ]
+        self.assertNotIn("degree_level", requirement_names)
+        self.assertEqual(result["status"], "eligible")
+
+
+class MissingScholarshipRequirementTests(unittest.TestCase):
+    def test_missing_requirement_fields_are_not_treated_as_unrestricted(self):
+        cases = (
+            ("nationality", structured(nationality_scope=None, eligible_nationalities=None, pakistan_eligible=None)),
+            ("degree_level", structured(degree_level=None, eligible_degree_levels=None)),
+            ("field", structured(discipline_scope=None, eligible_fields=None)),
+            ("academic", structured(academic_condition=None, min_academic_requirement=None)),
+            ("english", structured(english_requirement_type=None, english_requirement=None,
+                                   min_ielts=None, min_toefl=None, min_duolingo=None)),
+            ("age", structured(age_requirement=None, min_age=None, max_age=None)),
+            ("work_experience", structured(work_experience=None)),
+            ("gender", structured(gender_restriction=None, notes=None)),
+            ("residency", structured(residency_requirement=None, notes=None)),
+            ("restrictions", structured(applicant_restrictions=None, notes=None)),
+        )
+        for key, record in cases:
+            with self.subTest(requirement=key):
+                self.assertEqual(requirement(evaluate(record), key)["status"], "not_evaluated")
+
+    def test_missing_cgpa_requirement_information_needs_verification(self):
+        record = structured(
+            academic_condition="numeric",
+            min_gpa=None,
+            min_gpa_scale=None,
+            min_percentage=None,
+            min_academic_requirement="Not specified",
+        )
+        result = evaluate(record)
+        self.assertEqual(requirement(result, "academic")["status"], "not_evaluated")
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_multiple_unknown_requirements_accumulate_and_block_eligibility(self):
+        record = structured(
+            eligible_nationalities="Not specified",
+            pakistan_eligible="",
+            discipline_scope="all",
+            eligible_fields="Not specified",
+        )
+        result = evaluate(record)
+        unknown = {item["requirement"] for item in result["needs_verification"]}
+        self.assertTrue({"nationality", "field"} <= unknown)
+        self.assertEqual(result["status"], "not_evaluated")
+        self.assertFalse(result["eligible"])
+
+    def test_known_unmet_requirement_wins_over_other_unknown_requirements(self):
+        record = structured(
+            eligible_nationalities="Not specified",
+            pakistan_eligible="",
+            discipline_scope="all",
+            eligible_fields="Not specified",
+        )
+        result = evaluate(record, make_profile(ielts_score=5.0))
+        unknown = {item["requirement"] for item in result["needs_verification"]}
+        self.assertTrue({"nationality", "field"} <= unknown)
+        self.assertEqual(requirement(result, "english")["status"], "not_satisfied")
+        self.assertEqual((result["status"], result["outcome"]), ("not_eligible", "not_eligible"))
+
+    def test_admission_scoped_requirement_does_not_block_scholarship_eligibility(self):
+        record = structured(
+            academic_condition="set_by_institution",
+            min_gpa=None,
+            min_gpa_scale=None,
+            min_academic_requirement="Per the chosen programme's own requirement",
+        )
+        result = evaluate(record)
+        academic = requirement(result, "academic")
+        self.assertEqual((academic["status"], academic["scope"]), ("not_evaluated", "admission"))
+        self.assertEqual(result["status"], "eligible")
+        self.assertTrue(any("checked during admission" in note for note in result["notes"]))
+
+    def test_financial_need_tag_needs_verification_not_satisfaction(self):
+        result = evaluate(structured(applicant_restrictions=["financial_need_required"]))
+        restrictions = requirement(result, "restrictions")
+        self.assertEqual(restrictions["status"], "not_evaluated")
+        self.assertNotIn("restrictions", [item["requirement"] for item in result["satisfied"]])
+        self.assertEqual((result["status"], result["not_satisfied"]), ("not_evaluated", []))
+
 
 class NationalityTests(unittest.TestCase):
+    def test_no_nationality_restrictions_are_non_applicable(self):
+        result = evaluate(structured(
+            nationality_scope=None,
+            eligible_nationalities="No nationality restrictions",
+            pakistan_eligible="",
+        ))
+        self.assertNotIn("nationality", [item["requirement"] for item in result["satisfied"]])
+        self.assertEqual(result["status"], "eligible")
+
+    def test_structured_all_with_unspecified_text_needs_manual_verification(self):
+        record = structured(nationality_scope="all", eligible_nationalities="Not specified", pakistan_eligible="")
+        result = evaluate(record)
+        self.assertEqual(requirement(result, "nationality")["status"], "not_evaluated")
+        self.assertEqual((result["status"], result["outcome"]), ("not_evaluated", "verify_manually"))
+
+    def test_structured_all_conflicts_with_textual_exclusion(self):
+        record = structured(
+            nationality_scope="all",
+            eligible_nationalities="Open to all nationalities except Pakistan",
+            pakistan_eligible="",
+        )
+        item = requirement(evaluate(record), "nationality")
+        self.assertEqual((item["status"], item["conflict"]), ("not_evaluated", True))
+
+    def test_structured_and_textual_all_nationalities_are_consistent(self):
+        record = structured(
+            nationality_scope="all",
+            eligible_nationalities="Open to all nationalities",
+            pakistan_eligible="",
+        )
+        self.assertEqual(requirement(evaluate(record), "nationality")["status"], "satisfied")
+
     def test_all_except(self):
         record = structured(nationality_scope="all_except", excluded_countries=["Turkey"], pakistan_eligible="",
                             eligible_nationalities="Open to citizens of all countries except Türkiye")
@@ -122,6 +242,26 @@ class DegreeAndFieldTests(unittest.TestCase):
 
     def test_all_fields(self):
         self.assertEqual(status("field", structured(eligible_fields="Bachelor's and Master's programmes offered at Lund")), "satisfied")
+
+    def test_no_field_restrictions_are_non_applicable(self):
+        result = evaluate(structured(discipline_scope=None, eligible_fields="No field restrictions"))
+        self.assertNotIn("field", [item["requirement"] for item in result["satisfied"]])
+        self.assertEqual(result["status"], "eligible")
+
+    def test_structured_all_fields_with_unspecified_text_needs_manual_verification(self):
+        record = structured(discipline_scope="all", eligible_fields="Not specified")
+        result = evaluate(record)
+        self.assertEqual(requirement(result, "field")["status"], "not_evaluated")
+        self.assertEqual((result["status"], result["outcome"]), ("not_evaluated", "verify_manually"))
+
+    def test_structured_all_fields_conflicts_with_restricted_text(self):
+        record = structured(discipline_scope="all", eligible_fields="Only Computer Science")
+        item = requirement(evaluate(record), "field")
+        self.assertEqual((item["status"], item["conflict"]), ("not_evaluated", True))
+
+    def test_structured_and_textual_all_fields_are_consistent(self):
+        record = structured(discipline_scope="all", eligible_fields="All fields")
+        self.assertEqual(requirement(evaluate(record), "field")["status"], "satisfied")
 
     def test_limited_text_is_not_overridden_by_all(self):
         record = structured(eligible_fields="Any field of study offered at the participating university")
@@ -250,7 +390,20 @@ class EnglishTests(unittest.TestCase):
 
     def test_not_required_conflict(self):
         record = structured(english_requirement_type="not_required", min_ielts=None, english_requirement="Yes - IELTS 6.5 overall")
-        self.assertTrue(requirement(evaluate(record), "english")["conflict"])
+        result = evaluate(record)
+        self.assertTrue(requirement(result, "english")["conflict"])
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_not_required_conflicts_with_unspecified_text(self):
+        record = structured(
+            english_requirement_type="not_required",
+            min_ielts=None,
+            english_requirement="Not specified",
+        )
+        result = evaluate(record)
+        english = requirement(result, "english")
+        self.assertEqual((english["status"], english["conflict"]), ("not_evaluated", True))
+        self.assertEqual((result["status"], result["outcome"]), ("not_evaluated", "verify_manually"))
 
     def test_score_conflict(self):
         self.assertTrue(requirement(evaluate(structured(english_requirement="IELTS 7.5 overall")), "english")["conflict"])

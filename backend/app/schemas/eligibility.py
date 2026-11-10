@@ -1,6 +1,7 @@
 from typing import List, Literal, Optional
 from pydantic import BaseModel, field_serializer
 
+from app.schemas.opportunity import ScholarshipSourceProvenance
 from app.services.source_url_safety import safe_source_url
 
 
@@ -72,6 +73,7 @@ class ScholarshipEligibilityResult(BaseModel):
     last_verified: Optional[str]
     official_url: Optional[str]
     source_name: Optional[str]
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
     match_score: Optional[float] = None   # always None here; scores come from GET /recommendations/scholarships
     notes: List[str]
 
@@ -90,6 +92,7 @@ class RelatedOpportunity(BaseModel):
     requirement_text: Optional[str] = None   # the record's own wording
     result: str                              # what the comparison found
     source_url: Optional[str] = None
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
 
     @field_serializer("source_url")
     def sanitize_source_url(self, value):
@@ -132,6 +135,7 @@ class OpportunityEvaluation(BaseModel):
     source_url: Optional[str] = None
     last_verified: Optional[str] = None
     deadline: Optional[DeadlineStatus] = None
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
 
     @field_serializer("source_url")
     def sanitize_source_url(self, value):

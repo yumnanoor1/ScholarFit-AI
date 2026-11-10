@@ -1,4 +1,5 @@
 """Deployment settings. In production a missing or unsafe setting stops the API from starting."""
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -7,6 +8,11 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview"
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+_legacy_gemini_model_warning_logged = False
 
 PRODUCTION_NAMES = ("production",)
 KNOWN_ENVIRONMENTS = PRODUCTION_NAMES + ("development", "dev", "test")
@@ -30,6 +36,28 @@ class ScholarshipDiscoverySettings:
     request_delay_seconds: float
     user_agent: str
     model: str
+    interval_hours: int = 24
+    stale_run_timeout_hours: int = 12
+    groq_model: str = DEFAULT_GROQ_MODEL
+    groq_fallback_enabled: bool = False
+    max_linked_urls: int = 100
+    max_linked_url_chars: int = 2048
+    max_linked_urls_bytes: int = 16_384
+    max_provider_request_bytes: int = 512_000
+    min_extracted_chars: int = 80
+
+
+def gemini_model() -> str:
+    global _legacy_gemini_model_warning_logged
+    configured_model = os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL
+    legacy_model = os.getenv("SCHOLARSHIP_DISCOVERY_MODEL", "").strip()
+    if legacy_model and legacy_model != configured_model and not _legacy_gemini_model_warning_logged:
+        logger.warning(
+            "SCHOLARSHIP_DISCOVERY_MODEL is deprecated and ignored; "
+            "GEMINI_MODEL is the shared setting for Gemini integrations"
+        )
+        _legacy_gemini_model_warning_logged = True
+    return configured_model
 
 
 def _discovery_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -43,6 +71,13 @@ def _discovery_int(name: str, default: int, minimum: int, maximum: int) -> int:
     if not minimum <= value <= maximum:
         raise RuntimeError(f"{name} must be between {minimum} and {maximum}")
     return value
+
+
+def _discovery_bool(name: str, default: str) -> bool:
+    value = os.getenv(name, default).strip().lower()
+    if value not in {"true", "false", "1", "0", "yes", "no"}:
+        raise RuntimeError(f"{name} must be a boolean")
+    return value in {"true", "1", "yes"}
 
 
 def scholarship_discovery_settings() -> ScholarshipDiscoverySettings:
@@ -65,7 +100,28 @@ def scholarship_discovery_settings() -> ScholarshipDiscoverySettings:
         max_retries=_discovery_int("SCHOLARSHIP_DISCOVERY_MAX_RETRIES", 2, 0, 5),
         request_delay_seconds=request_delay,
         user_agent=os.getenv("SCHOLARSHIP_DISCOVERY_USER_AGENT", "FitScholarScholarshipDiscovery/1.0"),
-        model=os.getenv("SCHOLARSHIP_DISCOVERY_MODEL") or os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
+        model=gemini_model(),
+        interval_hours=_discovery_int("SCHOLARSHIP_DISCOVERY_INTERVAL_HOURS", 24, 1, 8760),
+        stale_run_timeout_hours=_discovery_int(
+            "SCHOLARSHIP_DISCOVERY_STALE_RUN_TIMEOUT_HOURS", 12, 1, 720,
+        ),
+        groq_model=os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL,
+        groq_fallback_enabled=_discovery_bool("GROQ_FALLBACK_ENABLED", "false"),
+        max_linked_urls=_discovery_int(
+            "SCHOLARSHIP_DISCOVERY_MAX_LINKED_URLS", 100, 1, 1000,
+        ),
+        max_linked_url_chars=_discovery_int(
+            "SCHOLARSHIP_DISCOVERY_MAX_LINKED_URL_CHARS", 2048, 64, 8192,
+        ),
+        max_linked_urls_bytes=_discovery_int(
+            "SCHOLARSHIP_DISCOVERY_MAX_LINKED_URL_BYTES", 16_384, 256, 65_536,
+        ),
+        max_provider_request_bytes=_discovery_int(
+            "SCHOLARSHIP_DISCOVERY_MAX_PROVIDER_REQUEST_BYTES", 512_000, 1024, 10_000_000,
+        ),
+        min_extracted_chars=_discovery_int(
+            "SCHOLARSHIP_DISCOVERY_MIN_EXTRACTED_CHARS", 80, 1, 1_000,
+        ),
     )
 
 

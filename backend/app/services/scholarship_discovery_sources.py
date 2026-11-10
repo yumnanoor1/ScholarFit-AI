@@ -1,6 +1,13 @@
-"""Curated official entry points; domains must be reviewed before they are added."""
+"""Curated scholarship entry points; unreviewed domains are held from crawling."""
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
+
+
+SourceClassification = Literal[
+    "official_provider",
+    "government_authority",
+    "trusted_listing",
+]
 
 
 @dataclass(frozen=True)
@@ -11,8 +18,38 @@ class DiscoverySource:
     category: str
     country_or_region: str
     source_url: str
+    source_classification: SourceClassification
+    trust_basis: Optional[str] = None
+    trust_reviewed: bool = False
+    crawl_enabled: bool = True
     country: Optional[str] = None
     discovery_only: bool = False
+    trusted_external_domains: Tuple[str, ...] = ()
+    trusted_external_domains_reviewed: bool = False
+    trusted_external_domain_trust_basis: Optional[str] = None
+
+    def __post_init__(self):
+        classifications = {"official_provider", "government_authority", "trusted_listing"}
+        if self.source_classification not in classifications:
+            raise ValueError("discovery source classification is unsupported")
+        if self.trust_reviewed and not self.trust_basis:
+            raise ValueError("reviewed discovery sources require a trust basis")
+        if self.trusted_external_domains:
+            if not self.trusted_external_domains_reviewed or not self.trusted_external_domain_trust_basis:
+                raise ValueError("trusted external domains require an explicit reviewed trust basis")
+            if any(
+                not isinstance(domain, str)
+                or not domain.strip()
+                or any(char in domain for char in "/:@?#")
+                for domain in self.trusted_external_domains
+            ):
+                raise ValueError("trusted external domains must be host names")
+            normalized_domains = tuple(
+                domain.casefold().rstrip(".")
+                for domain in self.trusted_external_domains
+            )
+            if len(set(normalized_domains)) != len(normalized_domains):
+                raise ValueError("trusted external domains must be unique")
 
 
 SOURCES: Tuple[DiscoverySource, ...] = (
@@ -23,6 +60,9 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "official_european_programme",
         "European Union",
         "https://www.eacea.ec.europa.eu/scholarships/erasmus-mundus-catalogue_en",
+        source_classification="government_authority",
+        trust_basis="European Union programme authority",
+        trust_reviewed=True,
         discovery_only=True,
     ),
     DiscoverySource(
@@ -32,6 +72,9 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "national_academic_exchange",
         "Germany",
         "https://www.daad.de/en/studying-in-germany/scholarships/",
+        source_classification="government_authority",
+        trust_basis="National academic exchange authority",
+        trust_reviewed=True,
         country="Germany",
     ),
     DiscoverySource(
@@ -40,7 +83,10 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "stipendiumhungaricum.hu",
         "government_scholarship_programme",
         "Hungary",
-        "https://stipendiumhungaricum.hu/",
+        "https://stipendiumhungaricum.hu/about/",
+        source_classification="government_authority",
+        trust_basis="Government scholarship programme",
+        trust_reviewed=True,
         country="Hungary",
     ),
     DiscoverySource(
@@ -49,7 +95,10 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "si.se",
         "government_scholarship_provider",
         "Sweden",
-        "https://si.se/en/apply/scholarships/",
+        "https://si.se/en/apply/scholarships/swedish-institute-scholarships-for-global-professionals/",
+        source_classification="government_authority",
+        trust_basis="Government scholarship provider",
+        trust_reviewed=True,
         country="Sweden",
     ),
     DiscoverySource(
@@ -59,6 +108,9 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "government_scholarship_programme",
         "Ireland",
         "https://hea.ie/policy/internationalisation/goi-ies/",
+        source_classification="government_authority",
+        trust_basis="Government scholarship authority",
+        trust_reviewed=True,
         country="Ireland",
     ),
     DiscoverySource(
@@ -68,6 +120,9 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "regional_ministry_scholarship",
         "Flanders, Belgium",
         "https://www.studyinflanders.be/scholarships/master-mind-scholarships",
+        source_classification="government_authority",
+        trust_basis="Regional ministry scholarship programme",
+        trust_reviewed=True,
         country="Belgium",
     ),
     DiscoverySource(
@@ -77,6 +132,9 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "public_scholarship_database",
         "Austria",
         "https://grants.at/en/",
+        source_classification="trusted_listing",
+        trust_basis=None,
+        trust_reviewed=False,
         country="Austria",
     ),
     DiscoverySource(
@@ -86,6 +144,9 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "national_scholarship_agency",
         "Poland",
         "https://www.nawa.gov.pl/en/students/foreign-students/the-banach-scholarship-programme/about-the-programme",
+        source_classification="government_authority",
+        trust_basis="National academic exchange authority",
+        trust_reviewed=True,
         country="Poland",
     ),
     DiscoverySource(
@@ -95,6 +156,9 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "ministry_scholarship_portal",
         "Italy",
         "https://studyinitaly.esteri.it/",
+        source_classification="government_authority",
+        trust_basis="Ministry scholarship portal",
+        trust_reviewed=True,
         country="Italy",
     ),
     DiscoverySource(
@@ -104,7 +168,296 @@ SOURCES: Tuple[DiscoverySource, ...] = (
         "official_university_scholarship",
         "United Kingdom",
         "https://www.ox.ac.uk/admissions/graduate/fees-and-funding/funding/clarendon",
+        source_classification="official_provider",
+        trust_basis="Official university scholarship provider",
+        trust_reviewed=True,
         country="United Kingdom",
+    ),
+    DiscoverySource(
+        "daad-helmut-schmidt",
+        "DAAD Helmut-Schmidt Programme",
+        "daad.de",
+        "government_scholarship_programme",
+        "Germany",
+        "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database/?detail=50026397",
+        source_classification="government_authority",
+        trust_basis="Official DAAD scholarship database entry for the Helmut-Schmidt Programme.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Germany",
+    ),
+    DiscoverySource(
+        "daad-epos",
+        "DAAD EPOS",
+        "daad.de",
+        "government_scholarship_programme",
+        "Germany",
+        "https://www.daad.de/en/information-services-for-higher-education-institutions/further-information-on-daad-programmes/epos/",
+        source_classification="government_authority",
+        trust_basis="Official DAAD page describing its EPOS development-related postgraduate scholarship programme.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Germany",
+    ),
+    DiscoverySource(
+        "deutschlandstipendium",
+        "Deutschlandstipendium",
+        "deutschlandstipendium.de",
+        "government_scholarship_programme",
+        "Germany",
+        "https://www.deutschlandstipendium.de/deutschlandstipendium/de/services/english/the-deutschlandstipendium-best-of-both-worlds-for-students.html",
+        source_classification="government_authority",
+        trust_basis="Official BMFTR Deutschlandstipendium page describes the national public-private scholarship programme and its university-based application route.",
+        trust_reviewed=True,
+        crawl_enabled=False,
+        country="Germany",
+    ),
+    DiscoverySource(
+        "polimi-merit-scholarships",
+        "Politecnico di Milano Merit Scholarships",
+        "polimi.it",
+        "official_university_scholarship",
+        "Italy",
+        "https://www.polimi.it/en/international-prospective-students/laurea-magistrale-programmes-equivalent-to-master-of-science/scholarships/merit-based-scholarships",
+        source_classification="official_provider",
+        trust_basis="Official Politecnico di Milano scholarship overview; the registered URL redirects to this official funding page.",
+        trust_reviewed=True,
+        crawl_enabled=False,
+        country="Italy",
+    ),
+    DiscoverySource(
+        "nl-scholarship",
+        "NL Scholarship",
+        "studyinnl.org",
+        "national_scholarship_listing",
+        "Netherlands",
+        "https://www.studyinnl.org/finances/nl-scholarship",
+        source_classification="government_authority",
+        trust_basis="Official Study in NL page describes the NL Scholarship and identifies its Dutch Ministry and higher-education funding partners.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Netherlands",
+    ),
+    DiscoverySource(
+        "amsterdam-excellence",
+        "Amsterdam Merit Scholarship (AMS)",
+        "uva.nl",
+        "official_university_scholarship",
+        "Netherlands",
+        "https://www.uva.nl/shared-content/programmas/en/masters/communication-science-corporate-communication/tuition-fee/amsterdam-merit-scholarship.html",
+        source_classification="official_provider",
+        trust_basis="Official University of Amsterdam page describes the Amsterdam Merit Scholarship, including its 2027-2028 award information.",
+        trust_reviewed=True,
+        crawl_enabled=False,
+        country="Netherlands",
+    ),
+    DiscoverySource(
+        "leiden-excellence",
+        "Leiden University Excellence Scholarship Programme",
+        "universiteitleiden.nl",
+        "official_university_scholarship",
+        "Netherlands",
+        "https://www.staff.universiteitleiden.nl/scholarships/sea/leiden-university-excellence-scholarship-lexs",
+        source_classification="official_provider",
+        trust_basis="Official Leiden University scholarship page describes LExS, eligible Master's programmes, and application requirements.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Netherlands",
+    ),
+    DiscoverySource(
+        "tudelft-justus-louise-van-effen",
+        "TU Delft Justus & Louise van Effen Excellence Scholarships",
+        "tudelft.nl",
+        "official_university_scholarship",
+        "Netherlands",
+        "https://www.tudelft.nl/en/education/study-programme-orientation/practical-matters/scholarships",
+        source_classification="official_provider",
+        trust_basis="Official TU Delft scholarship listing explicitly describes the Justus & Louise van Effen Excellence Scholarships for MSc students.",
+        trust_reviewed=True,
+        crawl_enabled=False,
+        country="Netherlands",
+    ),
+    DiscoverySource(
+        "maastricht-nl-high-potential",
+        "Maastricht University NL-High Potential Scholarship",
+        "maastrichtuniversity.nl",
+        "official_university_scholarship",
+        "Netherlands",
+        "https://www.maastrichtuniversity.nl/studeren/toelating-inschrijving/financing-your-studies/scholarships/maastricht-university-nl-high",
+        source_classification="official_provider",
+        trust_basis="Official Maastricht University NL-High Potential Scholarship page.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Netherlands",
+    ),
+    DiscoverySource(
+        "radboud-scholarship",
+        "Radboud Scholarship Programme",
+        "ru.nl",
+        "official_university_scholarship",
+        "Netherlands",
+        "https://www.ru.nl/en/education/scholarships/radboud-scholarship-programme",
+        source_classification="official_provider",
+        trust_basis="Official Radboud University page describing the Radboud Scholarship Programme.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Netherlands",
+    ),
+    DiscoverySource(
+        "kth-scholarship",
+        "KTH Scholarship",
+        "kth.se",
+        "official_university_scholarship",
+        "Sweden",
+        "https://www.kth.se/en/2.985/admissions/scholarships/kth-scholarship-1.72827",
+        source_classification="official_provider",
+        trust_basis="Official KTH page describes the KTH Scholarship, its Master's tuition coverage, requirements, and application dates.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Sweden",
+    ),
+    DiscoverySource(
+        "lund-university-scholarships",
+        "Lund University Scholarships and Awards",
+        "lunduniversity.lu.se",
+        "official_university_scholarship",
+        "Sweden",
+        "https://lunduniversity.lu.se/admissions/bachelors-and-masters-studies/scholarships-and-awards",
+        source_classification="official_provider",
+        trust_basis="Official Lund University scholarships and awards page for prospective students.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Sweden",
+    ),
+    DiscoverySource(
+        "chalmers-scholarships",
+        "Chalmers Scholarships for Fee-Paying Students",
+        "chalmers.se",
+        "official_university_scholarship",
+        "Sweden",
+        "https://www.chalmers.se/en/education/application-and-admission/scholarships-for-fee-paying-students/",
+        source_classification="official_provider",
+        trust_basis="Official Chalmers page describing scholarships for prospective Master's students.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Sweden",
+    ),
+    DiscoverySource(
+        "eiffel-scholarship",
+        "Eiffel Scholarship Programme of Excellence",
+        "campusfrance.org",
+        "government_scholarship_programme",
+        "France",
+        "https://www.campusfrance.org/en/eiffel-scholarship-program-of-excellence",
+        source_classification="government_authority",
+        trust_basis="Official Campus France page for the French Ministry's Eiffel Excellence Scholarship Programme.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="France",
+    ),
+    DiscoverySource(
+        "sciences-po-emile-boutmy",
+        "Sciences Po Emile Boutmy Scholarship",
+        "sciencespo.fr",
+        "official_university_scholarship",
+        "France",
+        "https://www.sciencespo.fr/students/en/fees-funding/bursaries-financial-aid/emile-boutmy-scholarship/",
+        source_classification="official_provider",
+        trust_basis="Official Sciences Po page describing the Émile Boutmy scholarship.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="France",
+    ),
+    DiscoverySource(
+        "chevening-pakistan",
+        "Chevening Scholarship for Pakistan",
+        "chevening.org",
+        "government_scholarship_programme",
+        "United Kingdom",
+        "https://www.chevening.org/scholarship/pakistan/",
+        source_classification="government_authority",
+        trust_basis="Official Chevening Pakistan scholarship page identifying the UK Government/FCDO programme.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="United Kingdom",
+    ),
+    DiscoverySource(
+        "commonwealth-masters",
+        "Commonwealth Master's Scholarships",
+        "cscuk.fcdo.gov.uk",
+        "government_scholarship_programme",
+        "United Kingdom",
+        "https://cscuk.fcdo.gov.uk/scholarships/commonwealth-masters-scholarships/",
+        source_classification="government_authority",
+        trust_basis="Official Commonwealth Scholarship Commission page describing its Master's scholarship programme.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="United Kingdom",
+    ),
+    DiscoverySource(
+        "commonwealth-shared",
+        "Commonwealth Shared Scholarships",
+        "cscuk.fcdo.gov.uk",
+        "government_scholarship_programme",
+        "United Kingdom",
+        "https://cscuk.fcdo.gov.uk/scholarships/commonwealth-shared-scholarships/",
+        source_classification="government_authority",
+        trust_basis="Official Commonwealth Scholarship Commission page describing its Shared Scholarship programme.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="United Kingdom",
+    ),
+    DiscoverySource(
+        "great-scholarships-pakistan",
+        "GREAT Scholarships for Pakistan",
+        "britishcouncil.org",
+        "government_scholarship_programme",
+        "United Kingdom",
+        "https://study-uk.britishcouncil.org/scholarships-funding/great-scholarships/pakistan",
+        source_classification="government_authority",
+        trust_basis="Official Study UK page lists GREAT Scholarship opportunities specifically for students from Pakistan.",
+        trust_reviewed=True,
+        crawl_enabled=False,
+        country="United Kingdom",
+    ),
+    DiscoverySource(
+        "british-council-women-in-stem",
+        "British Council Women in STEM Scholarship",
+        "britishcouncil.org",
+        "international_scholarship_programme",
+        "United Kingdom",
+        "https://www.britishcouncil.org/study-work-abroad/in-uk/scholarship-women-stem",
+        source_classification="official_provider",
+        trust_basis="Official British Council page describes its Women in STEM scholarship programme and 2026-2027 awards.",
+        trust_reviewed=True,
+        crawl_enabled=False,
+        country="United Kingdom",
+    ),
+    DiscoverySource(
+        "gates-cambridge",
+        "Gates Cambridge Scholarship",
+        "gatescambridge.org",
+        "official_university_scholarship",
+        "United Kingdom",
+        "https://www.gatescambridge.org/programme/the-scholarship/",
+        source_classification="official_provider",
+        trust_basis="Official Gates Cambridge programme page describes its full-cost postgraduate scholarship and current funding components.",
+        trust_reviewed=True,
+        crawl_enabled=False,
+        country="United Kingdom",
+    ),
+    DiscoverySource(
+        "turkiye-burslari",
+        "Türkiye Scholarships",
+        "turkiyeburslari.gov.tr",
+        "government_scholarship_programme",
+        "Türkiye",
+        "https://www.turkiyeburslari.gov.tr/",
+        source_classification="government_authority",
+        trust_basis="Official Türkiye Scholarships portal describes the programme, scholarship support, and application process.",
+        trust_reviewed=True,
+        crawl_enabled=True,
+        country="Turkey",
     ),
 )
 

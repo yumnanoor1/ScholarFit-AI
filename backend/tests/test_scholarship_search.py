@@ -271,6 +271,19 @@ class SearchTests(unittest.TestCase):
         self.assertNotIn("program_id", query_names)
         self.assertNotIn("match", query_names)
 
+    def test_student_search_never_triggers_discovery_fetch_or_extraction(self):
+        with mock.patch("app.services.scholarship_discovery.run_discovery") as run_discovery:
+            with mock.patch("app.services.scholarship_discovery_fetch.OfficialSourceFetcher.crawl") as crawl:
+                with mock.patch(
+                    "app.services.scholarship_discovery_extraction.GeminiScholarshipExtractor.extract"
+                ) as extract:
+                    result = self.route(q="alpha")
+
+        self.assertTrue(result["items"])
+        run_discovery.assert_not_called()
+        crawl.assert_not_called()
+        extract.assert_not_called()
+
     def test_optional_user(self):
         self.assertIsNone(get_optional_user(None, self.db))
         self.assertEqual(get_optional_user(issue_session_token(self.alice), self.db).id, self.alice.id)

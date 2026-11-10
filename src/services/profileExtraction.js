@@ -6,7 +6,7 @@ const REQUIRED_FIELDS = [
   'personalInfo.city', 'personalInfo.phoneNumber', 'academicBackground.currentDegree',
   'academicBackground.degreeTitle', 'academicBackground.major', 'academicBackground.institution',
   'academicBackground.institutionCountry', 'academicBackground.academicStatus',
-  'academicBackground.currentYear', 'academicBackground.expectedGraduationDate',
+  'academicBackground.degreeStartDate', 'academicBackground.currentYear', 'academicBackground.expectedGraduationDate',
   'academicBackground.graduationDate', 'academicBackground.cgpa', 'academicBackground.gradingScale', 'englishProficiency.testType',
   'academicBackground.relevantCoursework', 'academicBackground.technicalSkills', 'academicBackground.programmingLanguages',
   'englishProficiency.otherTestName', 'englishProficiency.mediumOfInstruction', 'studyPreferences.fields',
@@ -16,9 +16,23 @@ const REQUIRED_FIELDS = [
 
 const OPTIONAL_FIELDS = [
   'personalInfo.profilePhoto', 'academicBackground.transcript', 'academicBackground.certifications',
-  'academicBackground.projects', 'englishProficiency.moiCertificate',
+  'academicBackground.projects', 'academicBackground.workExperience', 'academicBackground.academicAchievements',
+  'englishProficiency.moiCertificate',
   'studyPreferences.additionalPreferences'
 ];
+
+const SECTION_HEADINGS = new Set([
+  'contact', 'contact information', 'personal details', 'personal information', 'summary', 'profile',
+  'education', 'academic background',
+  'experience', 'work experience', 'work history', 'professional experience', 'employment history',
+  'projects', 'projects and research', 'project experience', 'academic projects', 'research projects',
+  'certifications', 'certificates', 'licenses and certifications', 'licenses & certifications',
+  'awards', 'awards & honors', 'honors', 'honours', 'honors and awards', 'honours and awards',
+  'achievements', 'academic achievements',
+  'technical skills', 'skills', 'programming languages', 'languages', 'relevant coursework', 'coursework',
+  'english proficiency', 'language proficiency', 'language tests', 'references', 'publications',
+  'volunteering', 'volunteer experience', 'interests',
+]);
 
 const REGION_OPTIONS = ['Europe', 'North America', 'Asia-Pacific'];
 const COUNTRY_OPTIONS = [
@@ -57,12 +71,63 @@ function labeledValue(text, labels) {
   return match?.[1]?.trim() || '';
 }
 
+function normalizeSectionHeading(line) {
+  return line
+    .replace(/^\s*#{1,6}\s*/, '')
+    .replace(/^\s*\d+[.)]\s*/, '')
+    .replace(/[\s:–—-]+$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+function sectionValue(text, labels) {
+  const sectionNames = new Set(labels.map(normalizeSectionHeading));
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => sectionNames.has(normalizeSectionHeading(line)));
+  if (start < 0) return '';
+
+  const values = [];
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (SECTION_HEADINGS.has(normalizeSectionHeading(line))) break;
+    if (line) values.push(line);
+  }
+  return values.join('\n');
+}
+
+function labeledOrSectionValue(text, labels) {
+  return labeledValue(text, labels) || sectionValue(text, labels);
+}
+
 function normalizeDate(value) {
   const match = value.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
   if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
   const alternate = value.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
   if (alternate) return `${alternate[3]}-${alternate[2].padStart(2, '0')}-${alternate[1].padStart(2, '0')}`;
   return '';
+}
+
+function normalizeMonth(value) {
+  const yearFirst = value.match(/\b(\d{4})[-/.](\d{1,2})(?:[-/.]\d{1,2})?\b/);
+  if (yearFirst) {
+    const month = Number(yearFirst[2]);
+    return month >= 1 && month <= 12 ? `${yearFirst[1]}-${String(month).padStart(2, '0')}` : '';
+  }
+
+  const monthFirst = value.match(/\b(\d{1,2})[-/.](\d{4})\b/);
+  if (monthFirst) {
+    const month = Number(monthFirst[1]);
+    return month >= 1 && month <= 12 ? `${monthFirst[2]}-${String(month).padStart(2, '0')}` : '';
+  }
+
+  const fullDate = normalizeDate(value);
+  if (fullDate) return fullDate.slice(0, 7);
+
+  const namedMonth = value.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{4})\b/i);
+  if (!namedMonth) return '';
+  const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const month = months.indexOf(namedMonth[1].slice(0, 3).toLowerCase()) + 1;
+  return `${namedMonth[2]}-${String(month).padStart(2, '0')}`;
 }
 
 async function readPdfText(file) {
@@ -160,8 +225,10 @@ export async function extractProfileFromCv(file, { user, existingProfile, onProg
   const accountName = user?.name || '';
   const accountEmail = user?.email || '';
   const personal = profile.personalInfo;
-  personal.fullName = labeledValue(text, ['Full Name', 'Name']) || accountName;
-  personal.email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || accountEmail;
+  const extractedName = labeledValue(text, ['Full Name', 'Name']);
+  const extractedEmail = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
+  personal.fullName = extractedName || existingProfile?.personalInfo?.fullName || accountName;
+  personal.email = extractedEmail || existingProfile?.personalInfo?.email || accountEmail;
   personal.dateOfBirth = normalizeDate(labeledValue(text, ['Date of Birth', 'DOB', 'Birth Date']));
   personal.gender = labeledValue(text, ['Gender']);
   personal.citizenshipCountry = labeledValue(text, ['Citizenship', 'Nationality']);
@@ -175,11 +242,12 @@ export async function extractProfileFromCv(file, { user, existingProfile, onProg
   academic.major = labeledValue(text, ['Major', 'Field of Study', 'Discipline']);
   academic.institution = labeledValue(text, ['University', 'Institution', 'College']);
   academic.institutionCountry = labeledValue(text, ['Country of Institution', 'University Country']);
+  academic.degreeStartDate = normalizeMonth(labeledValue(text, ['Degree Start Date', 'Enrollment Date', 'Education Start Date']));
   academic.currentYear = labeledValue(text, ['Current Semester', 'Current Year', 'Year of Study']);
   const academicStatus = labeledValue(text, ['Academic Status', 'Study Status']);
   academic.academicStatus = /\b(graduated|degree awarded|completed degree)\b/i.test(academicStatus) ? 'graduated' : /\b(studying|enrolled|current student)\b/i.test(academicStatus) ? 'studying' : '';
-  academic.graduationDate = normalizeDate(labeledValue(text, ['Graduation Date', 'Date Graduated']));
-  academic.expectedGraduationDate = normalizeDate(labeledValue(text, ['Expected Graduation', 'Expected Graduation Date']));
+  academic.graduationDate = normalizeMonth(labeledValue(text, ['Graduation Date', 'Date Graduated']));
+  academic.expectedGraduationDate = normalizeMonth(labeledValue(text, ['Expected Graduation', 'Expected Graduation Date']));
   const gpaMatch = text.match(/\b(?:CGPA|GPA)\s*(?::|-)?\s*(\d{1,3}(?:\.\d+)?)\s*(?:\/\s*(\d{1,3}(?:\.\d+)?))?/i);
   if (gpaMatch) {
     academic.cgpa = gpaMatch[1];
@@ -188,11 +256,13 @@ export async function extractProfileFromCv(file, { user, existingProfile, onProg
     academic.gradingScale = normalizedScale || (scale ? 'Other' : '');
     academic.customGradingScale = academic.gradingScale === 'Other' ? scale : '';
   }
-  academic.relevantCoursework = labeledValue(text, ['Relevant Coursework', 'Coursework']);
-  academic.technicalSkills = labeledValue(text, ['Technical Skills', 'Skills']);
-  academic.programmingLanguages = labeledValue(text, ['Programming Languages', 'Languages']);
-  academic.certifications = labeledValue(text, ['Certifications', 'Certificates']);
-  academic.projects = labeledValue(text, ['Projects', 'Academic Experience']);
+  academic.relevantCoursework = labeledOrSectionValue(text, ['Relevant Coursework', 'Coursework']);
+  academic.technicalSkills = labeledOrSectionValue(text, ['Technical Skills', 'Skills']);
+  academic.programmingLanguages = labeledOrSectionValue(text, ['Programming Languages', 'Programming Language']);
+  academic.certifications = labeledOrSectionValue(text, ['Certifications', 'Certificates', 'Licenses and Certifications', 'Licenses & Certifications']);
+  academic.projects = labeledOrSectionValue(text, ['Projects', 'Projects and Research', 'Project Experience', 'Academic Projects', 'Research Projects', 'Academic Experience']);
+  academic.workExperience = labeledOrSectionValue(text, ['Work Experience', 'Professional Experience', 'Work History', 'Employment History', 'Experience']);
+  academic.academicAchievements = labeledOrSectionValue(text, ['Academic Achievements', 'Achievements', 'Awards', 'Awards & Honors', 'Honors and Awards', 'Honours and Awards']);
 
   const english = profile.englishProficiency;
   const testName = labeledValue(text, ['English Test', 'Language Test', 'Test Type']);
@@ -264,6 +334,7 @@ export async function extractProfileFromCv(file, { user, existingProfile, onProg
     'academicBackground.institution': academic.institution,
     'academicBackground.institutionCountry': academic.institutionCountry,
     'academicBackground.academicStatus': academic.academicStatus,
+    'academicBackground.degreeStartDate': academic.degreeStartDate,
     'academicBackground.currentYear': academic.academicStatus === 'studying' ? academic.currentYear : 'not-applicable',
     'academicBackground.cgpa': academic.cgpa,
     'academicBackground.gradingScale': academic.gradingScale,

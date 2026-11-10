@@ -39,6 +39,7 @@ const SavedOpportunities = lazy(() => import('../pages/SavedOpportunities'));
 const Compare = lazy(() => import('../pages/Compare'));
 const FinancialFeasibility = lazy(() => import('../pages/FinancialFeasibility'));
 const Recommendations = lazy(() => import('../pages/Recommendations'));
+const ApplicationPathway = lazy(() => import('../pages/ApplicationPathway'));
 const ProfileImprovement = lazy(() => import('../pages/ProfileImprovement'));
 const AdminScholarships = lazy(() => import('../pages/AdminScholarships'));
 const AdminScholarshipEdit = lazy(() => import('../pages/AdminScholarshipEdit'));
@@ -49,6 +50,7 @@ const ACTIVE_BAR_PATHS = ['/recommendations', '/financial', '/documents'];
 
 export default function AppRoutes() {
   const { pathname } = useLocation();
+  const isAdminDashboard = pathname === '/admin/scholarships';
 
   return (
     <AuthProvider>
@@ -77,7 +79,7 @@ export default function AppRoutes() {
             <Route
               path="/*"
               element={
-                <div className="app-layout">
+                <div className={`app-layout${isAdminDashboard ? ' is-admin-dashboard' : ''}`}>
 
                   {/* Sidebar */}
                   <Sidebar />
@@ -86,9 +88,9 @@ export default function AppRoutes() {
                   <div className="main-content">
 
                     {/* Navbar */}
-                    <Navbar />
+                    {!isAdminDashboard && <Navbar />}
 
-                    <main className="app-container">
+                    <main className={`app-container${isAdminDashboard ? ' is-admin-dashboard-container' : ''}`}>
                       {ACTIVE_BAR_PATHS.includes(pathname.replace(/\/+$/, '')) && <ActiveOpportunityBar />}
 
                       <RouteErrorBoundary key={pathname}>
@@ -150,6 +152,11 @@ export default function AppRoutes() {
                         <Route
                           path="/documents"
                           element={<Documents />}
+                        />
+
+                        <Route
+                          path="/application-pathway"
+                          element={<ApplicationPathway />}
                         />
 
 

@@ -20,6 +20,7 @@ from app.services.exchange_rates import EUR_RATES, convert, rates_info
 from app.services.financial_feasibility import calculate_feasibility
 from app.services.scholarship_matching import match_for_financial
 from app.services.source_verification import scholarship_source_issue, source_freshness_issue
+from app.services.student_scholarship_visibility import get_student_scholarship
 
 router = APIRouter(prefix="/financial-feasibility", tags=["Financial Feasibility"])
 
@@ -146,9 +147,10 @@ def _unresolved_result(scholarship, currency, budget, budget_source, explanation
 
 
 def _run(db: Session, user: User, request: ScholarshipFeasibilityRequest) -> dict:
-    scholarship = db.query(Scholarship).filter(Scholarship.id == request.scholarship_id).first()
-    if not scholarship:
+    record = get_student_scholarship(db, request.scholarship_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="Scholarship not found")
+    scholarship = record.scholarship
     plan = _get_plan(db, user)
     saved_budget, budget_source = _budget(db, user, plan, request.budget)
     currency = request.currency or (saved_budget.currency if saved_budget else "USD")
@@ -216,7 +218,7 @@ def save_expenses(
     current_user: User = Depends(require_complete_profile),
 ):
     """Save the signed-in student's cost inputs for one scholarship affordability check."""
-    if not db.query(Scholarship.id).filter(Scholarship.id == scholarship_id).first():
+    if get_student_scholarship(db, scholarship_id) is None:
         raise HTTPException(status_code=404, detail="Scholarship not found")
     plan = _get_or_create_plan(db, current_user)
     plan.expenses = {**(plan.expenses or {}), f"scholarship:{scholarship_id}": data.model_dump(exclude_none=True)}

@@ -6,6 +6,8 @@ import { adminApi } from '../services/adminApi';
 import {
   FORM_SECTIONS, REVIEW_LABELS, getOpenReviewGroups, isDirty, toFormValues, toPayload, validateForm,
 } from '../services/adminScholarshipForm';
+import { createLatestRequestGuard } from '../services/discoveryReviewState.js';
+import AdminScholarshipImport from './AdminScholarshipImport';
 import './AdminScholarships.css';
 
 const SEVERITY_TONES = { high: 'danger', medium: 'warning', low: 'neutral' };
@@ -162,6 +164,12 @@ export default function AdminScholarshipEdit() {
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [requestGuard] = useState(createLatestRequestGuard);
+  const [importState, setImportState] = useState({
+    sourceCount: 0,
+    conflictsResolved: true,
+    confirmed: false,
+  });
 
   const apply = useCallback((data) => {
     setDetail(data);
@@ -173,11 +181,22 @@ export default function AdminScholarshipEdit() {
 
   const load = useCallback(() => {
     if (isNew) return;
+    const requestId = requestGuard.begin();
     adminApi.detail(token, id)
-      .then((data) => { apply(data); setLoadError(''); })
-      .catch((failure) => setLoadError(failure.message));
-  }, [token, id, isNew, apply]);
-  useEffect(load, [load]);
+      .then((data) => {
+        if (requestGuard.isCurrent(requestId)) {
+          apply(data);
+          setLoadError('');
+        }
+      })
+      .catch((failure) => {
+        if (requestGuard.isCurrent(requestId)) setLoadError(failure.message);
+      });
+  }, [token, id, isNew, apply, requestGuard]);
+  useEffect(() => {
+    load();
+    return () => requestGuard.invalidate();
+  }, [load, requestGuard]);
   const dirty = isDirty(values, original);
   useEffect(() => {
     if (!dirty) return undefined;
@@ -220,12 +239,25 @@ export default function AdminScholarshipEdit() {
       return result.warnings.length ? `Saved. ${result.warnings.join(' ')}` : 'Saved.';
     });
   };
+  const applyImportValues = useCallback((patch) => {
+    setValues((current) => ({ ...current, ...patch }));
+    setErrors((current) => Object.fromEntries(
+      Object.entries(current).filter(([name]) => !Object.hasOwn(patch, name)),
+    ));
+  }, []);
+  const handleImportStatus = useCallback((status) => {
+    setImportState((current) => ({
+      sourceCount: status.sourceCount,
+      conflictsResolved: status.conflictsResolved,
+      confirmed: status.sourceCount > current.sourceCount ? false : current.confirmed,
+    }));
+  }, []);
 
   if (loadError) {
     return (
       <div className="page-container admin-page">
         <p className="admin-notice is-error" role="alert">{loadError} <button type="button" className="admin-link" onClick={load}>Try again</button></p>
-        <Link to="/admin/scholarships">Back to records</Link>
+        <Link to="/admin/scholarships?section=records">Back to records</Link>
       </div>
     );
   }
@@ -236,7 +268,7 @@ export default function AdminScholarshipEdit() {
 
   return (
     <div className="page-container admin-page">
-      <Link className="admin-back" to="/admin/scholarships"><ArrowLeft size={15} aria-hidden="true" /> Back to records</Link>
+      <Link className="admin-back" to="/admin/scholarships?section=records"><ArrowLeft size={15} aria-hidden="true" /> Back to records</Link>
       <header className="admin-header">
         <div>
           <h1>{isNew ? 'Add scholarship' : record.name}</h1>
@@ -246,6 +278,15 @@ export default function AdminScholarshipEdit() {
       </header>
 
       {notice && <p className={`admin-notice is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p>}
+
+      {isNew && (
+        <AdminScholarshipImport
+          token={token}
+          values={values}
+          onApply={applyImportValues}
+          onStatusChange={handleImportStatus}
+        />
+      )}
 
       {!isNew && (
         <section className="admin-card" aria-label="Data quality">
@@ -295,8 +336,36 @@ export default function AdminScholarshipEdit() {
         </section>
       )}
 
+      {isNew && importState.sourceCount > 0 && (
+        <section className="admin-card" aria-label="Import review confirmation">
+          <h2>Confirm imported draft</h2>
+          <p className="admin-muted">
+            Imported information remains unverified. Review the populated form and source evidence;
+            creating the scholarship does not verify it or add it to RAG.
+          </p>
+          <label className="admin-check">
+            <input
+              type="checkbox"
+              checked={importState.confirmed}
+              onChange={(event) => setImportState((current) => ({ ...current, confirmed: event.target.checked }))}
+            />
+            I reviewed this draft and confirm that it is ready to create as an unverified scholarship.
+          </label>
+          {!importState.conflictsResolved && (
+            <p className="admin-field-error" role="alert">Resolve all imported source conflicts before creating.</p>
+          )}
+        </section>
+      )}
+
       <div className="admin-save-bar">
-        <button type="button" className="btn btn-primary" disabled={saving || (!dirty && reviewed.length === 0 && !isNew)} onClick={save}>{saving ? 'Saving...' : isNew ? 'Create scholarship' : 'Save changes'}</button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={saving || (!dirty && reviewed.length === 0 && !isNew) || (isNew && importState.sourceCount > 0 && (!importState.confirmed || !importState.conflictsResolved))}
+          onClick={save}
+        >
+          {saving ? 'Saving...' : isNew ? 'Create scholarship' : 'Save changes'}
+        </button>
         {dirty && <span className="admin-muted">Unsaved changes</span>}
       </div>
 
@@ -320,7 +389,7 @@ export default function AdminScholarshipEdit() {
               ))}
             </ul>
           </section>
-          <ArchivePanel token={token} detail={detail} onDone={apply} run={run} onDeleted={() => navigate('/admin/scholarships', { replace: true })} />
+          <ArchivePanel token={token} detail={detail} onDone={apply} run={run} onDeleted={() => navigate('/admin/scholarships?section=records', { replace: true })} />
         </>
       )}
     </div>

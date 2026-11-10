@@ -161,7 +161,10 @@ class ValidationTests(unittest.TestCase):
             ScholarshipStructured(min_percentage=120)
 
     def test_official_urls(self):
-        self.assertTrue(is_web_url("https://www.daad.de/go/en/stipa50026397"))
+        self.assertTrue(is_web_url(
+            "https://www2.daad.de/deutschland/stipendium/datenbank/en/"
+            "21148-scholarship-database/?detail=50026397"
+        ))
         for bad in ("www.daad.de", "https://a.org ; https://b.org", "https://a.org | https://b.org",
                     "javascript:alert(1)", "https://www.anu.edu.au/ (general portal)"):
             self.assertFalse(is_web_url(bad), bad)

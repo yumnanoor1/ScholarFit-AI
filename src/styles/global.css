@@ -311,39 +311,6 @@ p {
   box-shadow: 0 0 0 3px rgba(57, 137, 201, 0.16);
 }
 
-/* Password field with show/hide toggle (components/common/PasswordInput.jsx) */
-.password-field {
-  position: relative;
-}
-
-.password-toggle {
-  position: absolute;
-  top: 50%;
-  right: 6px;
-  display: inline-flex;
-  width: 34px;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transform: translateY(-50%);
-}
-
-.password-toggle:hover {
-  background: var(--color-hover-bg);
-  color: var(--color-dark);
-}
-
-/* Hide Edge's built-in reveal button so only one toggle shows */
-.password-field input::-ms-reveal,
-.password-field input::-ms-clear {
-  display: none;
-}
-
 @media (max-width: 560px) {
   .page-header {
     align-items: stretch;
@@ -4117,6 +4084,28 @@ p {
 
 .documents-upload-note {
   margin-top: 10px;
+}
+
+@media (max-width: 560px) {
+  .document-item {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .document-item-heading > strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .document-item-controls {
+    justify-content: flex-start;
+  }
+
+  .documents-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 
 .official-application {

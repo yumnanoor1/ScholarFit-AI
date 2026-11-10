@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session, aliased
 
 from app.core.config import (
     MINILM_MODEL_REVISION_ENV,
+    gemini_model,
     is_valid_minilm_model_revision,
 )
 from app.models.opportunity import Scholarship
@@ -45,12 +46,17 @@ from app.services.source_verification import (
     is_currently_verified,
 )
 from app.services.source_url_safety import safe_source_url, safe_source_urls_in_text
+from app.services.gemini_provider import (
+    GeminiProviderError,
+    classify_gemini_error,
+    create_gemini_client,
+    generate_content,
+)
 
 logger = logging.getLogger(__name__)
 
 QUERY_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 MODEL_REVISION_ENV = MINILM_MODEL_REVISION_ENV
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 MAX_TOP_K = 8
 MAX_VERIFICATION_CANDIDATE_CHUNKS = 64
 MAX_CONFLICT_EVIDENCE_CHUNKS = 64
@@ -899,8 +905,7 @@ def _gemini_client():
         return None
     with _client_lock:
         if _client is None:
-            from google import genai
-            _client = genai.Client(api_key=api_key)
+            _client = create_gemini_client(api_key)
         return _client
 
 
@@ -931,16 +936,33 @@ def _generate(
     try:
         client = _gemini_client()
         if client is None:
+            logger.warning("Gemini generation failed: category=missing_api_key")
             return None
-        response = client.models.generate_content(
-            model=os.getenv("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL,
+        response = generate_content(
+            client,
+            model=gemini_model(),
             contents=f"Student question:\n{question}\n\nApproved scholarship sources:\n{_source_block(chunks, excerpts)}",
-            config={"system_instruction": SYSTEM_INSTRUCTION, "temperature": 0.2},
+            config={
+                "system_instruction": SYSTEM_INSTRUCTION,
+                "temperature": 0.2,
+            },
         )
         text = (response.text or "").strip()
         return text or None
+    except GeminiProviderError as exc:
+        logger.warning(
+            "Gemini generation failed: category=%s http_status=%s",
+            exc.category,
+            exc.http_status,
+        )
+        return None
     except Exception as exc:
-        logger.warning("Gemini generation failed: %s", type(exc).__name__)
+        category, status = classify_gemini_error(exc)
+        logger.warning(
+            "Gemini generation failed: category=%s http_status=%s",
+            category,
+            status,
+        )
         return None
 
 

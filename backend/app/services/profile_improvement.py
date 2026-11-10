@@ -337,7 +337,14 @@ def _scholarship_entry(result):
                         result["deadline"] if source_is_current else None)
 
 
-def build_guidance(profile, scholarships, has_budget=False, today=None, include_optional=True) -> dict:
+def build_guidance(
+    profile,
+    scholarships,
+    has_budget=False,
+    today=None,
+    include_optional=True,
+    source_provenance_by_id=None,
+) -> dict:
     templates = _templates(profile)
     found = {}
 
@@ -352,9 +359,14 @@ def build_guidance(profile, scholarships, has_budget=False, today=None, include_
     entries = []
     for scholarship in scholarships:
         result = evaluate_scholarship(scholarship, profile, today=today)
-        entries.append(_scholarship_entry(result))
+        source_provenance = (source_provenance_by_id or {}).get(scholarship.id)
+        entries.append({
+            **_scholarship_entry(result),
+            "source_provenance": source_provenance,
+        })
         base = {"kind": "scholarship", "id": scholarship.id, "name": scholarship.name,
-                "organization": scholarship.provider, "source_url": scholarship.official_url}
+                "organization": scholarship.provider, "source_url": scholarship.official_url,
+                "source_provenance": source_provenance}
         if scholarship.verification_status != "verified":
             add("manual_verification", "unverified", {**base, "requirement_text": None, "result": result["summary"]})
             continue

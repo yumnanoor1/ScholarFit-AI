@@ -3,7 +3,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel
 
 from app.schemas.eligibility import DeadlineStatus
-from app.schemas.opportunity import ScholarshipResponse
+from app.schemas.opportunity import StudentScholarshipResponse
 from app.schemas.recommendation import EligibilitySummary, Exclusion, ProfileGap
 
 SortOption = Literal["relevance", "recommendation", "name", "deadline", "funding", "country", "verified"]
@@ -17,7 +17,7 @@ ConditionFilter = Literal["numeric", "degree_class", "class_rank", "merit_based"
 
 
 class ScholarshipSearchItem(BaseModel):
-    scholarship: ScholarshipResponse
+    scholarship: StudentScholarshipResponse
     matched_fields: List[str]
     nationality_status: Optional[str]       # the chosen nationality's result, when that filter is used
     funding_tier: FundingFilter

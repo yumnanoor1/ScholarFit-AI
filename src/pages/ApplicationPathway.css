@@ -832,7 +832,7 @@
 }
 
 .application-pathway-journey.is-overall-journey {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(190px, auto));
   gap: 40px 8px;
   min-height: 428px;
@@ -846,7 +846,7 @@
 .application-pathway-journey-line marker path {
   fill: none;
   stroke: #9cc9ee;
-  stroke-width: 1.8;
+  stroke-width: 3.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -1221,7 +1221,7 @@
 }
 
 .application-pathway-journey.is-overall-journey {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(190px, auto));
   gap: 40px 8px;
   min-height: 428px;
@@ -1313,6 +1313,15 @@
 .application-pathway-step-status.is-in-progress {
   color: #0f58a8;
   background: #dcecff;
+}
+
+.application-pathway-step-status.is-locked {
+  color: #6b7f99;
+  background: #e8eef5;
+}
+
+.application-pathway-step-status input:disabled {
+  cursor: not-allowed;
 }
 
 .application-pathway-journey-slot .application-journey-content:focus-visible {

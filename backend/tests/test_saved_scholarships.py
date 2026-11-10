@@ -16,7 +16,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.security import issue_session_token
 from app.database import Base
-from app.models.opportunity import Scholarship
+from app.models.opportunity import Scholarship, ScholarshipAuditLog
+from app.models.scholarship_discovery_publication import ScholarshipDiscoveryPublication
 from app.models.user import SavedScholarship, User
 from app.routers import saved_scholarships as api
 from app.routers import scholarships as scholarships_api
@@ -136,10 +137,14 @@ class SavedScholarshipTests(unittest.TestCase):
             self.save(self.bob, self.first)
         self.assertEqual(refused.exception.status_code, 409)
         self.assertEqual(self.saved_names(self.bob), [])
-        # The student who already saved it keeps it, and saving again stays harmless
-        record, response = self.save(self.alice, self.first)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(record.scholarship_id, self.first.id)
+        with self.assertRaises(HTTPException) as repeat:
+            self.save(self.alice, self.first)
+        self.assertEqual(repeat.exception.status_code, 409)
+        self.assertEqual(self.db.query(SavedScholarship).filter_by(
+            user_id=self.alice.id,
+            scholarship_id=self.first.id,
+        ).count(), 1)
+        self.assertEqual(self.saved_names(self.alice), [])
 
     def test_two_students_have_separate_lists(self):
         self.save(self.alice, self.first)
@@ -196,23 +201,84 @@ class SavedScholarshipTests(unittest.TestCase):
         self.first.verification_status = "unverified"
         self.db.commit()
         items = api.list_saved_scholarships(db=self.db, current_user=self.alice)
-        body = SavedScholarshipResponse.model_validate(items[0])
-        self.assertEqual((body.scholarship.name, body.scholarship.verification_status), ("First", "unverified"))
+        self.assertEqual(items, [])
+        self.assertEqual(self.db.query(SavedScholarship).filter_by(
+            user_id=self.alice.id,
+            scholarship_id=self.first.id,
+        ).count(), 1)
 
     def test_verified_scholarship_reports_its_status(self):
         self.save(self.alice, self.first)
         items = api.list_saved_scholarships(db=self.db, current_user=self.alice)
         self.assertEqual(SavedScholarshipResponse.model_validate(items[0]).scholarship.verification_status, "verified")
 
-    def test_public_listing_still_hides_what_the_saved_list_keeps(self):
+    def test_saved_list_hides_unverified_scholarship_without_deleting_it(self):
         self.save(self.alice, self.first)
         self.first.verification_status = "unverified"
         self.db.commit()
         listed = scholarships_api.list_scholarships(
             country=None, funding_type=None, degree_level=None, pakistan_eligible_only=False,
             include_unverified=False, search=None, skip=0, limit=50, db=self.db)
-        self.assertEqual([item.name for item in listed], ["Second"])
-        self.assertEqual(self.saved_names(self.alice), ["First"])
+        self.assertEqual([item["name"] for item in listed], ["Second"])
+        self.assertEqual(self.saved_names(self.alice), [])
+        self.assertEqual(self.db.query(SavedScholarship).filter_by(
+            user_id=self.alice.id,
+            scholarship_id=self.first.id,
+        ).count(), 1)
+
+    def test_inaccessible_discovery_scholarship_cannot_be_saved(self):
+        candidate = Scholarship(
+            name="Unpublished Discovery",
+            country="Germany",
+            verification_status="unverified",
+            verification_basis="not_verified",
+        )
+        self.db.add(candidate)
+        self.db.flush()
+        self.db.add(ScholarshipAuditLog(
+            scholarship_id=candidate.id,
+            action="discovery_created",
+            actor_email="system:scholarship-discovery",
+        ))
+        self.db.commit()
+
+        with self.assertRaises(HTTPException) as error:
+            self.save(self.alice, candidate)
+
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertEqual(self.db.query(SavedScholarship).count(), 0)
+
+    def test_published_discovery_can_be_saved_and_revocation_hides_without_deleting(self):
+        candidate = Scholarship(
+            name="Published Discovery",
+            country="Germany",
+            verification_status="unverified",
+            verification_basis="not_verified",
+        )
+        self.db.add(candidate)
+        self.db.flush()
+        self.db.add(ScholarshipAuditLog(
+            scholarship_id=candidate.id,
+            action="discovery_created",
+            actor_email="system:scholarship-discovery",
+        ))
+        publication = ScholarshipDiscoveryPublication(
+            canonical_scholarship_id=candidate.id,
+            status="published",
+        )
+        self.db.add(publication)
+        self.db.commit()
+
+        record, _ = self.save(self.alice, candidate)
+        self.assertEqual(record.scholarship_id, candidate.id)
+
+        publication.status = "revoked"
+        self.db.commit()
+        self.assertEqual(self.saved_names(self.alice), [])
+        self.assertEqual(self.db.query(SavedScholarship).filter_by(
+            user_id=self.alice.id,
+            scholarship_id=candidate.id,
+        ).count(), 1)
 
     def test_unverified_scholarship_can_be_removed(self):
         self.save(self.alice, self.first)

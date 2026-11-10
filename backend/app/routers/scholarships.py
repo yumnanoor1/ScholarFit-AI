@@ -11,7 +11,7 @@ from app.routers.auth import get_optional_user
 from app.schemas.opportunity import (
     ScholarshipCreate,
     ScholarshipUpdate,
-    ScholarshipResponse,
+    StudentScholarshipResponse,
     ScholarshipWriteResult,
 )
 from app.schemas.search import (
@@ -21,12 +21,16 @@ from app.schemas.search import (
 from app.services.profile_completion import profile_completion
 from app.services.scholarship_quality import create_record, delete_record, update_record, write_result
 from app.services.scholarship_search import filter_options, search_scholarships
-from app.services.source_verification import is_currently_verified
+from app.services.student_scholarship_visibility import (
+    get_student_scholarship,
+    get_student_scholarships,
+    scholarship_response_payload,
+)
 
 router = APIRouter(prefix="/scholarships", tags=["Scholarships"])
 
 
-@router.get("/", response_model=List[ScholarshipResponse])
+@router.get("/", response_model=List[StudentScholarshipResponse])
 def list_scholarships(
     country: Optional[str] = Query(None, description="Country contains, e.g. Germany"),
     funding_type: Optional[str] = Query(None, description="e.g. Fully Funded or Partially Funded"),
@@ -40,10 +44,12 @@ def list_scholarships(
 ):
     """List scholarships with optional filters. Anyone can view.
     Unverified records are hidden unless include_unverified=true."""
-    query = db.query(Scholarship).filter(Scholarship.archived_at.is_(None))
-
-    if not include_unverified:
-        query = query.filter(Scholarship.verification_status == "verified")
+    records = get_student_scholarships(db, include_unverified=include_unverified)
+    if not records:
+        return []
+    query = db.query(Scholarship.id).filter(
+        Scholarship.id.in_([record.scholarship.id for record in records])
+    )
     if country:
         query = query.filter(Scholarship.country.ilike(f"%{country}%"))
     if funding_type:
@@ -55,10 +61,18 @@ def list_scholarships(
     if search:
         query = query.filter(Scholarship.name.ilike(f"%{search}%"))
 
-    records = query.order_by(Scholarship.name).offset(skip).limit(limit).all()
-    if not include_unverified:
-        records = [item for item in records if is_currently_verified(item)]
-    return records
+    ordered_ids = [
+        row[0]
+        for row in query.order_by(Scholarship.name, Scholarship.id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    ]
+    records_by_id = {record.scholarship.id: record for record in records}
+    return [
+        scholarship_response_payload(records_by_id[scholarship_id])
+        for scholarship_id in ordered_ids
+    ]
 
 
 @router.get("/filter-options", response_model=ScholarshipFilterOptions)
@@ -107,13 +121,13 @@ def search(
     return search_scholarships(db, filters, profile, personal, sort=sort, skip=skip, limit=limit)
 
 
-@router.get("/{scholarship_id}", response_model=ScholarshipResponse)
+@router.get("/{scholarship_id}", response_model=StudentScholarshipResponse)
 def get_scholarship(scholarship_id: int, db: Session = Depends(get_db)):
     """Get a single scholarship by id"""
-    item = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-    if not item:
+    record = get_student_scholarship(db, scholarship_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Scholarship not found")
-    return item
+    return scholarship_response_payload(record)
 
 
 @router.post("/", response_model=ScholarshipWriteResult, status_code=201)

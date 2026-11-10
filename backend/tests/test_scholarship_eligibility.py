@@ -35,8 +35,11 @@ def make_scholarship(**overrides):
         verification_status="verified", eligible_nationalities="Open to students of all nationalities",
         pakistan_eligible="Yes - open to all nationalities", eligible_fields="All fields",
         required_previous_degree="Bachelor's",
-        min_academic_requirement="Minimum CGPA 3.0/4.0", bachelors_requirement="Yes - required for Master's admission",
-        english_requirement="Yes - IELTS 6.5 overall", work_experience="Not specified", age_requirement="Not specified",
+        min_academic_requirement="Minimum CGPA 3.0/4.0",
+        bachelors_requirement="No additional Bachelor's degree conditions",
+        english_requirement="Yes - IELTS 6.5 overall", work_experience="No work experience required",
+        age_requirement="No age limit", residency_requirement="No residency requirement",
+        notes="No gender restrictions. No additional applicant restrictions.",
         deadline="2027-01-15", funding_type="Fully Funded", tuition_coverage="Full tuition fee waiver",
         living_stipend="No", other_benefits=None, last_verified="2026-09-30", official_url="https://example.org",
         source_name="Official page", official_info_url="https://example.org/scholarship",
@@ -60,8 +63,68 @@ class OverallStatusTests(unittest.TestCase):
         result = evaluate()
         self.assertEqual(result["status"], "eligible")
         self.assertTrue(result["eligible"])
+        self.assertNotIn("age", [item["requirement"] for item in result["satisfied"]])
+        self.assertNotIn("work_experience", [item["requirement"] for item in result["satisfied"]])
         self.assertIsNone(result["match_score"])
         self.assertTrue(any("does not mean you will be selected" in note for note in result["notes"]))
+
+    def test_explicit_no_english_requirement_does_not_block_eligibility(self):
+        result = evaluate(make_scholarship(
+            english_requirement="No IELTS requirement",
+            english_requirement_type=None,
+            min_ielts=None,
+        ))
+        self.assertEqual(result["status"], "eligible")
+        self.assertNotIn("english", [item["requirement"] for item in result["needs_verification"]])
+
+    def test_english_requirement_not_stated_needs_verification(self):
+        result = evaluate(make_scholarship(
+            english_requirement="Not specified",
+            english_requirement_type=None,
+            min_ielts=None,
+        ))
+        self.assertEqual(requirement(result, "english")["status"], "not_evaluated")
+        self.assertEqual((result["status"], result["outcome"]), ("not_evaluated", "verify_manually"))
+
+    def test_explicit_no_age_restriction_does_not_block_eligibility(self):
+        result = evaluate(make_scholarship(age_requirement="No age restriction"))
+        self.assertEqual(result["status"], "eligible")
+        self.assertNotIn("age", [item["requirement"] for item in result["needs_verification"]])
+
+    def test_age_requirement_not_stated_needs_verification(self):
+        result = evaluate(make_scholarship(age_requirement="Not specified"))
+        self.assertEqual(requirement(result, "age")["status"], "not_evaluated")
+        self.assertEqual((result["status"], result["outcome"]), ("not_evaluated", "verify_manually"))
+
+    def test_unknown_material_requirement_is_not_eligible_or_rejected(self):
+        result = evaluate(make_scholarship(work_experience="Not stated"))
+        self.assertEqual(requirement(result, "work_experience")["status"], "not_evaluated")
+        self.assertEqual((result["status"], result["outcome"], result["eligible"]),
+                         ("not_evaluated", "verify_manually", False))
+
+    def test_bare_bachelors_requirement_is_not_treated_as_no_extra_condition(self):
+        result = evaluate(make_scholarship(bachelors_requirement="Yes"))
+        self.assertEqual(requirement(result, "bachelors_conditions")["status"], "not_evaluated")
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_conflicting_english_requirement_needs_verification(self):
+        result = evaluate(make_scholarship(
+            english_requirement_type="not_required",
+            english_requirement="IELTS 6.5 overall",
+        ))
+        english = requirement(result, "english")
+        self.assertEqual((english["status"], english["conflict"]), ("not_evaluated", True))
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_ambiguous_english_requirement_blocks_definitive_eligibility(self):
+        result = evaluate(make_scholarship(
+            english_requirement="An English test may be required",
+            english_requirement_type=None,
+            min_ielts=None,
+        ))
+        english = requirement(result, "english")
+        self.assertEqual((english["status"], english["scope"]), ("not_evaluated", "scholarship"))
+        self.assertEqual(result["status"], "not_evaluated")
 
     def test_unmet_nationality(self):
         result = evaluate(make_scholarship(pakistan_eligible="No - Pakistan is not on the eligible list"))
@@ -128,6 +191,7 @@ class OverallStatusTests(unittest.TestCase):
         result = evaluate(profile=make_profile(ielts_score=None))
         self.assertEqual(requirement(result, "english")["status"], "missing_information")
         self.assertEqual(result["status"], "missing_information")
+        self.assertEqual(result["outcome"], "verify_manually")
 
     def test_low_english_score(self):
         result = evaluate(profile=make_profile(ielts_score=6.0))
@@ -407,7 +471,59 @@ class StatedRestrictionTests(unittest.TestCase):
                      "2026-2027 window already closed relative to current date; next cycle not yet announced.",       # 4
                      "Scholars must commit to returning to Pakistan for at least 2 years after the award.",           # 28
                      "The Orange Tulip Scholarship was found NOT to include Pakistan - correctly excluded from this dataset."):  # 5
-            self.assertEqual(evaluate(make_scholarship(notes=text))["status"], "eligible", text)
+            notes = f"{text or ''} No additional applicant restrictions."
+            self.assertEqual(evaluate(make_scholarship(notes=notes))["status"], "eligible", text)
+
+    def test_general_no_restrictions_declaration_resolves_unset_gender(self):
+        result = evaluate(make_scholarship(
+            gender_restriction=None,
+            notes="Awards are announced annually. No additional applicant restrictions.",
+        ))
+        self.assertEqual(result["status"], "eligible")
+        self.assertNotIn("gender", [item["requirement"] for item in result["needs_verification"]])
+
+    def test_unset_gender_without_general_declaration_needs_verification(self):
+        result = evaluate(make_scholarship(gender_restriction=None, notes=None))
+        self.assertEqual(requirement(result, "gender")["status"], "not_evaluated")
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_general_declaration_does_not_override_explicit_gender_restriction(self):
+        result = evaluate(make_scholarship(
+            gender_restriction="women",
+            notes="No additional applicant restrictions.",
+        ))
+        self.assertEqual(requirement(result, "gender")["status"], "not_evaluated")
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_general_declaration_does_not_hide_gender_restriction_in_notes(self):
+        result = evaluate(make_scholarship(
+            gender_restriction=None,
+            notes="Open only to women. No additional applicant restrictions.",
+        ))
+        restriction = requirement(result, "restrictions")
+        self.assertEqual(restriction["status"], "not_evaluated")
+        self.assertIn("Open only to women", restriction["source_text"])
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_general_declaration_does_not_clear_financial_need_tag(self):
+        result = evaluate(make_scholarship(
+            gender_restriction=None,
+            applicant_restrictions=["financial_need_required"],
+            notes="No additional applicant restrictions.",
+        ))
+        restrictions = requirement(result, "restrictions")
+        self.assertEqual(restrictions["status"], "not_evaluated")
+        self.assertIn("financial need must be shown", restrictions["reason"])
+        self.assertEqual(result["status"], "not_evaluated")
+
+    def test_general_declaration_does_not_override_unverified_status(self):
+        result = evaluate(make_scholarship(
+            gender_restriction=None,
+            verification_status="unverified",
+            notes="No additional applicant restrictions.",
+        ))
+        self.assertEqual(result["status"], "not_evaluated")
+        self.assertEqual(result["outcome"], "verify_manually")
 
     def test_annual_country_list(self):
         malaysia = make_scholarship(pakistan_eligible="Yes - explicitly confirmed on the official MIS 2022 recipient-country list; "

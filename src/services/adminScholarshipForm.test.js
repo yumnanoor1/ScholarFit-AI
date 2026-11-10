@@ -3,6 +3,9 @@ import test from 'node:test';
 import {
   FORM_SECTIONS, getOpenReviewGroups, isDirty, toFormValues, toPayload, validateForm,
 } from './adminScholarshipForm.js';
+import {
+  getImportConflicts, getImportFieldGroups, importedValueToForm, IMPORT_FIELD_LABELS,
+} from './adminScholarshipImport.js';
 import { getErrorMessage } from './adminApi.js';
 
 const blank = () => toFormValues(null);
@@ -60,4 +63,40 @@ test('validation errors name the field', () => {
   assert.equal(getErrorMessage({ detail: [{ loc: ['body', 'funding_level'], msg: 'Input should be full' }] }, 422), 'funding_level: Input should be full');
   assert.equal(getErrorMessage({ detail: 'Nope' }, 403), 'Nope');
   assert.equal(getErrorMessage(null, 500), 'The request failed (500).');
+});
+
+test('import evidence uses the existing form fields and converts values for its inputs', () => {
+  const formFields = FORM_SECTIONS.flatMap((section) => section.fields);
+  assert.deepEqual(Object.keys(IMPORT_FIELD_LABELS).sort(), formFields.map((field) => field.name).sort());
+  assert.equal(importedValueToForm(['Pakistan', 'Kenya']), 'Pakistan\nKenya');
+  assert.equal(importedValueToForm(false), 'false');
+  assert.equal(importedValueToForm(null), '');
+});
+
+test('matching source values are grouped without conflicts, while differing values require review', () => {
+  const sources = [
+    { source: { label: 'A' }, fields: { eligible_countries: { status: 'extracted', value: ['Pakistan', 'Kenya'] } } },
+    { source: { label: 'B' }, fields: { eligible_countries: { status: 'extracted', value: ['kenya', ' Pakistan '] } } },
+  ];
+  assert.equal(getImportFieldGroups(sources).length, 1);
+  assert.deepEqual(getImportConflicts(sources), []);
+  sources[1].fields.eligible_countries.value = ['Pakistan'];
+  assert.equal(getImportConflicts(sources)[0].name, 'eligible_countries');
+});
+
+test('uncertain suggestions are displayed but do not count as accepted-source conflicts', () => {
+  const sources = [
+    { source: { label: 'A' }, fields: { name: { status: 'extracted', value: 'Award A', suggestion_valid: true } } },
+    { source: { label: 'B' }, fields: { name: { status: 'uncertain', value: 'not-an-allowed-value', suggestion_valid: false } } },
+  ];
+  assert.equal(getImportFieldGroups(sources)[0].entries.length, 2);
+  assert.deepEqual(getImportConflicts(sources), []);
+});
+
+test('valid uncertain candidates from disagreeing sources still require an explicit choice', () => {
+  const sources = [
+    { source: { label: 'A' }, fields: { funding_level: { status: 'extracted', value: 'full', suggestion_valid: true } } },
+    { source: { label: 'B' }, fields: { funding_level: { status: 'uncertain', value: 'partial', suggestion_valid: true } } },
+  ];
+  assert.equal(getImportConflicts(sources)[0].name, 'funding_level');
 });

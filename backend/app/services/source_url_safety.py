@@ -22,6 +22,9 @@ _SENSITIVE_QUERY_NAMES = {
     "credential",
     "credentials",
     "jwt",
+    "hmac",
+    "hash",
+    "mac",
     "key",
     "password",
     "passwd",
@@ -30,9 +33,43 @@ _SENSITIVE_QUERY_NAMES = {
     "session",
     "sessionid",
     "sig",
+    "sign",
     "signature",
     "oauthcode",
 }
+_SENSITIVE_QUERY_COMPONENTS = {
+    "auth",
+    "credential",
+    "credentials",
+    "hash",
+    "hmac",
+    "key",
+    "mac",
+    "oauth",
+    "passwd",
+    "password",
+    "secret",
+    "session",
+    "sessionid",
+    "sig",
+    "signing",
+    "signature",
+    "signed",
+    "token",
+}
+_SENSITIVE_QUERY_SUFFIXES = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "credential",
+    "credentials",
+    "signature",
+    "sig",
+    "hmac",
+    "hash",
+    "mac",
+)
 # Bare hostnames are ambiguous with filenames, so require a common suffix, www, or a URL component.
 _URL_IN_TEXT = re.compile(
     r"(?<![A-Z0-9._%+-])(?:[A-Z][A-Z0-9+.-]*://|//|"
@@ -57,9 +94,26 @@ def _normalized_query_name(name: str) -> str:
 
 def _is_sensitive_query_name(name: str) -> bool:
     normalized = _normalized_query_name(name)
-    return normalized in _SENSITIVE_QUERY_NAMES or normalized.endswith(
-        ("token", "secret", "password", "passwd", "credential", "signature")
-    )
+    components = re.findall(r"[a-z0-9]+", name.casefold())
+    if (
+        normalized in _SENSITIVE_QUERY_NAMES
+        or any(component in _SENSITIVE_QUERY_COMPONENTS for component in components)
+        or normalized.startswith(("hmac", "signed", "signature"))
+        or normalized.endswith(_SENSITIVE_QUERY_SUFFIXES)
+    ):
+        return True
+
+    for prefix in ("auth", "oauth", "x", "aws", "amz", "xamz", "xgoog"):
+        if not normalized.startswith(prefix):
+            continue
+        suffix = normalized[len(prefix):]
+        if (
+            suffix == "sign"
+            or suffix.startswith(("hmac", "signed", "signature", "key"))
+            or suffix.endswith(_SENSITIVE_QUERY_SUFFIXES)
+        ):
+            return True
+    return False
 
 
 def validate_source_url(value: str) -> str:

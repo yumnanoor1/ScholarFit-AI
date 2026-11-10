@@ -2,11 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
 from app.core.permissions import require_complete_profile
 from app.schemas.recommendation import RecommendationList, ScholarshipRecommendation
 from app.services.scholarship_recommendations import recommend_for_student, recommend_one
+from app.services.student_scholarship_visibility import get_student_scholarship
 
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 
@@ -32,7 +32,12 @@ def scholarship_recommendation(
     current_user: User = Depends(require_complete_profile),
 ):
     """The signed-in student's result for one scholarship, verified or not."""
-    scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-    if not scholarship:
+    record = get_student_scholarship(db, scholarship_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Scholarship not found")
-    return recommend_one(db, scholarship, _profile(db, current_user))
+    return recommend_one(
+        db,
+        record.scholarship,
+        _profile(db, current_user),
+        source_provenance=record.source_provenance(),
+    )

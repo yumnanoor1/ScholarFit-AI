@@ -21,6 +21,7 @@ import dns.rdatatype
 import dns.resolver
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from jose import jwt
 from pydantic import ValidationError
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +29,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.permissions import require_admin
+from app.core.security import ALGORITHM, SECRET_KEY, issue_session_token, password_stamp
 from app.database import Base
 from app.models.opportunity import Program, Scholarship, ScholarshipAuditLog, ScholarshipProgramLink, University
 from app.models import scholarship_knowledge as knowledge_model
@@ -39,6 +41,13 @@ from app.models.scholarship_knowledge import (
     ScholarshipSourceDocument,
 )
 from app.models.user import SavedScholarship, StudentProfile, User
+from app.models.scholarship_discovery import ScholarshipDiscoveryReviewItem, ScholarshipDiscoveryRun
+from app.models.scholarship_discovery_publication import (
+    ScholarshipDiscoveryPublication,
+    ScholarshipDiscoveryPublicationEvent,
+    ScholarshipDiscoveryPublicationSource,
+    ScholarshipDiscoveryPublicationVersion,
+)
 from app.routers import admin_scholarships as admin_api
 from app.routers import eligibility as eligibility_api
 from app.routers import recommendations as recommendations_api
@@ -46,7 +55,7 @@ from app.routers import saved_scholarships as saved_api
 from app.routers import scholarships as api
 from app.services.scholarship_document_indexing import DocumentChunk
 from app.routers.auth import get_current_user, get_optional_user
-from app.schemas.admin import AdminDetail, ArchiveWrite, DuplicateWrite, FlagWrite, VerificationWrite
+from app.schemas.admin import AdminDetail, AdminDiscoverySourcePage, ArchiveWrite, DuplicateWrite, FlagWrite, VerificationWrite
 from app.schemas.opportunity import ScholarshipCreate, ScholarshipUpdate
 from app.services.scholarship_eligibility import evaluate_scholarship
 from app.services.scholarship_quality import duplicate_pairs, find_conflicts, find_issues, update_record
@@ -76,10 +85,10 @@ def verification(**overrides):
 
 class Base_(unittest.TestCase):
     def setUp(self):
-        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-        event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
-        Base.metadata.create_all(bind=engine)
-        self.db = sessionmaker(bind=engine)()
+        self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        event.listen(self.engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
+        Base.metadata.create_all(bind=self.engine)
+        self.db = sessionmaker(bind=self.engine)()
         self.university = University(name="TU Example", country="Germany")
         self.db.add(self.university)
         self.db.flush()
@@ -95,6 +104,7 @@ class Base_(unittest.TestCase):
 
     def tearDown(self):
         self.db.close()
+        self.engine.dispose()
 
     def edit(self, **fields):
         return api.update_scholarship(self.record.id, ScholarshipUpdate(**fields), db=self.db, admin=self.admin)
@@ -107,6 +117,264 @@ class Base_(unittest.TestCase):
             call()
         self.assertEqual(error.exception.status_code, code, error.exception.detail)
         return error.exception
+
+
+class AdminApiHttpContractTests(Base_):
+    def setUp(self):
+        super().setUp()
+        self.app = FastAPI()
+        self.app.include_router(admin_api.router)
+        self.app.include_router(api.router)
+        self.app.dependency_overrides[admin_api.get_db] = lambda: self.db
+        self.app.dependency_overrides[get_current_user] = lambda: self.admin
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        super().tearDown()
+
+    def test_summary_records_list_and_detail_http_contract(self):
+        summary = self.client.get("/admin/scholarships/summary")
+        self.assertEqual(summary.status_code, 200, summary.text)
+        summary_data = summary.json()
+        for field in (
+            "total", "verified", "unverified", "archived", "conflicting",
+            "missing_official_source", "incomplete_structured", "needs_reverification",
+            "broken_sources", "sources_checked", "duplicates",
+        ):
+            self.assertIsInstance(summary_data[field], int)
+
+        listing = self.client.get(
+            "/admin/scholarships?q=Alpha&verification=verified&skip=0&limit=5"
+        )
+        self.assertEqual(listing.status_code, 200, listing.text)
+        listing_data = listing.json()
+        self.assertIsInstance(listing_data["total"], int)
+        self.assertGreaterEqual(len(listing_data["items"]), 1)
+        self.assertEqual(listing_data["items"][0]["name"], self.record.name)
+        self.assertIsInstance(listing_data["items"][0]["issues"], list)
+
+        detail = self.client.get(f"/admin/scholarships/{self.record.id}")
+        self.assertEqual(detail.status_code, 200, detail.text)
+        detail_data = detail.json()
+        self.assertEqual(detail_data["scholarship"]["id"], self.record.id)
+        self.assertIsInstance(detail_data["issues"], list)
+        self.assertIsInstance(detail_data["references"]["saved_by_students"], int)
+        self.assertIsInstance(detail_data["audit"], list)
+
+        self.assertEqual(self.client.get("/admin/scholarships?limit=101").status_code, 422)
+        self.assertEqual(self.client.get("/admin/scholarships?verification=unknown").status_code, 422)
+        self.assertEqual(self.client.get("/admin/scholarships/0").status_code, 422)
+        self.assertEqual(self.client.get("/admin/scholarships/99999").status_code, 404)
+
+    def test_record_create_update_and_delete_http_contract(self):
+        created = self.client.post(
+            "/scholarships/",
+            json={"name": "HTTP Contract Award", "country": "France", "verification_status": "verified"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        created_data = created.json()
+        scholarship_id = created_data["id"]
+        self.assertIsInstance(scholarship_id, int)
+        self.assertEqual(created_data["name"], "HTTP Contract Award")
+        self.assertEqual(created_data["verification_status"], "unverified")
+        self.assertIsInstance(created_data["warnings"], list)
+
+        updated = self.client.put(
+            f"/scholarships/{scholarship_id}",
+            json={"name": "Updated HTTP Contract Award"},
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["name"], "Updated HTTP Contract Award")
+
+        self.assertEqual(
+            self.client.post("/scholarships/", json={"name": " "}).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.put(f"/scholarships/{scholarship_id}", json={"unexpected": True}).status_code,
+            422,
+        )
+
+        deleted = self.client.delete(f"/scholarships/{scholarship_id}")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(self.client.delete(f"/scholarships/{scholarship_id}").status_code, 404)
+
+    def test_verification_and_admin_record_actions_http_contract(self):
+        verification_response = self.client.post(
+            f"/admin/scholarships/{self.record.id}/verification",
+            json={
+                "status": "verified",
+                "basis": "official_source",
+                "source_url": GOOD_INFO,
+                "verified_on": "2026-10-01",
+                "notes": "Reviewed the official scholarship evidence.",
+                "evidence_reviewed": True,
+            },
+        )
+        self.assertEqual(verification_response.status_code, 200, verification_response.text)
+        self.assertEqual(
+            verification_response.json()["scholarship"]["verification_status"],
+            "verified",
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/admin/scholarships/{self.record.id}/verification",
+                json={"status": "verified", "basis": "secondary_only", "notes": "Not enough"},
+            ).status_code,
+            422,
+        )
+
+        flag_response = self.client.post(
+            f"/admin/scholarships/{self.record.id}/flags",
+            json={"flag": "outdated_source", "active": True, "note": "Review this source"},
+        )
+        self.assertEqual(flag_response.status_code, 200, flag_response.text)
+        self.assertIn("outdated_source", flag_response.json()["scholarship"]["data_flags"])
+        self.assertEqual(
+            self.client.post(
+                f"/admin/scholarships/{self.record.id}/flags",
+                json={"flag": "unsupported", "active": True},
+            ).status_code,
+            422,
+        )
+
+        with patch.object(
+            admin_api,
+            "check_url",
+            return_value={"url": GOOD_INFO, "status": "ok", "checked_at": datetime.now(timezone.utc).isoformat()},
+        ) as check_url:
+            source_check = self.client.post(
+                f"/admin/scholarships/{self.record.id}/source-check"
+            )
+        self.assertEqual(source_check.status_code, 200, source_check.text)
+        self.assertGreater(check_url.call_count, 0)
+        self.assertIsInstance(source_check.json()["scholarship"]["source_checks"], list)
+
+        archived = self.client.post(
+            f"/admin/scholarships/{self.record.id}/archive",
+            json={"reason": "The scholarship cycle has ended"},
+        )
+        self.assertEqual(archived.status_code, 200, archived.text)
+        self.assertTrue(archived.json()["scholarship"]["archived"])
+        restored = self.client.post(f"/admin/scholarships/{self.record.id}/restore")
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertFalse(restored.json()["scholarship"]["archived"])
+        self.assertEqual(
+            self.client.post(
+                f"/admin/scholarships/{self.record.id}/archive",
+                json={"reason": "bad"},
+            ).status_code,
+            422,
+        )
+
+    def test_duplicate_flagging_listing_and_comparison_http_contract(self):
+        flagged = self.client.post(
+            f"/admin/scholarships/{self.record.id}/duplicate",
+            json={"duplicate_of_id": self.other.id, "note": "Same award call"},
+        )
+        self.assertEqual(flagged.status_code, 200, flagged.text)
+        self.assertEqual(flagged.json()["scholarship"]["duplicate_of_id"], self.other.id)
+
+        pairs = self.client.get("/admin/scholarships/duplicates")
+        self.assertEqual(pairs.status_code, 200, pairs.text)
+        self.assertTrue(any(pair["kind"] == "flagged" for pair in pairs.json()))
+
+        comparison = self.client.get(
+            f"/admin/scholarships/duplicates/compare?first={self.record.id}&second={self.other.id}"
+        )
+        self.assertEqual(comparison.status_code, 200, comparison.text)
+        comparison_data = comparison.json()
+        self.assertEqual(comparison_data["first"]["id"], self.record.id)
+        self.assertEqual(comparison_data["second"]["id"], self.other.id)
+        self.assertIsInstance(comparison_data["differences"], list)
+        self.assertIsInstance(comparison_data["first_references"]["internal_links"], int)
+        self.assertEqual(
+            self.client.get(
+                f"/admin/scholarships/duplicates/compare?first=0&second={self.other.id}"
+            ).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/admin/scholarships/{self.record.id}/duplicate",
+                json={"duplicate_of_id": self.record.id, "note": "Self duplicate"},
+            ).status_code,
+            422,
+        )
+
+    def test_discovery_sources_http_contract_and_student_access(self):
+        response = self.client.get("/admin/scholarships/discovery-sources")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertIsInstance(payload["total"], int)
+        self.assertIsInstance(payload["items"], list)
+        source = payload["items"][0]
+        self.assertIsInstance(source["source_id"], str)
+        self.assertIsInstance(source["active"], bool)
+        self.assertIsInstance(source["review_candidates"], int)
+        self.assertIsInstance(source["pages_checked"], int)
+        sources_by_id = {item["source_id"]: item for item in payload["items"]}
+        self.assertTrue(sources_by_id["daad"]["active"])
+        self.assertTrue(sources_by_id["daad-helmut-schmidt"]["active"])
+        self.assertTrue(sources_by_id["turkiye-burslari"]["active"])
+        self.assertFalse(sources_by_id["polimi-merit-scholarships"]["active"])
+        self.assertFalse(sources_by_id["amsterdam-excellence"]["active"])
+
+        self.app.dependency_overrides[get_current_user] = lambda: self.student
+        self.assertEqual(
+            self.client.get("/admin/scholarships/discovery-sources").status_code,
+            403,
+        )
+
+
+class AdminApiBearerTokenHttpTests(Base_):
+    def setUp(self):
+        super().setUp()
+        self.app = FastAPI()
+        self.app.include_router(admin_api.router)
+        self.app.dependency_overrides[admin_api.get_db] = lambda: self.db
+        self.client = TestClient(self.app)
+
+    def tearDown(self):
+        self.client.close()
+        super().tearDown()
+
+    def test_missing_invalid_expired_student_and_admin_tokens(self):
+        path = "/admin/scholarships/summary"
+        self.assertEqual(self.client.get(path).status_code, 401)
+        self.assertEqual(
+            self.client.get(path, headers={"Authorization": "Bearer not-a-token"}).status_code,
+            401,
+        )
+
+        expired = jwt.encode(
+            {
+                "sub": str(self.admin.id),
+                "pwd": password_stamp(self.admin.hashed_password),
+                "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
+            },
+            SECRET_KEY,
+            algorithm=ALGORITHM,
+        )
+        self.assertEqual(
+            self.client.get(path, headers={"Authorization": f"Bearer {expired}"}).status_code,
+            401,
+        )
+
+        student_token = issue_session_token(self.student)
+        self.assertEqual(
+            self.client.get(path, headers={"Authorization": f"Bearer {student_token}"}).status_code,
+            403,
+        )
+
+        admin_token = issue_session_token(self.admin)
+        admin_response = self.client.get(
+            path,
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        self.assertEqual(admin_response.status_code, 200, admin_response.text)
+        self.assertIsInstance(admin_response.json()["total"], int)
 
 
 class AuthorizationTests(Base_):
@@ -131,6 +399,420 @@ class AuthorizationTests(Base_):
         for route in admin_api.router.routes:
             names = [item.name for item in route.dependant.query_params + route.dependant.path_params]
             self.assertFalse({"role", "user_id"} & set(names), route.path)
+
+
+class DiscoveryReviewRouteTests(Base_):
+    def setUp(self):
+        super().setUp()
+        run = ScholarshipDiscoveryRun(
+            id="review-run-test",
+            started_at=datetime.now(timezone.utc),
+            status="completed",
+            summary={},
+            source_results=[],
+        )
+        self.review_item = ScholarshipDiscoveryReviewItem(
+            candidate_fingerprint="a" * 64,
+            candidate_name="Review Candidate",
+            host_country="Finland",
+            source_id="test-source",
+            source_name="Test source",
+            source_classification="official_provider",
+            source_trust_basis="Test fixture",
+            source_url=GOOD_INFO,
+            extracted_values={"name": "Review Candidate"},
+            field_sources={
+                "name": {
+                    "source_id": "test-source",
+                    "source_name": "Test source",
+                    "source_classification": "official_provider",
+                    "source_url": GOOD_INFO,
+                },
+            },
+            evidence_excerpts=[{
+                "fingerprint": "b" * 64,
+                "source_id": "test-source",
+                "source_name": "Test source",
+                "source_classification": "official_provider",
+                "source_url": GOOD_INFO,
+                "extracted_values": {"name": "Review Candidate"},
+                "evidence_excerpts": {"name": "Evidence from the official call"},
+                "page_count": 1,
+            }],
+            missing_required_fields=["country", "degree_level"],
+            conflicting_values=[],
+            review_reason="Required fields are missing",
+            discovery_run_id=run.id,
+        )
+        self.db.add(run)
+        self.db.flush()
+        self.db.add(self.review_item)
+        self.db.commit()
+
+    def http_client(self, user):
+        app = FastAPI()
+        app.include_router(admin_api.router)
+        app.dependency_overrides[get_current_user] = lambda: user
+        app.dependency_overrides[admin_api.get_db] = lambda: self.db
+        return TestClient(app)
+
+    def add_publication(self):
+        publication = ScholarshipDiscoveryPublication(
+            id="00000000-0000-0000-0000-000000000001",
+            canonical_scholarship_id=self.record.id,
+            status="published",
+        )
+        self.db.add(publication)
+        self.db.flush()
+        version = ScholarshipDiscoveryPublicationVersion(
+            publication_id=publication.id,
+            review_item_id=self.review_item.id,
+            version_number=1,
+            candidate_name_at_approval=self.record.name,
+            host_country_at_approval=self.record.country,
+            approved_values={"name": self.record.name, "country": self.record.country},
+            source_evidence=[{"source_id": "test-source", "source_url": GOOD_INFO}],
+            approval_decision="accepted",
+            approved_by_id=self.admin.id,
+            approved_by_email=self.admin.email,
+            approved_at=datetime.now(timezone.utc),
+        )
+        self.db.add(version)
+        self.db.flush()
+        publication.current_version_id = version.id
+        self.db.add(ScholarshipDiscoveryPublicationSource(
+            publication_id=publication.id,
+            source_id="test-source",
+            source_name="Test source",
+            source_classification="official_provider",
+            source_trust_basis="Official provider page",
+            source_url=GOOD_INFO,
+            normalized_url=GOOD_INFO,
+            last_checked_at=datetime.now(timezone.utc),
+            last_successful_check_at=datetime.now(timezone.utc),
+            observed_content_hash="c" * 64,
+            source_check_status="succeeded",
+        ))
+        self.db.add(ScholarshipDiscoveryPublicationEvent(
+            publication_id=publication.id,
+            publication_version_id=version.id,
+            event_type="published",
+            new_status="published",
+            actor_id=self.admin.id,
+            actor_email=self.admin.email,
+            reason="Approved from the review queue",
+            event_data={"review_item_id": self.review_item.id},
+        ))
+        self.db.commit()
+        return publication
+
+    def test_student_cannot_list_or_resolve_discovery_reviews(self):
+        with self.http_client(self.student) as client:
+            response = client.get("/admin/scholarships/discovery-reviews")
+            self.assertEqual(response.status_code, 403)
+            response = client.post(
+                f"/admin/scholarships/discovery-reviews/{self.review_item.id}/review",
+                json={"decision": "reviewed"},
+            )
+            self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_list_review_and_reject_without_creating_scholarship(self):
+        with self.http_client(self.admin) as client:
+            response = client.get("/admin/scholarships/discovery-reviews?status=pending")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["total"], 1)
+            self.assertEqual(response.json()["items"][0]["id"], self.review_item.id)
+            item = response.json()["items"][0]
+            self.assertEqual(item["source_name"], "Test source")
+            self.assertEqual(item["discovery_run_id"], "review-run-test")
+            self.assertEqual(item["evidence_excerpts"][0]["evidence_excerpts"]["name"],
+                             "Evidence from the official call")
+            self.assertTrue(item["created_at"])
+            response = client.get("/admin/scholarships/discovery-reviews?q=Finland")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["total"], 1)
+            response = client.get("/admin/scholarships/discovery-reviews?q=missing-candidate")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["total"], 0)
+
+            response = client.post(
+                f"/admin/scholarships/discovery-reviews/{self.review_item.id}/review",
+                json={"decision": "reviewed"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["review_status"], "reviewed")
+
+            response = client.post(
+                f"/admin/scholarships/discovery-reviews/{self.review_item.id}/review",
+                json={"decision": "rejected", "note": "Evidence was insufficient"},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["review_status"], "rejected")
+
+        self.assertIsNone(
+            self.db.query(Scholarship).filter(Scholarship.name == "Review Candidate").first()
+        )
+
+    def test_admin_can_inspect_publication_versions_sources_and_lifecycle(self):
+        publication = self.add_publication()
+        with self.http_client(self.admin) as client:
+            response = client.get(
+                "/admin/scholarships/discovery-publications"
+                f"?status=published&scholarship_id={self.record.id}"
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["total"], 1)
+            item = payload["items"][0]
+            self.assertEqual(item["canonical_scholarship_id"], self.record.id)
+            self.assertEqual(item["scholarship_name"], self.record.name)
+            self.assertEqual(item["status"], "published")
+            self.assertEqual(item["current_version"]["review_item_id"], self.review_item.id)
+            self.assertEqual(item["current_version_number"], 1)
+            self.assertEqual(
+                item["current_version"]["approved_values"],
+                {"name": self.record.name, "country": self.record.country},
+            )
+            self.assertEqual(
+                item["current_version"]["source_evidence"][0]["source_url"],
+                GOOD_INFO,
+            )
+            self.assertEqual(item["versions"][0]["approval_decision"], "accepted")
+            self.assertTrue(item["created_at"])
+            self.assertTrue(item["updated_at"])
+            self.assertEqual(item["sources"][0]["source_name"], "Test source")
+            self.assertEqual(item["sources"][0]["source_check_status"], "succeeded")
+            self.assertTrue(item["sources"][0]["last_successful_check_at"])
+
+            events = client.get(
+                f"/admin/scholarships/discovery-publications/{publication.id}/events"
+            )
+            self.assertEqual(events.status_code, 200, events.text)
+            self.assertEqual(events.json()["items"][0]["reason"], "Approved from the review queue")
+
+            changed = client.post(
+                f"/admin/scholarships/discovery-publications/{publication.id}/lifecycle",
+                json={"decision": "revoke", "reason": "The source withdrew the award"},
+            )
+            self.assertEqual(changed.status_code, 200, changed.text)
+            self.assertEqual(changed.json()["status"], "revoked")
+            self.assertEqual(changed.json()["revocation_reason"], "The source withdrew the award")
+            self.assertEqual(
+                changed.json()["current_version"]["source_evidence"][0]["source_url"],
+                GOOD_INFO,
+            )
+
+            revoked = client.get(
+                "/admin/scholarships/discovery-publications?status=revoked"
+            )
+            self.assertEqual(revoked.status_code, 200, revoked.text)
+            self.assertEqual(revoked.json()["items"][0]["id"], publication.id)
+
+    def test_student_cannot_read_or_change_discovery_publications(self):
+        publication = self.add_publication()
+        with self.http_client(self.student) as client:
+            self.assertEqual(
+                client.get("/admin/scholarships/discovery-publications").status_code,
+                403,
+            )
+            self.assertEqual(
+                client.get(
+                    f"/admin/scholarships/discovery-publications/{publication.id}/events"
+                ).status_code,
+                403,
+            )
+            self.assertEqual(
+                client.post(
+                    f"/admin/scholarships/discovery-publications/{publication.id}/lifecycle",
+                    json={"decision": "revoke", "reason": "Unauthorized attempt"},
+                ).status_code,
+                403,
+            )
+
+    def test_admin_can_expire_withdraw_and_supersede_published_discoveries(self):
+        def add_unversioned_publication(record):
+            publication = ScholarshipDiscoveryPublication(
+                canonical_scholarship_id=record.id,
+                status="published",
+            )
+            self.db.add(publication)
+            self.db.flush()
+            return publication
+
+        def add_record(name):
+            fields = {
+                column.name: getattr(self.record, column.name)
+                for column in Scholarship.__table__.columns
+                if column.name != "id"
+            }
+            fields.update(name=name, record_version=1)
+            record = Scholarship(**fields)
+            self.db.add(record)
+            self.db.flush()
+            return record
+
+        expire_publication = add_unversioned_publication(self.record)
+        successor = add_unversioned_publication(self.other)
+        withdrawn_record = add_record("Lifecycle withdrawal record")
+        withdraw_publication = add_unversioned_publication(withdrawn_record)
+        superseded_record = add_record("Lifecycle superseded record")
+        supersede_publication = add_unversioned_publication(superseded_record)
+        self.db.commit()
+
+        decisions = [
+            (expire_publication, "expire", None, "Award cycle ended"),
+            (withdraw_publication, "withdraw", None, "Sponsor withdrew the award"),
+            (
+                supersede_publication,
+                "supersede",
+                successor.id,
+                "A newer publication replaces this one",
+            ),
+        ]
+        with self.http_client(self.admin) as client:
+            for publication, decision, successor_id, reason in decisions:
+                body = {"decision": decision, "reason": reason}
+                if successor_id is not None:
+                    body["superseded_by_publication_id"] = successor_id
+                response = client.post(
+                    f"/admin/scholarships/discovery-publications/{publication.id}/lifecycle",
+                    json=body,
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()["status"], {
+                    "expire": "expired",
+                    "withdraw": "withdrawn",
+                    "supersede": "superseded",
+                }[decision])
+
+    def test_link_and_publish_route_is_idempotent_for_the_same_existing_record(self):
+        canonical_before = (
+            self.record.name,
+            self.record.country,
+            self.record.provider,
+            self.record.degree_level,
+            self.record.record_version,
+        )
+        payload = {
+            "decision": "link_and_publish",
+            "link_to_scholarship_id": self.record.id,
+            "values": {
+                "name": self.record.name,
+                "country": self.record.country,
+                "degree_level": "Masters",
+            },
+        }
+        with patch("app.services.scholarship_discovery.prepare_review_evidence"):
+            with self.http_client(self.admin) as client:
+                reviewed = client.post(
+                    f"/admin/scholarships/discovery-reviews/{self.review_item.id}/review",
+                    json={"decision": "reviewed"},
+                )
+                self.assertEqual(reviewed.status_code, 200, reviewed.text)
+                first = client.post(
+                    f"/admin/scholarships/discovery-reviews/{self.review_item.id}/review",
+                    json=payload,
+                )
+                self.assertEqual(first.status_code, 200, first.text)
+                self.assertEqual(first.json()["review_status"], "accepted")
+                self.assertEqual(first.json()["accepted_scholarship_id"], self.record.id)
+                retry = client.post(
+                    f"/admin/scholarships/discovery-reviews/{self.review_item.id}/review",
+                    json=payload,
+                )
+                self.assertEqual(retry.status_code, 200, retry.text)
+
+        self.assertEqual(self.db.query(Scholarship).count(), 2)
+        self.db.refresh(self.record)
+        self.assertEqual(
+            (
+                self.record.name,
+                self.record.country,
+                self.record.provider,
+                self.record.degree_level,
+                self.record.record_version,
+            ),
+            canonical_before,
+        )
+        publication = self.db.query(ScholarshipDiscoveryPublication).one()
+        self.assertEqual(publication.canonical_scholarship_id, self.record.id)
+        self.assertEqual(self.db.query(ScholarshipDiscoveryPublicationVersion).count(), 1)
+
+
+class DiscoveryHistoryRouteTests(Base_):
+    def setUp(self):
+        super().setUp()
+        now = datetime.now(timezone.utc)
+        self.db.add_all([
+            ScholarshipDiscoveryRun(
+                id="history-success",
+                started_at=now - timedelta(days=2),
+                status="completed",
+                summary={
+                    "sources_attempted": 1,
+                    "sources_successfully_fetched": 1,
+                    "sources_failed": 0,
+                    "scholarships_discovered": 2,
+                },
+                source_results=[{"source_id": "good", "status": "fetched", "pages_fetched": 3}],
+            ),
+            ScholarshipDiscoveryRun(
+                id="history-partial",
+                started_at=now - timedelta(days=1),
+                status="completed",
+                summary={
+                    "sources_attempted": 2,
+                    "sources_successfully_fetched": 1,
+                    "sources_failed": 1,
+                    "scholarships_discovered": 4,
+                },
+                source_results=[
+                    {"source_id": "good", "status": "fetched", "pages_fetched": 2},
+                    {
+                        "source_id": "bad",
+                        "source_name": "Searchable source error",
+                        "status": "failed",
+                        "error": "Source request failed",
+                        "pages_fetched": 1,
+                    },
+                ],
+            ),
+            ScholarshipDiscoveryRun(
+                id="history-old-failure",
+                started_at=now - timedelta(days=45),
+                status="failed",
+                summary={"sources_failed": 1},
+                source_results=[],
+            ),
+        ])
+        self.db.commit()
+
+    def http_client(self):
+        app = FastAPI()
+        app.include_router(admin_api.router)
+        app.dependency_overrides[get_current_user] = lambda: self.admin
+        app.dependency_overrides[admin_api.get_db] = lambda: self.db
+        return TestClient(app)
+
+    def test_history_filters_and_page_totals_use_recorded_data(self):
+        with self.http_client() as client:
+            response = client.get(
+                "/admin/scholarships/discovery-history"
+                "?days=30&status=partial&q=Searchable%20source%20error"
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["total"], 1)
+            self.assertEqual(payload["items"][0]["run_id"], "history-partial")
+            self.assertEqual(payload["items"][0]["display_status"], "partial")
+            self.assertEqual(payload["items"][0]["pages_fetched"], 3)
+
+            response = client.get(
+                "/admin/scholarships/discovery-history?days=0&status=failed"
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["total"], 1)
+            self.assertEqual(response.json()["items"][0]["run_id"], "history-old-failure")
 
 
 class AdminDocumentTests(Base_):
@@ -1558,6 +2240,26 @@ class VerificationTests(Base_):
     def verify(self, **overrides):
         return admin_api.set_verification(verification(**overrides), scholarship_id=self.record.id, db=self.db, admin=self.admin)
 
+    def test_verification_queue_filter_includes_stale_verified_records_and_source_url(self):
+        self.record.verification_status = "verified"
+        self.record.verification_basis = "official_source"
+        self.record.last_verified_date = date.today() - timedelta(days=181)
+        self.record.official_info_url = GOOD_INFO
+        self.db.commit()
+
+        result = admin_api.list_records(
+            q="Alpha",
+            verification=None,
+            issue="verification_recheck",
+            archived=False,
+            skip=0,
+            limit=25,
+            db=self.db,
+        )
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["id"], self.record.id)
+        self.assertEqual(result["items"][0]["official_source_url"], GOOD_INFO)
+
     def test_verify(self):
         version = self.record.record_version
         self.verify()
@@ -1743,12 +2445,72 @@ class QualityTests(Base_):
         self.assertEqual((result["total"], result["verified"], result["archived"]), (2, 2, 0))
         self.assertEqual(result["sources_checked"], 0)
 
+    def test_discovery_sources_report_latest_status_and_review_candidates(self):
+        attempted_at = datetime.now(timezone.utc).isoformat()
+        run = ScholarshipDiscoveryRun(
+            id="source-run-test",
+            started_at=datetime.now(timezone.utc),
+            status="failed",
+            summary={},
+            source_results=[{
+                "source_id": "daad",
+                "status": "failed",
+                "attempted_at": attempted_at,
+                "pages_fetched": 2,
+            }],
+        )
+        review_item = ScholarshipDiscoveryReviewItem(
+            candidate_fingerprint="b" * 64,
+            candidate_name="DAAD Candidate",
+            source_id="daad",
+            source_name="DAAD Scholarship Database",
+            source_classification="government_authority",
+            source_url=GOOD_INFO,
+            review_reason="Incomplete candidate",
+            discovery_run_id=run.id,
+        )
+        self.db.add(run)
+        self.db.flush()
+        self.db.add(review_item)
+        self.db.commit()
+
+        result = AdminDiscoverySourcePage.model_validate(admin_api.discovery_sources(db=self.db))
+        daad = next(source for source in result.items if source.source_id == "daad")
+        self.assertEqual(daad.status, "failed")
+        self.assertEqual(daad.last_checked, attempted_at)
+        self.assertEqual(daad.pages_checked, 2)
+        self.assertEqual(daad.review_candidates, 1)
+        self.assertTrue(daad.active)
+
+    def test_discovery_sources_preserve_partial_failure_status(self):
+        run = ScholarshipDiscoveryRun(
+            id="partial-source-run-test",
+            started_at=datetime.now(timezone.utc),
+            status="completed",
+            summary={},
+            source_results=[{
+                "source_id": "daad",
+                "status": "partial_failure",
+                "attempted_at": datetime.now(timezone.utc).isoformat(),
+                "pages_fetched": 2,
+            }],
+        )
+        self.db.add(run)
+        self.db.commit()
+
+        result = AdminDiscoverySourcePage.model_validate(admin_api.discovery_sources(db=self.db))
+        daad = next(source for source in result.items if source.source_id == "daad")
+        self.assertEqual(daad.status, "partial_failure")
+
     def test_list_filters(self):
         self.other.last_verified_date = None
+        self.other.deadline = "Rolling"
         self.db.commit()
         self.assertEqual(admin_api.list_records(q="beta", verification=None, issue=None, archived=False, skip=0, limit=25, db=self.db)["total"], 1)
         self.assertEqual(admin_api.list_records(q=None, verification="unverified", issue=None, archived=False, skip=0, limit=25, db=self.db)["total"], 0)
-        self.assertEqual(admin_api.list_records(q=None, verification=None, issue="never_verified", archived=False, skip=0, limit=25, db=self.db)["items"][0]["name"], "Beta Award")
+        result = admin_api.list_records(q=None, verification=None, issue="never_verified", archived=False, skip=0, limit=25, db=self.db)
+        self.assertEqual(result["items"][0]["name"], "Beta Award")
+        self.assertEqual(result["items"][0]["deadline"], "Rolling")
 
 
 class SourceCheckTests(unittest.TestCase):
@@ -2288,7 +3050,7 @@ class ArchiveAndDeleteTests(Base_):
     def listed(self):
         rows = api.list_scholarships(country=None, funding_type=None, degree_level=None, pakistan_eligible_only=False, include_unverified=True,
                                      search=None, skip=0, limit=100, db=self.db)
-        return [row.name for row in rows]
+        return [row["name"] for row in rows]
 
     def test_archived_leaves_every_listing(self):
         self.archive()

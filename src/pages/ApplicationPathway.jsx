@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight, CalendarDays, Check, Clock3, ExternalLink, FileText, ListChecks,
-  Search, Sparkles, UserRound, Wallet,
+  Lock, Search, Sparkles, UserRound, Wallet,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
@@ -12,27 +12,40 @@ import {
 } from '../services/userStorage';
 import './ApplicationPathway.css';
 
-const JOURNEY_STEP_IDS = ['profile', 'explore', 'compare', 'finance', 'documents', 'deadlines'];
+const JOURNEY_STEP_IDS = [
+  'profile', 'explore', 'compare', 'finance', 'requirements', 'documents', 'deadlines', 'final-review',
+];
 
 function getJourneyPosition(index) {
-  const row = index < 3 ? 0 : 1;
-  return { row, column: row === 0 ? index : 5 - index };
+  const row = index < 4 ? 0 : 1;
+  return { row, column: row === 0 ? index : 7 - index };
 }
 
 function getJourneySegments(stepCount) {
+  const nodeEdgeOffset = 46;
   const points = Array.from({ length: stepCount }, (_, index) => {
     const { row, column } = getJourneyPosition(index);
     return {
-      x: ((column + 0.5) / 3) * 1000,
+      x: ((column + 0.5) / 4) * 1000,
       y: row === 0 ? 36 : 266,
     };
   });
 
   return points.slice(1).map((point, index) => {
     const previous = points[index];
-    if (previous.y === point.y) return `M ${previous.x} ${previous.y} L ${point.x} ${point.y}`;
-    const midpoint = (previous.y + point.y) / 2;
-    return `M ${previous.x} ${previous.y} C ${previous.x} ${midpoint}, ${point.x} ${midpoint}, ${point.x} ${point.y}`;
+    if (previous.y === point.y) {
+      const direction = Math.sign(point.x - previous.x);
+      const startX = previous.x + direction * nodeEdgeOffset;
+      const endX = point.x - direction * nodeEdgeOffset;
+      const bend = index % 2 === 0 ? -14 : 14;
+      const midpoint = (startX + endX) / 2;
+      return `M ${startX} ${previous.y} Q ${midpoint} ${previous.y + bend} ${endX} ${point.y}`;
+    }
+    const direction = Math.sign(point.y - previous.y);
+    const startY = previous.y + direction * nodeEdgeOffset;
+    const endY = point.y - direction * nodeEdgeOffset;
+    const midpoint = (startY + endY) / 2;
+    return `M ${previous.x} ${startY} C ${previous.x} ${midpoint}, ${point.x} ${midpoint}, ${point.x} ${endY}`;
   });
 }
 
@@ -69,8 +82,9 @@ function readCompletedStepIds(userId) {
 
 function JourneyStep({ step, onSelect, onToggle }) {
   const isComplete = step.status === 'done';
-  const StateIcon = isComplete ? Check : Clock3;
-  const statusLabel = isComplete ? 'Completed' : 'In Progress';
+  const isLocked = step.status === 'locked';
+  const StateIcon = isComplete ? Check : isLocked ? Lock : Clock3;
+  const statusLabel = isComplete ? 'Completed' : isLocked ? 'Locked' : 'In Progress';
   const StepIcon = step.icon;
 
   return (
@@ -97,8 +111,9 @@ function JourneyStep({ step, onSelect, onToggle }) {
           className="application-pathway-status-checkbox"
           type="checkbox"
           checked={isComplete}
+          disabled={isLocked}
           onChange={(event) => onToggle(step.id, event.target.checked)}
-          aria-label={`Mark ${step.title} as ${isComplete ? 'in progress' : 'completed'}`}
+          aria-label={isLocked ? `${step.title} is locked` : `Mark ${step.title} as ${isComplete ? 'in progress' : 'completed'}`}
         />
         <StateIcon size={12} aria-hidden="true" /> {statusLabel}
       </label>
@@ -189,14 +204,19 @@ function ApplicationPathwayContent({ userId }) {
       path: '/financial', icon: Wallet,
     },
     {
-      id: 'documents', number: 5, title: 'Prepare Scholarship Documents',
+      id: 'requirements', number: 5, title: 'Review Official Requirements',
+      description: 'Confirm eligibility and application requirements with each scholarship provider.',
+      path: '/scholarships', icon: Check,
+    },
+    {
+      id: 'documents', number: 6, title: 'Prepare Scholarship Documents',
       description: uploadedDocumentCount
         ? `${uploadedDocumentCount} document${uploadedDocumentCount === 1 ? '' : 's'} uploaded. Review provider requirements.`
         : 'Review provider requirements and prepare your scholarship documents.',
       path: '/documents', icon: FileText,
     },
     {
-      id: 'deadlines', number: 6, title: 'Review Scholarship Deadlines',
+      id: 'deadlines', number: 7, title: 'Review Scholarship Deadlines',
       description: deadlineLoadState === 'loading'
         ? 'Loading verified scholarship deadlines…'
         : deadlineLoadState === 'error'
@@ -207,9 +227,18 @@ function ApplicationPathwayContent({ userId }) {
       deadlines,
       path: '/scholarships', icon: CalendarDays,
     },
-  ].map((step) => ({
+    {
+      id: 'final-review', number: 8, title: 'Final Scholarship Review',
+      description: 'Review your shortlist, funding plan, documents, and verified deadlines.',
+      path: '/saved', icon: Check,
+    },
+  ];
+  const nextIncompleteIndex = steps.findIndex((step) => !completedStepIds.includes(step.id));
+  const stepsWithStatus = steps.map((step, index) => ({
     ...step,
-    status: completedStepIds.includes(step.id) ? 'done' : 'in-progress',
+    status: completedStepIds.includes(step.id)
+      ? 'done'
+      : index === nextIncompleteIndex ? 'in-progress' : 'locked',
   }));
   const handleToggleStep = (stepId, isComplete) => {
     setCompletedStepIds((current) => (
@@ -218,9 +247,10 @@ function ApplicationPathwayContent({ userId }) {
         : current.filter((id) => id !== stepId)
     ));
   };
-  const completedCount = steps.filter((step) => step.status === 'done').length;
-  const inProgressCount = steps.filter((step) => step.status === 'in-progress').length;
-  const nextStep = steps.find((step) => step.status !== 'done');
+  const completedCount = stepsWithStatus.filter((step) => step.status === 'done').length;
+  const inProgressCount = stepsWithStatus.filter((step) => step.status === 'in-progress').length;
+  const lockedCount = stepsWithStatus.filter((step) => step.status === 'locked').length;
+  const nextStep = stepsWithStatus.find((step) => step.status === 'in-progress');
   const handleStepSelect = (path) => navigate(path);
 
   return (
@@ -230,25 +260,27 @@ function ApplicationPathwayContent({ userId }) {
           <header className="application-pathway-hero">
             <div className="application-pathway-hero-copy">
               <p className="application-pathway-eyebrow"><Sparkles size={15} aria-hidden="true" /> Scholarship Journey</p>
-              <h1>Scholarship Preparation Journey</h1>
-              <p>Discover, compare, and prepare for scholarships with confidence.</p>
+              <h1>Scholarship Application Pathway</h1>
+              <p>Plan your next scholarship move and prepare with confidence.</p>
             </div>
             <img className="application-pathway-photo" src="/images/study-abroad-banner.jpg" alt="" aria-hidden="true" />
           </header>
 
           <section className="application-pathway-journey-panel" aria-label="Scholarship preparation journey steps">
+            <h2>Your Pathway</h2>
+            <p>Complete each step to build a confident scholarship plan.</p>
             <div className="application-pathway-journey is-overall-journey">
               <svg className="application-pathway-journey-line" viewBox="0 0 1000 420" preserveAspectRatio="none" aria-hidden="true">
                 <defs>
-                  <marker id="application-pathway-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
-                    <path d="M1 1 L7 4.5 L1 8" />
+                  <marker id="application-pathway-arrow" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse">
+                    <path d="M1 1 L16 9 L1 17" />
                   </marker>
                 </defs>
                 {getJourneySegments(steps.length).map((segment, index) => (
                   <path key={index} d={segment} markerEnd="url(#application-pathway-arrow)" />
                 ))}
               </svg>
-              {steps.map((step, index) => {
+              {stepsWithStatus.map((step, index) => {
                 const position = getJourneyPosition(index);
                 return (
                   <div
@@ -281,7 +313,7 @@ function ApplicationPathwayContent({ userId }) {
                   Go to {nextStep.title} <ArrowRight size={14} aria-hidden="true" />
                 </button>
               </div>
-            ) : <p className="application-pathway-all-complete">You’ve completed all six journey steps.</p>}
+            ) : <p className="application-pathway-all-complete">You’ve completed all eight journey steps.</p>}
           </section>
 
           <section className="application-pathway-card application-pathway-progress-card">
@@ -303,6 +335,7 @@ function ApplicationPathwayContent({ userId }) {
             <ul className="application-pathway-legend">
               <li><span className="is-complete" />Completed<strong>{completedCount}</strong></li>
               <li><span className="is-current" />In Progress<strong>{inProgressCount}</strong></li>
+              <li><span className="is-locked" />Locked<strong>{lockedCount}</strong></li>
             </ul>
           </section>
 

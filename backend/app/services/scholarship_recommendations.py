@@ -18,9 +18,12 @@ Hard exclusions: not eligible and closed deadline. An excluded scholarship has n
 so no number can present it as suitable.
 """
 from datetime import date
-from app.models.opportunity import Scholarship
 from app.services.eligibility_engine import _degree_rank
 from app.services.scholarship_eligibility import ELIGIBLE, MISSING, NOT_ELIGIBLE, NOT_EVALUATED, SATISFIED, evaluate_scholarship
+from app.services.student_scholarship_visibility import (
+    deduplicate_student_scholarships,
+    get_student_scholarships,
+)
 
 # ---- Every scoring constant lives here ----
 WEIGHTS = {"eligibility": 37.5, "funding": 25, "academic": 12.5, "deadline": 12.5, "evidence": 12.5}
@@ -369,19 +372,30 @@ def profile_gaps(items):
 
 def recommend_for_student(db, profile, include_unverified=False, today=None) -> dict:
     """Ranked scholarships for a student, with the excluded ones listed apart."""
-    query = db.query(Scholarship).filter(Scholarship.archived_at.is_(None)).order_by(Scholarship.id)
-    if not include_unverified:
-        query = query.filter(Scholarship.verification_status == "verified")
-    scholarships = query.all()
-    # A record flagged as a copy of another shown record would be the same opportunity twice
-    shown = {item.id for item in scholarships}
-    scholarships = [item for item in scholarships if item.duplicate_of_id not in shown]
-    items = [recommend_scholarship(item, profile, today) for item in scholarships]
+    records = get_student_scholarships(
+        db,
+        include_unverified=include_unverified,
+        today=today,
+    )
+    records = deduplicate_student_scholarships(records)
+    items = []
+    for record in records:
+        item = recommend_scholarship(record.scholarship, profile, today)
+        item["source_provenance"] = record.source_provenance()
+        items.append(item)
 
     ranked = [item for item in items if item["recommended"]]
     if include_unverified:
         # Opted-in records can be ranked for review without being marked recommended.
         ranked.extend(item for item in items if not item["recommended"] and item["category"] == "needs_verification")
+    else:
+        # Published discoveries are visible by default but never treated as verified matches.
+        ranked.extend(
+            item for item in items
+            if not item["recommended"]
+            and item["category"] == "needs_verification"
+            and "live_discovery" in item["source_provenance"]["sources"]
+        )
     ranked = sorted(ranked, key=_sort_key)
     for rank, item in enumerate(ranked, start=1):
         item["rank"] = rank
@@ -405,7 +419,8 @@ def recommend_for_student(db, profile, include_unverified=False, today=None) -> 
     }
 
 
-def recommend_one(db, scholarship, profile, today=None) -> dict:
+def recommend_one(db, scholarship, profile, today=None, source_provenance=None) -> dict:
     item = recommend_scholarship(scholarship, profile, today)
+    item["source_provenance"] = source_provenance
     del item["_gaps"]
     return item

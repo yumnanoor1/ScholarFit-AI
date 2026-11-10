@@ -259,6 +259,23 @@ def find_identity_record(db, name, country):
     )
 
 
+def find_possible_duplicate_records(db, name, country):
+    """Return same-country records whose names are close enough to require human review."""
+    normalized_country = _normalized_identity(country)
+    candidate_name = _fold_name(name)
+    if not normalized_country or not candidate_name:
+        return []
+
+    matches = []
+    for item in db.query(Scholarship).filter(Scholarship.archived_at.is_(None)).all():
+        if _normalized_identity(item.country) != normalized_country:
+            continue
+        existing_name = _fold_name(item.name)
+        if existing_name and len(candidate_name & existing_name) / len(candidate_name | existing_name) >= DUPLICATE_NAME_OVERLAP:
+            matches.append(item)
+    return matches
+
+
 def create_discovered_record(db, values: dict, evidence_note: str, evidence: dict, *, commit=True) -> Scholarship:
     """Create an explicitly unverified discovery candidate without impersonating an administrator."""
     _check_references(db, values)

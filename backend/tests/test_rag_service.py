@@ -1140,11 +1140,15 @@ class AnswerTests(RagFixture):
                 answer = rag.answer_question(self.db, QUESTION)
         self.assertFalse(answer.generated)
         self.assertNotIn("SECRET123", answer.text + "".join(logs.output))
+        self.assertIn("category=provider_error", "".join(logs.output))
         self.assertIn(self.source_url, answer.text)
 
     def test_gemini_answer_is_grounded_by_instruction_and_sources(self):
         client = self.fake_client(text="The grant covers full tuition and a living stipend.")
-        with patch.object(rag, "_gemini_client", return_value=client):
+        with (
+            patch.dict("os.environ", {"GEMINI_MODEL": "gemini-3-flash-preview"}, clear=True),
+            patch.object(rag, "_gemini_client", return_value=client),
+        ):
             answer = rag.answer_question(self.db, QUESTION)
         self.assertTrue(answer.generated)
         self.assertEqual(answer.chunks[0].citation_url, self.source_url)
@@ -1160,7 +1164,7 @@ class AnswerTests(RagFixture):
         self.assertIn(self.source_url, kwargs["contents"])
         self.assertNotIn(self.scholarship.official_url, kwargs["contents"])
         self.assertIn("page: pp. 3-4", kwargs["contents"])
-        self.assertEqual(kwargs["model"], "gemini-2.5-flash")
+        self.assertEqual(kwargs["model"], "gemini-3-flash-preview")
 
     def test_generated_sentence_can_match_sanitized_model_visible_evidence(self):
         original = "The grant covers tuition. See example.com/path?token=example-token."

@@ -475,6 +475,27 @@ class ScholarshipUpdate(ScholarshipWriteBase):
         return value.strip() if value is not None else None
 
 
+class ScholarshipDiscoverySource(BaseModel):
+    source_id: str
+    source_name: str
+    source_classification: str
+    source_url: Optional[str] = None
+    last_checked_at: Optional[datetime] = None
+    last_successful_check_at: Optional[datetime] = None
+
+    @field_serializer("source_url")
+    def sanitize_source_url(self, value):
+        return safe_source_url(value)
+
+
+class ScholarshipSourceProvenance(BaseModel):
+    sources: List[Literal["database", "live_discovery"]]
+    publication_status: Optional[Literal["published", "expired", "withdrawn", "revoked", "superseded"]] = None
+    publication_last_checked_at: Optional[datetime] = None
+    publication_last_successful_check_at: Optional[datetime] = None
+    discovery_sources: List[ScholarshipDiscoverySource] = Field(default_factory=list)
+
+
 class ScholarshipResponse(ScholarshipBase):
     id: int
     country: str = Field(..., min_length=1)
@@ -506,6 +527,10 @@ class ScholarshipResponse(ScholarshipBase):
         if value is None:
             return None
         return [safe for url in value if (safe := safe_source_url(url)) is not None]
+
+
+class StudentScholarshipResponse(ScholarshipResponse):
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
 
 
 class ScholarshipWriteResult(ScholarshipResponse):

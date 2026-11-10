@@ -5,11 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import StudentFinancialPlan, StudentProfile, User
-from app.models.opportunity import Scholarship
 from app.core.permissions import require_complete_profile
 from app.schemas.eligibility import ProfileImprovementResult, ScholarshipEligibilityResult
 from app.services.profile_improvement import build_guidance, in_preferred_countries
 from app.services.scholarship_eligibility import evaluate_scholarship
+from app.services.student_scholarship_visibility import (
+    get_student_scholarship,
+    get_student_scholarships,
+)
 
 router = APIRouter(prefix="/eligibility", tags=["Eligibility"])
 
@@ -40,10 +43,15 @@ def check_all_scholarships(
     """Check your profile against every scholarship. Same visibility rule as GET /scholarships/:
     unverified records are left out unless include_unverified=true."""
     profile = _get_profile(db, current_user)
-    query = db.query(Scholarship).filter(Scholarship.archived_at.is_(None))
-    if not include_unverified:
-        query = query.filter(Scholarship.verification_status == "verified")
-    results = [evaluate_scholarship(scholarship, profile) for scholarship in query.all()]
+    records = get_student_scholarships(
+        db,
+        include_unverified=include_unverified,
+    )
+    results = []
+    for record in records:
+        result = evaluate_scholarship(record.scholarship, profile)
+        result["source_provenance"] = record.source_provenance()
+        results.append(result)
     if eligible_only:
         results = [r for r in results if r["eligible"]]
     results.sort(key=lambda r: (SCHOLARSHIP_STATUS_ORDER[r["status"]], r["scholarship_name"]))
@@ -58,10 +66,12 @@ def check_one_scholarship(
 ):
     """Check your profile against one scholarship (verified or not)."""
     profile = _get_profile(db, current_user)
-    scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-    if not scholarship:
+    record = get_student_scholarship(db, scholarship_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Scholarship not found")
-    return evaluate_scholarship(scholarship, profile)
+    result = evaluate_scholarship(record.scholarship, profile)
+    result["source_provenance"] = record.source_provenance()
+    return result
 
 
 @router.get("/improvements", response_model=ProfileImprovementResult)
@@ -72,34 +82,41 @@ def profile_improvements(
 ):
     """Scholarship-focused guidance from the signed-in student's profile and eligibility results."""
     profile = _get_profile(db, current_user)
-    scholarships = []
+    records = []
     if scholarship_id is not None:
-        scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-        if not scholarship:
+        record = get_student_scholarship(db, scholarship_id)
+        if not record:
             raise HTTPException(status_code=404, detail="Scholarship not found")
-        scholarships = [scholarship]
+        records = [record]
         scope = {"type": "selected", "description": "Your selected opportunity"}
     else:
-        all_scholarships = (
-            db.query(Scholarship)
-            .filter(Scholarship.verification_status == "verified", Scholarship.archived_at.is_(None))
-            .order_by(Scholarship.id)
-            .all()
-        )
+        all_records = get_student_scholarships(db)
         preferred = [c.strip().lower() for c in (profile.preferred_countries or "").split(",") if c.strip()]
-        scholarships = [s for s in all_scholarships if in_preferred_countries(s.country, preferred)]
-        if scholarships:
+        records = [
+            record for record in all_records
+            if in_preferred_countries(record.scholarship.country, preferred)
+        ]
+        if records:
             scope = {"type": "preferred_countries", "description": f"Opportunities in {', '.join(c.strip() for c in profile.preferred_countries.split(','))}"}
         else:
-            scholarships = all_scholarships
-            scope = {"type": "all", "description": "All verified scholarships"}
+            records = all_records
+            scope = {
+                "type": "all",
+                "description": "All verified canonical scholarships and published discoveries",
+            }
 
     plan = db.query(StudentFinancialPlan).filter(StudentFinancialPlan.user_id == current_user.id).first()
     has_budget = profile.budget_usd is not None or (plan is not None and plan.budget_amount is not None)
     return {
         "scope": scope,
         **build_guidance(
-            profile, scholarships, has_budget=has_budget,
+            profile,
+            [record.scholarship for record in records],
+            has_budget=has_budget,
             include_optional=scope["type"] != "selected",
+            source_provenance_by_id={
+                record.scholarship.id: record.source_provenance()
+                for record in records
+            },
         ),
     }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ArrowLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { adminApi } from '../services/adminApi';
 import {
@@ -305,7 +305,10 @@ export default function AdminScholarshipEdit() {
 
       {FORM_SECTIONS.map((section, index) => (
         <details className="admin-card" key={section.id} open={index === 0}>
-          <summary>{section.title}</summary>
+          <summary className="admin-chevron-summary">
+            <ChevronRight size={16} aria-hidden="true" />
+            {section.title}
+          </summary>
           <div className="admin-grid">
             {section.fields.map((field) => (
               <FormField

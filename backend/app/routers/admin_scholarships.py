@@ -18,7 +18,11 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from app.core.config import scholarship_discovery_settings
 from app.core.permissions import require_admin
 from app.database import get_db
-from app.models.opportunity import Scholarship, ScholarshipAuditLog
+from app.models.opportunity import (
+    Scholarship,
+    ScholarshipAuditLog,
+    ScholarshipDuplicateDismissal,
+)
 from app.models.scholarship_discovery import (
     ScholarshipDiscoveryReviewItem,
     ScholarshipDiscoveryRun,
@@ -45,12 +49,15 @@ from app.schemas.admin import (
     AdminDiscoveryReviewItem, AdminDiscoveryReviewPage, AdminDiscoveryReviewWrite,
     AdminDocumentReviewWrite, AdminDocumentVersionDetail, AdminRowPage,
     AdminSourceDocumentPage, AdminSourceDocumentSummary, AdminSummary, ArchiveWrite, DuplicateComparison,
-    DuplicatePair, DuplicateWrite, FlagWrite, VerificationWrite,
+    DuplicateDismissWrite, DuplicatePair, DuplicateWrite, FlagWrite, VerificationWrite,
 )
 from app.schemas.opportunity import ScholarshipResponse
-from app.schemas.scholarship_import import ScholarshipImportDraft
+from app.schemas.scholarship_import import (
+    ScholarshipImportDraft,
+    ScholarshipImportTextWrite,
+)
 from app.services.scholarship_quality import (
-    duplicate_pairs, field_changes, find_conflicts, find_issues,
+    dismissal_key, duplicate_pairs, field_changes, find_conflicts, find_issues,
     record_audit, reference_counts, set_archived,
     update_scholarship_if_current,
 )
@@ -70,7 +77,11 @@ from app.services.source_verification import (
 from app.services.source_url_safety import safe_source_url, safe_source_urls_in_text
 from app.services import rag_service
 from app.services import scholarship_document_indexing as document_indexing
-from app.services.scholarship_import import ScholarshipImportError, extract_scholarship_source
+from app.services.scholarship_import import (
+    STRUCTURED_IMPORT_CATEGORIES,
+    ScholarshipImportError,
+    extract_scholarship_source,
+)
 
 # Every route needs an admin, whatever is added here later
 router = APIRouter(prefix="/admin/scholarships", tags=["Admin Scholarships"], dependencies=[Depends(require_admin)])
@@ -236,7 +247,57 @@ async def extract_scholarship_import(request: Request):
                 )
             return result
     except ScholarshipImportError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise _import_http_error(exc) from exc
+
+
+def _import_http_error(exc: ScholarshipImportError) -> HTTPException:
+    """The HTTP error for an import failure.
+
+    A refusal by the official site gets a structured body carrying its
+    category and the status the site returned, so the page can offer pasting
+    the text or uploading the PDF instead of showing a bare gateway error.
+
+    A page too long to extract even in sections, and a provider that is busy,
+    carry their own categories the same way, because both leave the
+    administrator something useful to do.
+
+    Every other failure keeps the plain string detail it has always returned:
+    provider and validation errors have callers relying on that shape, and
+    widening them here would change an API nobody asked to change.
+    """
+    if exc.error_category in STRUCTURED_IMPORT_CATEGORIES:
+        return HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "category": exc.error_category,
+                "http_status": exc.http_status,
+                "message": str(exc),
+            },
+        )
+    return HTTPException(status_code=exc.status_code, detail=str(exc))
+
+
+@router.post("/import/extract-text", response_model=ScholarshipImportDraft)
+async def extract_scholarship_import_text(data: ScholarshipImportTextWrite):
+    """Run the same extraction and evidence checks over text an admin pasted.
+
+    For a site that blocks automatic reading: the administrator copies the page
+    and pastes it here. Nothing is fetched, so there is no robots rule and no
+    HTTP status; the source URL is stored with it as provenance. Every
+    evidence check the URL path applies is applied here too, against the
+    pasted text.
+    """
+    settings = scholarship_discovery_settings()
+    try:
+        return await run_in_threadpool(
+            extract_scholarship_source,
+            "pasted_text",
+            text=data.text,
+            url=data.url,
+            settings=settings,
+        )
+    except ScholarshipImportError as exc:
+        raise _import_http_error(exc) from exc
 
 
 def _version_summary(version: ScholarshipDocumentVersion) -> dict:
@@ -579,7 +640,7 @@ def _discovery_run_history(
     )
 
 
-def _execute_manual_discovery(run_id: str, on_run_started, on_stage):
+def _execute_manual_discovery(run_id: str, on_run_started, on_stage, on_failure=None):
     from discover_scholarships import main
 
     return main(
@@ -587,6 +648,7 @@ def _execute_manual_discovery(run_id: str, on_run_started, on_stage):
         run_id=run_id,
         on_run_started=on_run_started,
         on_stage=on_stage,
+        on_failure=on_failure,
     )
 
 
@@ -779,12 +841,25 @@ def start_manual_discovery(db: Session = Depends(get_db)):
         def mark_stage(stage: str) -> None:
             _update_manual_discovery_state(stage=stage)
 
+        def mark_failure(message: str) -> None:
+            worker_state = _manual_discovery_state_snapshot()
+            stage = worker_state["stage"]
+            if stage and stage != "waiting_for_worker_start":
+                message = f"{message} Stage: {stage}."
+            _update_manual_discovery_state(
+                status="failed",
+                finished_at=datetime.now(timezone.utc),
+                stage="failed",
+                error=message,
+            )
+
         _update_manual_discovery_state(status="starting", stage="waiting_for_worker_start")
         worker = _manual_discovery_executor.submit(
             _execute_manual_discovery,
             run_id,
             mark_started,
             mark_stage,
+            mark_failure,
         )
         submitted = True
 
@@ -796,11 +871,17 @@ def start_manual_discovery(db: Session = Depends(get_db)):
                         "Manual scholarship discovery worker failed: %s",
                         type(error).__name__,
                     )
+                    worker_state = _manual_discovery_state_snapshot()
+                    error_summary = (
+                        worker_state["error"]
+                        if worker_state["run_id"] == run_id and worker_state["error"]
+                        else f"Discovery could not start ({type(error).__name__})."
+                    )
                     _update_manual_discovery_state(
                         status="failed",
                         finished_at=datetime.now(timezone.utc),
                         stage="failed",
-                        error=type(error).__name__,
+                        error=error_summary,
                     )
                 else:
                     exit_code = completed_worker.result()
@@ -812,7 +893,12 @@ def start_manual_discovery(db: Session = Depends(get_db)):
                         error_summary = "DISCOVERY_ADVISORY_LOCK_ACTIVE"
                     else:
                         status = "failed"
-                        error_summary = f"Discovery worker exited with status {exit_code}."
+                        worker_state = _manual_discovery_state_snapshot()
+                        error_summary = (
+                            worker_state["error"]
+                            if worker_state["run_id"] == run_id and worker_state["error"]
+                            else f"Discovery worker exited with status {exit_code}."
+                        )
                     _update_manual_discovery_state(
                         status=status,
                         finished_at=datetime.now(timezone.utc),
@@ -862,9 +948,18 @@ def start_manual_discovery(db: Session = Depends(get_db)):
             exit_code = worker.result()
         except Exception as exc:
             logger.error("Manual discovery failed before run creation: %s", type(exc).__name__)
+            worker_state = _manual_discovery_state_snapshot()
+            failure_message = (
+                worker_state["error"]
+                if worker_state["run_id"] == run_id and worker_state["error"]
+                else f"Discovery could not start ({type(exc).__name__})."
+            )
             raise HTTPException(
                 status_code=503,
-                detail="Scholarship discovery could not be started.",
+                detail={
+                    "code": "DISCOVERY_START_FAILED",
+                    "message": failure_message,
+                },
             ) from exc
         if exit_code == 3:
             raise HTTPException(
@@ -874,11 +969,35 @@ def start_manual_discovery(db: Session = Depends(get_db)):
                     "message": "Another discovery worker currently holds the PostgreSQL advisory lock.",
                 },
             )
+        worker_state = _manual_discovery_state_snapshot()
+        failure_message = (
+            worker_state["error"]
+            if worker_state["run_id"] == run_id and worker_state["error"]
+            else f"Discovery worker exited with status {exit_code}."
+        )
         raise HTTPException(
             status_code=503,
-            detail="Scholarship discovery could not be started.",
+            detail={
+                "code": "DISCOVERY_START_FAILED",
+                "message": failure_message,
+            },
         )
     return AdminDiscoveryRunStart(run_id=started_run_id, status="running")
+
+
+def _reading_database_identity(db: Session) -> dict:
+    """Name, host and port of the database this request reads. No credentials."""
+    from app.core.config import database_identity
+
+    try:
+        identity = database_identity(db.get_bind().url)
+    except Exception:
+        identity = {"database": "unknown", "host": "unknown", "port": 0}
+    return {
+        "database_name": identity["database"],
+        "database_host": identity["host"],
+        "database_port": identity["port"],
+    }
 
 
 @router.get("/discovery-monitoring", response_model=AdminDiscoveryMonitoring)
@@ -962,6 +1081,7 @@ def discovery_monitoring(db: Session = Depends(get_db)):
             .scalar()
             or 0
         ),
+        **_reading_database_identity(db),
     )
 
 
@@ -1291,10 +1411,74 @@ def review_discovery_item(
         raise
 
 
+def _dismissed_duplicate_keys(db: Session) -> set:
+    return {
+        dismissal_key(row.first_id, row.second_id)
+        for row in db.query(ScholarshipDuplicateDismissal).all()
+    }
+
+
 @router.get("/duplicates", response_model=List[DuplicatePair])
 def duplicates(db: Session = Depends(get_db)):
-    """Flagged and suspected duplicate pairs. Nothing is merged."""
-    return duplicate_pairs(db.query(Scholarship).order_by(Scholarship.id).all())
+    """Flagged and suspected duplicate pairs. Nothing is merged.
+
+    A pair an administrator dismissed keeps status "dismissed" instead of
+    being suggested again.
+    """
+    return duplicate_pairs(
+        db.query(Scholarship).order_by(Scholarship.id).all(),
+        dismissed=_dismissed_duplicate_keys(db),
+    )
+
+
+@router.post("/duplicates/dismiss", response_model=List[DuplicatePair])
+def dismiss_duplicate_pair(
+    data: DuplicateDismissWrite,
+    db: Session = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """Records that a pair is not a duplicate, so it stops being suggested.
+
+    Neither record changes: no duplicate flag is set or cleared and nothing is
+    archived. Both records get an audit entry, because either one could be
+    looked at later to explain why the suggestion went away.
+    """
+    if data.first_id == data.second_id:
+        raise HTTPException(status_code=422, detail="Choose two different records")
+    first_id, second_id = dismissal_key(data.first_id, data.second_id)
+    # Both must exist; _record raises 404 otherwise.
+    _record(db, first_id)
+    _record(db, second_id)
+    existing = (
+        db.query(ScholarshipDuplicateDismissal)
+        .filter(
+            ScholarshipDuplicateDismissal.first_id == first_id,
+            ScholarshipDuplicateDismissal.second_id == second_id,
+        )
+        .one_or_none()
+    )
+    if existing is None:
+        db.add(ScholarshipDuplicateDismissal(
+            first_id=first_id,
+            second_id=second_id,
+            reason=data.note,
+            actor_id=admin.id,
+            actor_email=admin.email,
+        ))
+        for scholarship_id, other_id in ((first_id, second_id), (second_id, first_id)):
+            record_audit(
+                db,
+                scholarship_id,
+                "duplicate_dismissed",
+                admin,
+                {"not_a_duplicate_of": [None, other_id]},
+                data.note,
+            )
+        db.commit()
+    return duplicate_pairs(
+        db.query(Scholarship).order_by(Scholarship.id).all(),
+        dismissed=_dismissed_duplicate_keys(db),
+    )
 
 
 @router.get("/duplicates/compare", response_model=DuplicateComparison)

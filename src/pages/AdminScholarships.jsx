@@ -1,29 +1,93 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  Activity, ArrowLeft, ArrowRight, BookOpen, CircleCheck, Clock3, Globe2, ListChecks, Plus, Radar, Search, ShieldAlert,
+  Activity, ArrowLeft, ArrowRight, BookOpen, Building2, ChevronDown, ChevronRight, CircleCheck, ClipboardList, Clock3, CopyCheck,
+  ExternalLink, Globe2, Info,
+  ListChecks, Plus, Radar, Search, ShieldAlert, X,
 } from 'lucide-react';
+import DiscoveryAnalyticsChart from '../components/admin/DiscoveryAnalyticsChart.jsx';
 import { useAuth } from '../context/AuthContext';
 import { adminApi } from '../services/adminApi';
 import {
+  formatAbsoluteTime,
+  formatDiscoveryDuration,
   formatDiscoverySourceFailure,
+  getDiscoverySourceFailureDetails,
   formatDiscoveryWorkerError,
+  formatFailureCount,
+  formatRelativeTime,
+  formatTimeWithRelative,
+  getDiscoveryNextStep,
+  getDiscoveryStatusLine,
   getDiscoveryWorkerStatusLabel,
+  getLastFailureNote,
+  getLastRunSummary,
+  getManualRunPlan,
+  getNextScheduledRunText,
+  getDiscoveryAnalyticsCounts,
+  getRunProgress,
   isDiscoveryWorkerActive,
 } from '../services/discoveryMonitoringState.js';
 import AdminScholarshipPublications from './AdminScholarshipPublications.jsx';
 import {
+  applyCandidateDraft,
+  buildBulkDecisionSteps,
+  buildEditableCandidateDraft,
   buildReviewDecisionPayload,
+  canResolveSelection,
   createActionGuard,
+  countExtractedFields,
   createLatestRequestGuard,
+  DUPLICATE_REASON_TEXT,
+  EDITABLE_CANDIDATE_FIELDS,
+  findPossibleDuplicates,
+  getExtractedFieldGroups,
+  getCandidateDeadline,
+  getCandidateEvidenceStrength,
   getDiscoveryCandidateCounts,
+  getDuplicateResolution,
+  getEvidenceQuoteFor,
   getReviewDecisionAnnouncement,
   getReviewQueueViewState,
+  getReviewStatusLabel,
+  getRunLabel,
+  getSourceDomain,
+  groupReviewReasons,
+  hasCandidateEdits,
+  isResolvableReviewItem,
+  REVIEW_STATUS_LABELS,
 } from '../services/discoveryReviewState.js';
+import {
+  buildComparisonView,
+  describeResolveAction,
+  filterDuplicatePairs,
+  getDuplicateCounts,
+  getDuplicateFilterOptions,
+  getDuplicateStatusLabel,
+  getPairKey,
+  getPairMetaLine,
+  getPairRowLabel,
+  getResolveActions,
+  getResolveAnnouncement,
+} from '../services/duplicatesState.js';
 import { ISSUE_FILTERS } from '../services/adminScholarshipForm';
+import { humanizeEnum } from '../services/textFormat.js';
 import './AdminScholarships.css';
 
 const PAGE_SIZE = 25;
+// Discovery runs take minutes per source; polling faster only adds requests.
+const MONITORING_POLL_MS = 10000;
+const REVIEW_FILTERS = [
+  { value: 'all', label: 'All' },
+  ...Object.entries(REVIEW_STATUS_LABELS).map(([value, label]) => ({
+    value,
+    label: value === 'pending' ? 'Needs Review' : label,
+  })),
+];
+
+function formatReviewCount(value) {
+  return Number.isInteger(value) && value >= 0 ? value.toLocaleString() : '—';
+}
 
 function RetryNotice({ message, onRetry }) {
   return (
@@ -33,23 +97,124 @@ function RetryNotice({ message, onRetry }) {
   );
 }
 
+/** A value clamped to three lines, with "Show more" when it overflows. */
+function ClampedValue({ text, isLink }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return <span className="admin-duplicates-blank">—</span>;
+  // Long enough that the clamp will bite; the exact height is the CSS's job.
+  const clampable = text.length > 180;
+  if (isLink) {
+    return (
+      <>
+        <a
+          className={`admin-duplicates-value${clampable && !expanded ? ' is-clamped' : ''}`}
+          href={text}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {text}
+        </a>
+        {clampable && (
+          <button
+            type="button"
+            className="admin-link admin-duplicates-show-more"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
+        )}
+      </>
+    );
+  }
+  return (
+    <>
+      <span className={`admin-duplicates-value${clampable && !expanded ? ' is-clamped' : ''}`}>
+        {text}
+      </span>
+      {clampable && (
+        <button
+          type="button"
+          className="admin-link admin-duplicates-show-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </>
+  );
+}
+
+const comparisonSectionLabels = {
+  Basics: 'Basic Information',
+  Eligibility: 'Eligibility Requirements',
+  Funding: 'Funding Information',
+  Deadlines: 'Application Information',
+  Links: 'Additional Details',
+};
+
+/** One collapsible field group. Open when it holds a difference. */
+function ComparisonGroup({ group, defaultOpen }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const bodyId = `compare-group-${group.label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+  return (
+    <>
+      <tbody className={`admin-duplicates-group-heading${open ? ' is-open' : ''}`}>
+        <tr>
+          <th colSpan={3} scope="rowgroup">
+            <button
+              type="button"
+              className="admin-duplicates-group-row"
+              aria-expanded={open}
+              aria-controls={bodyId}
+              onClick={() => setOpen((value) => !value)}
+            >
+              <span className="admin-duplicates-group-label">{group.label}</span>
+              {group.differenceCount > 0 && (
+                <span className="admin-duplicates-group-count">{group.differenceCount}</span>
+              )}
+              <ChevronDown size={15} className="admin-duplicates-group-chevron" aria-hidden="true" />
+            </button>
+          </th>
+        </tr>
+      </tbody>
+      <tbody id={bodyId} className="admin-duplicates-group-body" hidden={!open}>
+        {group.rows.map((row) => (
+          <tr key={row.key} className={row.differs ? 'is-different' : 'is-same'}>
+            <th scope="row" title={row.differs ? 'Values differ' : undefined}>
+              {row.key === 'name' ? 'Scholarship name' : row.label}
+            </th>
+            <td><ClampedValue text={row.firstDisplay} isLink={row.isLink} /></td>
+            <td><ClampedValue text={row.secondDisplay} isLink={row.isLink} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </>
+  );
+}
+
 function Duplicates({ token }) {
   const [pairs, setPairs] = useState(null);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('undecided');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(0);
-  const [selectedPair, setSelectedPair] = useState(null);
+  const [selectedKey, setSelectedKey] = useState(null);
   const [comparison, setComparison] = useState(null);
+  // 2: differences only, by default.
+  const [onlyDifferences, setOnlyDifferences] = useState(true);
   const [note, setNote] = useState('');
-  const [message, setMessage] = useState('');
+  const [pendingAction, setPendingAction] = useState(null);
+  const [toast, setToast] = useState(null);
   const [error, setError] = useState('');
-  const [compareError, setCompareError] = useState('');
+  // Carries the pair it belongs to, so a stale message cannot show against a
+  // different pair.
+  const [compareFailure, setCompareFailure] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [compareLoading, setCompareLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [listGuard] = useState(createLatestRequestGuard);
   const [compareGuard] = useState(createLatestRequestGuard);
+  const [actionGuard] = useState(createActionGuard);
 
   const load = useCallback(() => {
     const requestId = listGuard.begin();
@@ -57,6 +222,7 @@ function Duplicates({ token }) {
       .then((data) => {
         if (listGuard.isCurrent(requestId)) {
           setPairs(data);
+          setError('');
           setLoading(false);
         }
       })
@@ -76,255 +242,492 @@ function Duplicates({ token }) {
     };
   }, [compareGuard, listGuard, load, refresh]);
 
-  const open = (pair) => {
-    setMessage('');
-    setSelectedPair(pair);
-    setComparison(null);
-    setCompareError('');
-    setCompareLoading(true);
+  const counts = getDuplicateCounts(pairs);
+  const visiblePairs = filterDuplicatePairs(pairs, { filter, search });
+
+  // 3: auto-select, derived rather than synced. The first visible pair is
+  // used whenever the stored key is not in the current list, so the compare
+  // panel is never empty while pairs exist and no effect has to correct it.
+  const activeKey = visiblePairs.some((pair) => getPairKey(pair) === selectedKey)
+    ? selectedKey
+    : (visiblePairs[0] ? getPairKey(visiblePairs[0]) : null);
+  const selectedPair = visiblePairs.find((pair) => getPairKey(pair) === activeKey) || null;
+  const firstId = selectedPair?.first_id ?? null;
+  const secondId = selectedPair?.second_id ?? null;
+
+  // The comparison follows the selection. Nothing is set synchronously here:
+  // loading and failure are derived below from what has arrived.
+  useEffect(() => {
+    if (firstId === null || secondId === null) return undefined;
     const requestId = compareGuard.begin();
-    adminApi.compare(token, pair.first_id, pair.second_id)
+    const key = getPairKey({ first_id: firstId, second_id: secondId });
+    adminApi.compare(token, firstId, secondId)
       .then((data) => {
-        if (compareGuard.isCurrent(requestId)) {
-          setComparison({ ...data, pair });
-          setCompareLoading(false);
-        }
+        if (compareGuard.isCurrent(requestId)) setComparison({ ...data, key });
       })
       .catch((failure) => {
         if (compareGuard.isCurrent(requestId)) {
-          setCompareError(failure.message);
-          setCompareLoading(false);
+          setCompareFailure({ key, message: failure.message });
         }
       });
-  };
-  const decide = async (recordId, target) => {
+    return () => compareGuard.invalidate();
+  }, [compareGuard, firstId, secondId, token, refresh]);
+
+  const comparisonFor = comparison && comparison.key === activeKey ? comparison : null;
+  const compareError = compareFailure && compareFailure.key === activeKey
+    ? compareFailure.message
+    : '';
+  const compareLoading = Boolean(selectedPair) && !comparisonFor && !compareError;
+  const view = comparisonFor
+    ? buildComparisonView(comparisonFor.first, comparisonFor.second, { onlyDifferences })
+    : null;
+  const comparisonSections = view
+    ? view.groups.map((group) => ({ ...group, label: comparisonSectionLabels[group.label] || group.label }))
+    : [];
+
+  const runAction = async () => {
+    if (!pendingAction || !selectedPair) return;
+    if (actionGuard.isActive()) return;
+    if (!actionGuard.tryStart()) return;
+    const action = pendingAction;
     setSaving(true);
     setError('');
-    setMessage('');
     try {
-      await adminApi.markDuplicate(token, recordId, { duplicate_of_id: target, note });
-      setMessage(target ? `#${recordId} is now flagged as a duplicate of #${target}. Nothing was merged.` : `The duplicate flag on #${recordId} was cleared.`);
-      setSelectedPair(null);
-      setComparison(null);
+      if (action.key === 'dismiss') {
+        await adminApi.dismissDuplicatePair(token, {
+          first_id: selectedPair.first_id,
+          second_id: selectedPair.second_id,
+          ...(note.trim() ? { note: note.trim() } : {}),
+        });
+      } else if (action.key === 'archive') {
+        await adminApi.archive(token, action.recordId, note.trim() || 'Duplicate record');
+      } else {
+        await adminApi.markDuplicate(token, action.recordId, {
+          duplicate_of_id: action.targetId,
+          ...(note.trim() ? { note: note.trim() } : {}),
+        });
+      }
+      setToast({ tone: 'success', text: getResolveAnnouncement(action) });
+      setPendingAction(null);
       setNote('');
-      setPage(0);
       setRefresh((value) => value + 1);
     } catch (failure) {
-      setError(failure.message);
+      setToast({ tone: 'error', text: failure.message });
+      setPendingAction(null);
     } finally {
+      actionGuard.finish();
       setSaving(false);
     }
   };
 
-  const filteredPairs = (pairs || []).filter((pair) => {
-    const matchesFilter = filter === 'all'
-      || (filter === 'needs_review' && pair.kind === 'suspected')
-      || (filter === 'flagged' && pair.kind === 'flagged');
-    const query = search.trim().toLowerCase();
-    const matchesSearch = !query || `${pair.first_name} ${pair.second_name}`.toLowerCase().includes(query);
-    return matchesFilter && matchesSearch;
-  });
-  const pageCount = Math.ceil(filteredPairs.length / 10);
-  const pagePairs = filteredPairs.slice(page * 10, (page + 1) * 10);
-  const differenceFields = new Set((comparison?.differences || []).map((difference) => difference.field));
-  const comparisonFields = [
-    { label: 'Scholarship name', key: 'name' },
-    { label: 'Provider', key: 'provider' },
-    { label: 'Country', key: 'country' },
-    { label: 'Deadline', key: 'deadline' },
-    {
-      label: 'Award amount',
-      key: 'stipend_amount',
-      value: (record) => record.stipend_amount == null
-        ? '—'
-        : `${record.stipend_amount} ${record.stipend_currency || ''}`.trim(),
-    },
-    { label: 'Official source URL', key: 'official_info_url', value: (record) => record.official_info_url || record.official_url },
-    { label: 'Verification status', key: 'verification_status' },
-  ];
-  const filters = [
-    { value: 'all', label: 'All' },
-    { value: 'needs_review', label: 'Needs review' },
-    { value: 'flagged', label: 'Flagged' },
-  ];
+  const changeFilter = (value) => {
+    setFilter(value);
+    setSelectedKey(null);
+    setToast(null);
+  };
+
+  const actions = getResolveActions(selectedPair);
+  const pendingDescription = pendingAction
+    ? describeResolveAction(pendingAction, selectedPair)
+    : null;
 
   return (
-    <div className="admin-duplicates-page">
-      <header className="admin-duplicates-header">
+    <div className="admin-review-page admin-duplicates-page">
+      {/* 1: the Review Queue header, so both pages start at the same place. */}
+      <header className="admin-review-page-header">
         <div>
           <h1>Duplicates</h1>
-          <p>Find and review scholarship records that may describe the same award.</p>
         </div>
+        <button type="button" className="btn btn-outline" onClick={() => setRefresh((value) => value + 1)}>
+          Refresh
+        </button>
       </header>
-      {message && <p className="admin-notice is-success" role="status">{message}</p>}
-      {error && <RetryNotice message={error} onRetry={() => setRefresh((value) => value + 1)} />}
-      <section className="admin-card admin-duplicates-list" aria-label="Duplicate candidates">
-        <div className="admin-duplicates-toolbar">
-          <div className="admin-duplicates-filters" role="group" aria-label="Filter duplicate records">
-            {filters.map((item) => (
-              <button
-                type="button"
-                key={item.value}
-                className={filter === item.value ? 'is-selected' : ''}
-                aria-pressed={filter === item.value}
-                onClick={() => { setFilter(item.value); setPage(0); }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <label className="admin-duplicates-search">
-            <Search size={15} aria-hidden="true" />
-            <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder="Search scholarship name" aria-label="Search duplicate candidates" />
-          </label>
-        </div>
-        <div className="admin-table-scroll">
-          <table className="admin-table admin-duplicates-table">
-            <thead>
-              <tr><th>Record A</th><th>Record B</th><th>Match</th><th>Reason</th><th>Status</th><th>Actions</th></tr>
-            </thead>
-            <tbody>
-              {loading && !pairs && Array.from({ length: 5 }, (_, index) => (
-                <tr key={`duplicate-skeleton-${index}`} className="admin-skeleton-row" aria-hidden="true">
-                  <td><span className="admin-skeleton-line is-long" /></td>
-                  <td><span className="admin-skeleton-line is-long" /></td>
-                  <td><span className="admin-skeleton-line is-short" /></td>
-                  <td><span className="admin-skeleton-line" /></td>
-                  <td><span className="admin-skeleton-pill" /></td>
-                  <td><span className="admin-skeleton-line is-short" /></td>
-                </tr>
-              ))}
-              {pairs && !loading && pagePairs.map((pair) => (
-                <tr key={`${pair.first_id}-${pair.second_id}`} className={selectedPair?.first_id === pair.first_id && selectedPair?.second_id === pair.second_id ? 'is-selected' : ''}>
-                  <td><strong>#{pair.first_id}</strong><span>{pair.first_name}</span></td>
-                  <td><strong>#{pair.second_id}</strong><span>{pair.second_name}</span></td>
-                  <td>Not scored</td>
-                  <td>{pair.kind === 'flagged' ? 'Manually flagged' : 'Similar name and country'}</td>
-                  <td>
-                    <span className={`admin-duplicate-status is-${pair.kind}`}>
-                      {pair.kind === 'flagged' ? 'Flagged' : 'Needs review'}
-                    </span>
-                  </td>
-                  <td><button type="button" className="admin-duplicate-compare" onClick={() => open(pair)}>Compare</button></td>
-                </tr>
-              ))}
-              {pairs && !loading && pagePairs.length === 0 && (
-                <tr><td className="admin-duplicates-empty" colSpan="6">No duplicate candidates match this filter.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div className="admin-duplicates-legend">
-          <span>Status key:</span>
-          <span className="admin-duplicate-status is-suspected">Needs review</span>
-          <span className="admin-duplicate-status is-flagged">Flagged</span>
-        </div>
-        <footer className="admin-duplicates-pagination">
-          <span>
-            Showing {filteredPairs.length === 0 ? 0 : page * 10 + 1}–{Math.min((page + 1) * 10, filteredPairs.length)} of {filteredPairs.length}
-          </span>
-          <div>
-            <button type="button" disabled={loading || page === 0} onClick={() => setPage((value) => value - 1)}>
-              <ArrowLeft size={14} aria-hidden="true" /> Previous
-            </button>
-            <button type="button" disabled={loading || !pageCount || page + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>
-              Next <ArrowRight size={14} aria-hidden="true" />
-            </button>
-          </div>
-        </footer>
-      </section>
-      <section className="admin-card admin-duplicates-comparison" aria-label="Compare records">
-        <h2>Compare records</h2>
-        {!selectedPair && <p className="admin-duplicates-prompt">Select a pair above to compare it. Differences will be highlighted here.</p>}
-        {compareLoading && <p className="admin-duplicates-prompt" role="status">Loading comparison...</p>}
-        {compareError && <RetryNotice message={compareError} onRetry={() => selectedPair && open(selectedPair)} />}
-        {comparison && (
-          <>
-            <div className="admin-table-scroll">
-              <table className="admin-table admin-duplicates-compare-table">
-                <thead>
-                  <tr>
-                    <th>Field</th>
-                    <th>Record A · #{comparison.first.id}</th>
-                    <th>Record B · #{comparison.second.id}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {comparisonFields.map((field) => (
-                    <tr key={field.key} className={differenceFields.has(field.key) ? 'is-different' : ''}>
-                      <th scope="row">{field.label}</th>
-                      <td>{formatCandidateValue(field.value ? field.value(comparison.first) : comparison.first[field.key])}</td>
-                      <td>{formatCandidateValue(field.value ? field.value(comparison.second) : comparison.second[field.key])}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="admin-duplicates-reference-counts">
-              <span>Saved by students: <strong>{comparison.first_references.saved_by_students}</strong> / <strong>{comparison.second_references.saved_by_students}</strong></span>
-              <span>Internal links: <strong>{comparison.first_references.internal_links}</strong> / <strong>{comparison.second_references.internal_links}</strong></span>
-            </div>
-            <label className="admin-duplicates-note">
-              <span>Why (kept in the change history)</span>
-              <input value={note} maxLength={1000} onChange={(event) => setNote(event.target.value)} placeholder="Add a short reason (at least 5 characters)" />
-            </label>
-            <div className="admin-actions">
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={saving || note.trim().length < 5 || (
-                  comparison.second.duplicate_of_id != null
-                  && comparison.second.duplicate_of_id !== comparison.first.id
-                )}
-                onClick={() => decide(comparison.second.id, comparison.first.id)}
-                title={comparison.second.duplicate_of_id != null && comparison.second.duplicate_of_id !== comparison.first.id
-                  ? 'Record B is already flagged as a duplicate of another record.'
-                  : undefined}
-              >
-                {saving ? 'Saving...' : 'Flag Record B as duplicate of Record A'}
-              </button>
-              {comparison.pair.kind === 'flagged' && (
-                <button type="button" className="btn btn-outline" disabled={saving || note.trim().length < 5} onClick={() => decide(comparison.second.id, null)}>
-                  Keep both · clear duplicate flag
-                </button>
-              )}
-            </div>
-          </>
-        )}
-        <p className="admin-duplicates-safety-note">
-          Flagging records does not merge or delete them. Both records and their linked data remain unchanged.
+
+      {toast && (
+        <p className={`admin-notice ${toast.tone === 'error' ? 'is-error' : 'is-success'}`} role="status">
+          {toast.text}
+          {' '}
+          <button type="button" className="admin-link" onClick={() => setToast(null)}>Dismiss</button>
         </p>
-      </section>
+      )}
+      {error && <RetryNotice message={error} onRetry={() => setRefresh((value) => value + 1)} />}
+
+      {/* Keep the pair list above its comparison panel. */}
+      <div className="admin-review-workspace admin-duplicates-workspace">
+        <section className="admin-card admin-duplicates-list" aria-label="Possible duplicate pairs">
+          {/* 4: the filters carry the counts, so there are no summary cards. */}
+          <div className="admin-duplicates-toolbar">
+            <div className="admin-duplicates-filters" role="group" aria-label="Filter duplicate pairs">
+              {getDuplicateFilterOptions(counts).map((item) => (
+                <button
+                  type="button"
+                  key={item.value}
+                  className={filter === item.value ? 'is-selected' : ''}
+                  aria-pressed={filter === item.value}
+                  onClick={() => changeFilter(item.value)}
+                >
+                  {item.label} {pairs ? (
+                    <span className="admin-duplicates-filter-count">{item.count}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+            <label className="admin-duplicates-search">
+              <Search size={15} aria-hidden="true" />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search name, country or provider"
+                aria-label="Search duplicate pairs"
+              />
+            </label>
+          </div>
+
+          {/* 1: one compact row per pair. */}
+          <ul className="admin-duplicates-pairs">
+            {loading && !pairs && Array.from({ length: 5 }, (_, index) => (
+              <li key={`duplicate-skeleton-${index}`} className="admin-duplicates-pair is-skeleton" aria-hidden="true">
+                <span className="admin-skeleton-line is-long" />
+                <span className="admin-skeleton-line is-short" />
+              </li>
+            ))}
+            {pairs && visiblePairs.map((pair) => {
+              const key = getPairKey(pair);
+              const label = getPairRowLabel(pair);
+              return (
+                <li key={key}>
+                  <button
+                    type="button"
+                    className={`admin-duplicates-pair${activeKey === key ? ' is-current' : ''}`}
+                    aria-current={activeKey === key}
+                    onClick={() => setSelectedKey(key)}
+                  >
+                    <span className="admin-duplicates-pair-name" title={label.showBoth ? `${label.name} / ${label.otherName}` : label.name}>
+                      {label.showBoth ? `${label.name} / ${label.otherName}` : label.name}
+                    </span>
+                    <span className="admin-duplicates-pair-meta">{getPairMetaLine(pair)}</span>
+                    <span className={`admin-duplicate-status is-${pair.status || 'needs_review'}`}>
+                      {getDuplicateStatusLabel(pair.status)}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+            {pairs && visiblePairs.length === 0 && (
+              <li className="admin-duplicates-empty">
+                {/* 8: an empty state with an icon. */}
+                <div className="admin-review-empty-block">
+                  <CopyCheck size={22} aria-hidden="true" />
+                  <p>No possible duplicates right now.</p>
+                </div>
+              </li>
+            )}
+          </ul>
+        </section>
+
+        <section className="admin-card admin-duplicates-comparison" aria-label="Compare records">
+          {!selectedPair && (
+            <div className="admin-review-empty-block">
+              <CopyCheck size={22} aria-hidden="true" />
+              <p>Select a pair to compare it.</p>
+            </div>
+          )}
+          {compareError && (
+            <RetryNotice message={compareError} onRetry={() => setRefresh((value) => value + 1)} />
+          )}
+          {selectedPair && compareLoading && (
+            <p className="admin-duplicates-prompt" role="status">Loading comparison…</p>
+          )}
+
+          {selectedPair && comparisonFor && view && (
+            <>
+              {/* 2: the header row stays put while the fields scroll. */}
+              <div className="admin-duplicates-compare-head">
+                <div className="admin-duplicates-compare-title">
+                  <h2>Compare records</h2>
+                  <label className="admin-duplicates-diff-toggle">
+                    <input
+                      type="checkbox"
+                      checked={onlyDifferences}
+                      onChange={(event) => setOnlyDifferences(event.target.checked)}
+                    />
+                    <span>Show only differences ({view.differenceCount})</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="admin-duplicates-compare-body">
+                <table className="admin-duplicates-compare-table">
+                  <colgroup>
+                    <col style={{ width: '18%' }} />
+                    <col style={{ width: '41%' }} />
+                    <col style={{ width: '41%' }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th scope="col">Field</th>
+                      <th scope="col">Record A · #{comparisonFor.first.id}</th>
+                      <th scope="col">Record B · #{comparisonFor.second.id}</th>
+                    </tr>
+                  </thead>
+                  {/* Groups collapse; only those holding a difference open. */}
+                  {comparisonSections.map((group) => (
+                    <ComparisonGroup
+                      key={`${activeKey}-${group.label}`}
+                      group={group}
+                      defaultOpen={group.differenceCount > 0}
+                    />
+                  ))}
+                </table>
+
+                {comparisonSections.length === 0 && (
+                  <p className="admin-duplicates-prompt" role="status">
+                    {onlyDifferences
+                      ? 'These two records match on every compared field.'
+                      : 'Neither record has any of the compared fields filled in.'}
+                  </p>
+                )}
+
+                {/* 2: the identical fields as one line, not thirty rows. */}
+                {onlyDifferences && view.hiddenCount > 0 && (
+                  <p className="admin-duplicates-hidden-note">
+                    {view.hiddenCount} identical field{view.hiddenCount === 1 ? '' : 's'} hidden
+                    {' · '}
+                    <button
+                      type="button"
+                      className="admin-link"
+                      onClick={() => setOnlyDifferences(false)}
+                    >
+                      Show
+                    </button>
+                  </p>
+                )}
+
+                <p className="admin-duplicates-reference-counts">
+                  Saved by students: <strong>{comparisonFor.first_references.saved_by_students}</strong>
+                  {' / '}
+                  <strong>{comparisonFor.second_references.saved_by_students}</strong>
+                  {' · '}
+                  Internal links: <strong>{comparisonFor.first_references.internal_links}</strong>
+                  {' / '}
+                  <strong>{comparisonFor.second_references.internal_links}</strong>
+                </p>
+              </div>
+
+              {/* 2 and 6: the resolve bar stays visible while fields scroll. */}
+              <div className="admin-duplicates-resolve">
+                <div className="admin-field admin-duplicates-note">
+                  <input
+                    value={note}
+                    maxLength={1000}
+                    onChange={(event) => setNote(event.target.value)}
+                    placeholder="Reason (optional)"
+                    aria-label="Optional reason, kept in the change history"
+                    disabled={saving}
+                  />
+                </div>
+                <div className="admin-duplicates-resolve-actions">
+                  {actions.map((action) => (
+                    <button
+                      key={action.key}
+                      type="button"
+                      className={`btn btn-${action.tone}`}
+                      title={action.title}
+                      disabled={saving}
+                      onClick={() => setPendingAction(action)}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="admin-duplicates-safety-note">
+                  Marking a duplicate never merges or deletes records. Both are kept, with their
+                  IDs and everything linked to them.
+                </p>
+              </div>
+            </>
+          )}
+        </section>
+      </div>
+
+      {pendingAction && pendingDescription && (
+        <ConfirmDialog
+          title={pendingDescription.title}
+          confirmLabel={pendingDescription.confirmLabel}
+          busy={saving}
+          onCancel={() => setPendingAction(null)}
+          onConfirm={runAction}
+          body={(
+            <>
+              <p>{pendingDescription.body}</p>
+              {note.trim() && <p className="admin-discovery-config-note">Reason: {note.trim()}</p>}
+            </>
+          )}
+        />
+      )}
     </div>
   );
 }
 
-function formatCandidateValue(value) {
-  if (value === null || value === undefined || value === '') return '—';
-  if (Array.isArray(value)) return value.map(formatCandidateValue).join(', ');
-  if (typeof value === 'object') {
-    if (Object.prototype.hasOwnProperty.call(value, 'value')) return formatCandidateValue(value.value);
-    return Object.entries(value).map(([key, entry]) => `${key.replace(/_/g, ' ')}: ${formatCandidateValue(entry)}`).join('; ');
-  }
-  return String(value);
+function AccordionSection({ id, label, count = null, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const bodyId = `${id}-body`;
+  return (
+    <div className={`admin-review-accordion${open ? ' is-open' : ''}`}>
+      <button
+        type="button"
+        className="admin-review-accordion-row"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="admin-review-accordion-label">{label}</span>
+        {count !== null && <span className="admin-review-accordion-count">{count}</span>}
+        <ChevronDown size={15} className="admin-review-accordion-chevron" aria-hidden="true" />
+      </button>
+      <div className="admin-review-accordion-body" id={bodyId} hidden={!open}>
+        {children}
+      </div>
+    </div>
+  );
 }
 
-function getCandidateEligibility(values) {
-  const fields = [
-    ['eligibility_criteria', 'Eligibility'],
-    ['eligibility', 'Eligibility'],
-    ['degree_level', 'Degree level'],
-    ['field_of_study', 'Field'],
-    ['nationality', 'Nationality'],
-    ['min_gpa', 'Minimum GPA'],
-    ['english_requirement_type', 'English requirement'],
-  ].filter(([key]) => values?.[key] !== null && values?.[key] !== undefined && values[key] !== '');
-  return fields.length
-    ? fields.map(([key, label]) => `${label}: ${formatCandidateValue(values[key])}`).join(' · ')
-    : 'Not recorded';
+function EvidenceQuote({ item, field }) {
+  const quote = getEvidenceQuoteFor(item, field);
+  if (!quote) return <span className="admin-review-quote-missing">No source quote</span>;
+  return (
+    <details className="admin-review-quote-details">
+      <summary className="admin-chevron-summary">
+        <ChevronRight size={14} aria-hidden="true" />
+        {quote.kind === 'page' ? 'View page quote' : 'View source quote'}
+      </summary>
+      <p className={`admin-review-quote is-${quote.kind}`}>
+        <q>{quote.quote}</q>
+        {quote.kind === 'page' && (
+          <span
+            className="admin-review-quote-kind"
+            title={`Stored as ${quote.key.replace(/_/g, ' ')}: a page-level quote, not a quote for this field alone`}
+          >
+            page quote
+          </span>
+        )}
+      </p>
+    </details>
+  );
 }
 
-function DiscoveryReviewCard({ item, token, onDone, saving: bulkSaving = false }) {
+function ReviewEditableField({ item, field, label, type, value, disabled, onChange }) {
+  const [expanded, setExpanded] = useState(false);
+  const expandable = field === 'eligible_fields' && value.length > 140;
+  return (
+    <label className="admin-review-edit-field">
+      <span>{label}</span>
+      {field === 'eligible_fields' ? (
+        <textarea
+          rows={expandable && expanded ? 5 : 2}
+          value={value}
+          onChange={(event) => onChange(field, event.target.value)}
+          placeholder="Not found on page"
+          disabled={disabled}
+        />
+      ) : (
+        <input
+          type={type === 'date' ? 'text' : type}
+          value={value}
+          onChange={(event) => onChange(field, event.target.value)}
+          placeholder={type === 'date' ? 'YYYY-MM-DD' : 'Not found on page'}
+          disabled={disabled}
+        />
+      )}
+      {expandable && (
+        <button
+          type="button"
+          className="admin-review-expand-field"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          Show {expanded ? 'less' : 'more'}
+        </button>
+      )}
+      <EvidenceQuote item={item} field={field} />
+    </label>
+  );
+}
+
+function EvidenceMeter({ strength, needsChecks = false, compact = false, label = 'Evidence' }) {
+  const percentage = strength.total > 0
+    ? Math.round((strength.backed / strength.total) * 100)
+    : 0;
+  return (
+    <div className="admin-review-evidence-meter" title={strength.title}>
+      <div className="admin-review-evidence-summary">
+        {!compact && <span className="admin-review-evidence-label">{label}</span>}
+        <strong>{strength.backed}/{strength.total}{compact ? '' : ' fields quoted'}</strong>
+        {needsChecks && (
+          <span className="admin-review-evidence-warning">
+            {compact ? null : <ShieldAlert size={13} aria-hidden="true" />}
+            Checks needed
+          </span>
+        )}
+      </div>
+      <div
+        className="admin-review-evidence-track"
+        role="progressbar"
+        aria-label="Source evidence coverage, not an eligibility score"
+        aria-valuemin={0}
+        aria-valuemax={Math.max(strength.total, 1)}
+        aria-valuenow={strength.backed}
+      >
+        <span style={{ width: `${percentage}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function DuplicateBadge({ flag, item, itemsById, onPrefill }) {
+  if (!flag) return null;
+  const resolution = getDuplicateResolution(item, flag.matchIds, itemsById);
+  return (
+    <div className="admin-review-duplicate-flag">
+      <p>
+        <strong>
+          <CopyCheck size={15} aria-hidden="true" />
+          Possible duplicate of{' '}
+          {flag.matchIds.map((id) => (
+            <span className="admin-review-duplicate-id" key={id}>#{id}</span>
+          ))}
+        </strong>
+        {` — ${DUPLICATE_REASON_TEXT[flag.reason] || flag.reason}.`}
+      </p>
+      {resolution.kind === 'scholarship' ? (
+        <button
+          type="button"
+          className="admin-link"
+          onClick={() => onPrefill(String(resolution.scholarshipId))}
+        >
+          {`Mark as duplicate of scholarship #${resolution.scholarshipId}`}
+        </button>
+      ) : (
+        <p className="admin-review-duplicate-hint">
+          A duplicate is recorded against an existing scholarship, so approve one of
+          these candidates first, then mark the others duplicates of the scholarship it creates.
+          Nothing is merged either way.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DiscoveryReviewCard({
+  item,
+  token,
+  onDone,
+  saving: bulkSaving = false,
+  duplicateFlag = null,
+  itemsById = null,
+}) {
+  const [draft, setDraft] = useState(() => buildEditableCandidateDraft(item));
   const [valuesText, setValuesText] = useState(() => JSON.stringify(item.extracted_values, null, 2));
   const [duplicateId, setDuplicateId] = useState('');
   const [linkTargetId, setLinkTargetId] = useState('');
@@ -332,20 +735,74 @@ function DiscoveryReviewCard({ item, token, onDone, saving: bulkSaving = false }
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [actionGuard] = useState(createActionGuard);
+  const [note, setNote] = useState('');
+  const evidence = getCandidateEvidenceStrength(item);
+  const { mustCheck, optional } = groupReviewReasons(item);
+  const needsChecks = mustCheck.length > 0
+    || item.missing_required_fields.length > 0
+    || item.conflicting_values.length > 0;
+  const resolvable = isResolvableReviewItem(item);
+  const deadline = getCandidateDeadline(item);
+  const run = getRunLabel(item);
+  const sourceDomain = getSourceDomain(item);
+  const country = item.host_country || item.extracted_values?.country || '';
+  const degreeLevel = item.extracted_values?.degree_level || '';
+  const edited = hasCandidateEdits(item, draft);
+  const extractedGroups = getExtractedFieldGroups(item, {
+    skip: EDITABLE_CANDIDATE_FIELDS.map((entry) => entry.field),
+  });
+
+  const setField = (field, value) => {
+    setDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  // Approve/Reject straight from the panel, including for a pending
+  // candidate: the backend requires it to be marked reviewed first, so that
+  // call is made as part of the same click. Approval publishes the edited
+  // values.
+  const resolve = async (decision) => {
+    if (actionGuard.isActive()) return;
+    setError('');
+    let steps;
+    try {
+      steps = buildBulkDecisionSteps(item, decision, { note, draft });
+    } catch (failure) {
+      setError(failure.message);
+      return;
+    }
+    if (!actionGuard.tryStart()) return;
+    setSaving(true);
+    try {
+      let updatedItem = item;
+      for (const step of steps) {
+        updatedItem = await adminApi.reviewDiscovery(token, item.id, step);
+      }
+      onDone(decision, updatedItem);
+    } catch (failure) {
+      setError(failure.message);
+    } finally {
+      actionGuard.finish();
+      setSaving(false);
+    }
+  };
 
   const decide = async (decision) => {
     if (actionGuard.isActive()) return;
     setError('');
     let values;
     if (decision === 'accepted' || decision === 'link_and_publish') {
-      try {
-        values = JSON.parse(valuesText);
-        if (!values || typeof values !== 'object' || Array.isArray(values)) {
-          throw new Error('Publication values must be a JSON object.');
+      if (editing) {
+        try {
+          values = JSON.parse(valuesText);
+          if (!values || typeof values !== 'object' || Array.isArray(values)) {
+            throw new Error('Publication values must be a JSON object.');
+          }
+        } catch (failure) {
+          setError(failure instanceof SyntaxError ? 'Fix the candidate JSON before publishing.' : failure.message);
+          return;
         }
-      } catch (failure) {
-        setError(failure instanceof SyntaxError ? 'Fix the candidate JSON before publishing.' : failure.message);
-        return;
+      } else {
+        values = applyCandidateDraft(item, draft);
       }
     }
 
@@ -374,156 +831,330 @@ function DiscoveryReviewCard({ item, token, onDone, saving: bulkSaving = false }
     }
   };
 
+  const busy = saving || bulkSaving;
+  const helpText = 'Approval creates an unverified scholarship; link-and-publish keeps the '
+    + 'existing canonical fields and records an approved discovery snapshot.';
+
   return (
     <aside className="admin-card admin-review-details" aria-label="Candidate details">
-      <header className="admin-review-details-header">
-        <h2>Candidate details</h2>
-        <span className={`admin-review-status is-${item.review_status}`}>
-          {item.review_status.replace(/_/g, ' ')}
-        </span>
-      </header>
-      <p className="admin-review-detail-intro">
-        {item.candidate_name || item.extracted_values?.name || 'Unnamed scholarship'}
-        {item.host_country ? ` · ${item.host_country}` : ''}
-      </p>
-      {error && <p className="admin-notice is-error" role="alert">{error}</p>}
-      <dl className="admin-review-detail-fields">
-        <div><dt>Name</dt><dd>{formatCandidateValue(item.extracted_values?.name || item.candidate_name)}</dd></div>
-        <div><dt>Source URL</dt><dd><a href={item.source_url} target="_blank" rel="noreferrer">{item.source_url}</a></dd></div>
-        <div><dt>Deadline</dt><dd>{formatCandidateValue(item.extracted_values?.deadline || item.extracted_values?.application_deadline || item.extracted_values?.deadline_type)}</dd></div>
-        <div><dt>Award amount</dt><dd>{formatCandidateValue(
-          item.extracted_values?.award_amount
-          || item.extracted_values?.stipend_amount
-          || item.extracted_values?.living_stipend
-          || item.extracted_values?.funding_type,
-        )}</dd></div>
-        <div><dt>Eligibility</dt><dd>{getCandidateEligibility(item.extracted_values)}</dd></div>
-        <div><dt>Confidence</dt><dd>{formatCandidateValue(item.extracted_values?.confidence)}</dd></div>
-      </dl>
-      <div className="admin-review-source-meta">
-        <span>{item.source_name}</span>
-        <span>{item.source_classification.replace(/_/g, ' ')}</span>
-        <span>Discovered {formatRunTime(item.created_at)}</span>
-      </div>
-      {item.review_reason && <p className="admin-review-reason"><strong>Review note:</strong> {item.review_reason}</p>}
-      {item.missing_required_fields.length > 0 && (
-        <p className="admin-review-warning">Missing: {item.missing_required_fields.join(', ')}</p>
-      )}
-      {item.conflicting_values.length > 0 && (
-        <details className="admin-review-evidence">
-          <summary>{item.conflicting_values.length} conflicting field(s)</summary>
-          <pre className="admin-discovery-json">{JSON.stringify(item.conflicting_values, null, 2)}</pre>
-        </details>
-      )}
-      <details className="admin-review-evidence">
-        <summary>Source evidence and field provenance</summary>
-        {item.source_trust_basis && <p><strong>Trust basis:</strong> {item.source_trust_basis}</p>}
-        <pre className="admin-discovery-json">{JSON.stringify(item.field_sources, null, 2)}</pre>
-        {item.evidence_excerpts.map((source) => (
-          <section key={source.fingerprint} className="admin-import-evidence">
-            <p>
-              <strong>{source.source_name}</strong> · {source.source_classification.replace(/_/g, ' ')}
-              {' · '}<a href={source.source_url} target="_blank" rel="noreferrer">{source.source_url}</a>
+      <div className="admin-review-details-body">
+        <header className="admin-review-details-header">
+          <h2>Candidate Details</h2>
+          <span className={`admin-review-status is-${item.review_status}`}>
+            {getReviewStatusLabel(item.review_status)}
+          </span>
+        </header>
+        <p className="admin-review-detail-intro">
+          {item.candidate_name || item.extracted_values?.name || 'Unnamed scholarship'}
+        </p>
+        {(country || degreeLevel) && (
+          <p className="admin-review-detail-subtitle">
+            {country}{country && degreeLevel ? ' · ' : ''}{degreeLevel}
+          </p>
+        )}
+        {error && <p className="admin-notice is-error" role="alert">{error}</p>}
+        <DuplicateBadge
+          flag={duplicateFlag}
+          item={item}
+          itemsById={itemsById}
+          onPrefill={setDuplicateId}
+        />
+
+        <EvidenceMeter strength={evidence} needsChecks={needsChecks} label="Evidence Completeness" />
+
+        {(country || degreeLevel || item.source_name || item.source_url) && (
+          <>
+            <h3 className="admin-review-section-label">Scholarship Information</h3>
+            <dl className="admin-review-detail-fields admin-review-source-fields">
+              {country && (
+                <div>
+                  <dt>Country</dt>
+                  <dd>{country}</dd>
+                </div>
+              )}
+              {degreeLevel && (
+                <div>
+                  <dt>Degree Level</dt>
+                  <dd>{degreeLevel}</dd>
+                </div>
+              )}
+              {item.source_name && (
+                <div>
+                  <dt>Source</dt>
+                  <dd>{item.source_name}{sourceDomain ? ` · ${sourceDomain}` : ''}</dd>
+                </div>
+              )}
+              {item.source_url && (
+                <div>
+                  <dt>Original URL</dt>
+                  <dd>
+                    <a href={item.source_url} target="_blank" rel="noreferrer">
+                      {item.source_url} <ExternalLink size={12} aria-hidden="true" />
+                    </a>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </>
+        )}
+
+        <div className="admin-review-accordions">
+          <AccordionSection id={`requirements-${item.id}`} label="Requirements">
+            {resolvable && <p className="admin-review-accordion-note">Editable before approval.</p>}
+            <div className="admin-review-edit-fields">
+              {EDITABLE_CANDIDATE_FIELDS.map(({ field, label, type }) => (
+                <ReviewEditableField
+                  key={field}
+                  item={item}
+                  field={field}
+                  label={label}
+                  type={type}
+                  value={draft[field] ?? ''}
+                  disabled={busy || !resolvable}
+                  onChange={setField}
+                />
+              ))}
+            </div>
+          </AccordionSection>
+          {edited && (
+            <p className="admin-review-edited-note" role="status">
+              Edited. Approving publishes these values.
             </p>
-            <p><strong>Extracted values:</strong></p>
-            <pre className="admin-discovery-json">{JSON.stringify(source.extracted_values, null, 2)}</pre>
-            <p><strong>Evidence excerpts:</strong></p>
-            <pre className="admin-discovery-json">{JSON.stringify(source.evidence_excerpts, null, 2)}</pre>
-            {source.page_count && <p className="admin-muted">Page count: {source.page_count}; specific page references were not available.</p>}
-          </section>
-        ))}
-      </details>
-      {item.review_status === 'reviewed' && (
-        <div className="admin-review-edit">
-          <button type="button" className="admin-link" onClick={() => setEditing((value) => !value)}>
-            {editing ? 'Hide extracted fields' : 'Edit extracted fields'}
-          </button>
-          {editing && (
-            <label className="admin-field">
-              <span>Values to use when publishing (JSON)</span>
-              <textarea
-                className="admin-discovery-json-input"
-                rows={10}
-                value={valuesText}
-                onChange={(event) => setValuesText(event.target.value)}
-                disabled={saving || bulkSaving}
-              />
-            </label>
           )}
+
+          <AccordionSection id={`additional-${item.id}`} label="Additional details">
+            <div className="admin-review-nested-accordions">
+              <AccordionSection id={`record-${item.id}`} label="Record details">
+                <dl className="admin-review-detail-fields">
+                  <div>
+                    <dt>Deadline</dt>
+                    <dd>
+                      {deadline.text}
+                      {deadline.typeLabel && (
+                        <span className="admin-review-field-tag">{deadline.typeLabel}</span>
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Trust</dt>
+                    <dd>{humanizeEnum(item.source_classification)}</dd>
+                  </div>
+                  <div>
+                    <dt>Run</dt>
+                    <dd title={run.title}>{run.text}</dd>
+                  </div>
+                </dl>
+              </AccordionSection>
+              {/* 5: every other populated field, grouped, with its quote.
+                  The panel showed about 13 of a candidate's 38 values. */}
+              {extractedGroups.map((group) => (
+                <AccordionSection
+                  key={`${item.id}-${group.label}`}
+                  id={`extracted-${group.label.toLowerCase()}-${item.id}`}
+                  label={group.label}
+                  count={group.rows.length}
+                >
+                  <dl className="admin-review-extracted-fields">
+                    {group.rows.map((row) => (
+                      <div key={row.field}>
+                        <dt>{row.label}</dt>
+                        <dd>
+                          <span className="admin-review-extracted-value">{row.value}</span>
+                          {row.quote
+                            ? (
+                              <span className={`admin-review-quote is-${row.quoteKind}`}>
+                                <q>{row.quote}</q>
+                              </span>
+                            )
+                            : <span className="admin-review-quote is-missing">No quote found</span>}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </AccordionSection>
+              ))}
+              {(needsChecks || optional.length > 0) && (
+                <AccordionSection id={`warnings-${item.id}`} label="Checks and warnings">
+                  {item.missing_required_fields.length > 0 && (
+                    <p className="admin-review-warning">
+                      Missing: {item.missing_required_fields.join(', ')}
+                    </p>
+                  )}
+                  {mustCheck.length > 0 && (
+                    <ul className="admin-review-reason-list">
+                      {mustCheck.map((reason) => (
+                        <li key={reason.code} title={reason.code}>{reason.text}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {optional.length > 0 && (
+                    <ul className="admin-review-reason-list">
+                      {optional.map((reason) => (
+                        <li key={reason.code} title={reason.code}>{reason.text}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {item.conflicting_values.length > 0 && (
+                    <pre className="admin-discovery-json">{JSON.stringify(item.conflicting_values, null, 2)}</pre>
+                  )}
+                </AccordionSection>
+              )}
+              <AccordionSection id={`provenance-${item.id}`} label="Source evidence">
+                {item.source_trust_basis && (
+                  <p className="admin-review-accordion-note"><strong>Trust basis:</strong> {item.source_trust_basis}</p>
+                )}
+                <pre className="admin-discovery-json">{JSON.stringify(item.field_sources, null, 2)}</pre>
+                {item.evidence_excerpts.map((source) => (
+                  <section key={source.fingerprint} className="admin-import-evidence">
+                    <p>
+                      <strong>{source.source_name}</strong> · {humanizeEnum(source.source_classification)}
+                      {' · '}<a href={source.source_url} target="_blank" rel="noreferrer">{source.source_url}</a>
+                    </p>
+                    <p><strong>Extracted values:</strong></p>
+                    <pre className="admin-discovery-json">{JSON.stringify(source.extracted_values, null, 2)}</pre>
+                    <p><strong>Evidence excerpts:</strong></p>
+                    <pre className="admin-discovery-json">{JSON.stringify(source.evidence_excerpts, null, 2)}</pre>
+                    {source.page_count && (
+                      <p className="admin-review-accordion-note">
+                        Page count: {source.page_count}; specific page references were not available.
+                      </p>
+                    )}
+                  </section>
+                ))}
+              </AccordionSection>
+
+              {resolvable && (
+                <AccordionSection id={`advanced-${item.id}`} label="Advanced actions">
+                  <label className="admin-field">
+                    <span>Mark duplicate of existing scholarship ID</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={duplicateId}
+                      onChange={(event) => setDuplicateId(event.target.value)}
+                      disabled={busy}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    disabled={busy || !duplicateId}
+                    onClick={() => decide('duplicate')}
+                  >
+                    Confirm duplicate
+                  </button>
+                  <label className="admin-field">
+                    <span>Existing scholarship ID to link and publish</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={linkTargetId}
+                      onChange={(event) => setLinkTargetId(event.target.value)}
+                      disabled={busy}
+                    />
+                    <small>Publication records the approved discovery snapshot; it does not overwrite canonical scholarship fields.</small>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy || !linkTargetId}
+                    onClick={() => decide('link_and_publish')}
+                  >
+                    Publish and link existing scholarship
+                  </button>
+                  <button type="button" className="admin-link" onClick={() => setEditing((value) => !value)}>
+                    {editing ? 'Hide raw JSON' : 'Edit all fields as JSON'}
+                  </button>
+                  {editing && (
+                    <label className="admin-field">
+                      <span>Values to use when publishing (JSON)</span>
+                      <textarea
+                        className="admin-discovery-json-input"
+                        rows={10}
+                        value={valuesText}
+                        onChange={(event) => setValuesText(event.target.value)}
+                        disabled={busy}
+                      />
+                      <small>The JSON replaces the edited fields above when it is open.</small>
+                    </label>
+                  )}
+                </AccordionSection>
+              )}
+            </div>
+          </AccordionSection>
         </div>
-      )}
-      {item.review_status === 'pending' && (
-        <div className="admin-review-detail-actions">
-          <button type="button" className="btn btn-primary" disabled={saving || bulkSaving} onClick={() => decide('reviewed')}>
-            {saving ? 'Saving...' : 'Mark reviewed'}
-          </button>
-        </div>
-      )}
-      {item.review_status === 'reviewed' && (
-        <div className="admin-review-detail-actions">
-          <button type="button" className="btn btn-primary" disabled={saving || bulkSaving} onClick={() => decide('accepted')}>
-            Approve as unverified
-          </button>
-          <button type="button" className="btn btn-outline" disabled={saving || bulkSaving} onClick={() => decide('rejected')}>
-            Reject
-          </button>
-          <details className="admin-review-duplicate">
-            <summary>Mark duplicate</summary>
-            <label className="admin-field">
-              <span>Existing scholarship ID</span>
-              <input
-                type="number"
-                min="1"
-                value={duplicateId}
-                onChange={(event) => setDuplicateId(event.target.value)}
-                disabled={saving || bulkSaving}
-              />
-            </label>
-            <button type="button" className="btn btn-outline" disabled={saving || bulkSaving || !duplicateId} onClick={() => decide('duplicate')}>
-              Confirm duplicate
-            </button>
-          </details>
-          <div className="admin-review-link-publish">
-            <label className="admin-field">
-              <span>Existing scholarship ID to link</span>
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={linkTargetId}
-                onChange={(event) => setLinkTargetId(event.target.value)}
-                disabled={saving || bulkSaving}
-              />
-              <small>Publication records the approved discovery snapshot; it does not overwrite canonical scholarship fields.</small>
-            </label>
+
+        {item.review_status === 'accepted' && (
+          <p className="admin-review-final-state">
+            {item.accepted_scholarship_id
+              ? `Created scholarship #${item.accepted_scholarship_id} as unverified.`
+              : 'This candidate was accepted.'}
+          </p>
+        )}
+        {item.review_status === 'rejected' && <p className="admin-review-final-state">This candidate was rejected.</p>}
+        {item.review_status === 'duplicate' && (
+          <p className="admin-review-final-state">
+            {item.duplicate_of_scholarship_id
+              ? `Linked as a duplicate of scholarship #${item.duplicate_of_scholarship_id}; no records were merged.`
+              : 'This candidate was marked as a duplicate; no records were merged.'}
+          </p>
+        )}
+        {!resolvable && <p className="admin-review-help-note">{helpText}</p>}
+      </div>
+
+      {resolvable && (
+        <div className="admin-review-action-bar">
+          <div className="admin-field admin-review-action-reason">
+            <input
+              type="text"
+              maxLength={1000}
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Reason (optional)"
+              aria-label="Optional review reason"
+              disabled={busy}
+            />
+          </div>
+          <div className="admin-review-action-buttons">
             <button
               type="button"
               className="btn btn-primary"
-              disabled={saving || bulkSaving || !linkTargetId}
-              onClick={() => decide('link_and_publish')}
+              disabled={busy}
+              onClick={() => resolve('accepted')}
             >
-              Publish and link existing scholarship
+              {saving ? 'Working...' : 'Approve'}
+            </button>
+            <span
+              className="admin-review-help-tip"
+              tabIndex={0}
+              role="note"
+              aria-label={helpText}
+              title={helpText}
+            >
+              <Info size={14} aria-hidden="true" />
+            </span>
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={busy}
+              onClick={() => resolve('rejected')}
+            >
+              Reject
             </button>
           </div>
+          {item.review_status === 'pending' && (
+            <button
+              type="button"
+              className="admin-link admin-review-reviewed-only"
+              disabled={busy}
+              onClick={() => decide('reviewed')}
+            >
+              Mark reviewed only
+            </button>
+          )}
         </div>
       )}
-      {item.review_status === 'accepted' && (
-        <p className="admin-review-final-state">
-          {item.accepted_scholarship_id
-            ? `Created scholarship #${item.accepted_scholarship_id} as unverified.`
-            : 'This candidate was accepted.'}
-        </p>
-      )}
-      {item.review_status === 'rejected' && <p className="admin-review-final-state">This candidate was rejected.</p>}
-      {item.review_status === 'duplicate' && (
-        <p className="admin-review-final-state">
-          {item.duplicate_of_scholarship_id
-            ? `Linked as a duplicate of scholarship #${item.duplicate_of_scholarship_id}; no records were merged.`
-            : 'This candidate was marked as a duplicate; no records were merged.'}
-        </p>
-      )}
-      <p className="admin-review-run">Discovery run: {item.discovery_run_id}</p>
-      <p className="admin-review-safety-note">Approval creates an unverified scholarship, while link-and-publish preserves the existing canonical fields and creates an approved discovery publication snapshot.</p>
     </aside>
   );
 }
@@ -532,6 +1163,8 @@ function DiscoveryReviewQueue({ token }) {
   const [status, setStatus] = useState('all');
   const [page, setPage] = useState(0);
   const [result, setResult] = useState(null);
+  const [reviewCounts, setReviewCounts] = useState(null);
+  const [reviewCountsError, setReviewCountsError] = useState('');
   const [error, setError] = useState('');
   const [bulkError, setBulkError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -539,9 +1172,12 @@ function DiscoveryReviewQueue({ token }) {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkNote, setBulkNote] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [requestGuard] = useState(createLatestRequestGuard);
+  const [countRequestGuard] = useState(createLatestRequestGuard);
 
   const load = useCallback(() => {
     const requestId = requestGuard.begin();
@@ -564,6 +1200,32 @@ function DiscoveryReviewQueue({ token }) {
     load();
     return () => requestGuard.invalidate();
   }, [load, refresh, requestGuard]);
+
+  useEffect(() => {
+    const requestId = countRequestGuard.begin();
+    Promise.all(REVIEW_FILTERS.map(async ({ value }) => {
+      const data = await adminApi.discoveryReviews(
+        token,
+        value === 'all' ? undefined : value,
+        0,
+        1,
+      );
+      if (!Number.isInteger(data.total) || data.total < 0) {
+        throw new Error('The review count response was invalid.');
+      }
+      return [value, data.total];
+    })).then((entries) => {
+      if (countRequestGuard.isCurrent(requestId)) {
+        setReviewCounts(Object.fromEntries(entries));
+        setReviewCountsError('');
+      }
+    }).catch((failure) => {
+      if (countRequestGuard.isCurrent(requestId)) {
+        setReviewCountsError(failure.message || 'Review counts could not be loaded.');
+      }
+    });
+    return () => countRequestGuard.invalidate();
+  }, [countRequestGuard, refresh, token]);
 
   const changeStatus = (value) => {
     if (value === status) return;
@@ -590,6 +1252,7 @@ function DiscoveryReviewQueue({ token }) {
   const retryLoad = () => {
     requestGuard.invalidate();
     setError('');
+    setReviewCountsError('');
     setLoading(true);
     setRefresh((value) => value + 1);
   };
@@ -614,60 +1277,67 @@ function DiscoveryReviewQueue({ token }) {
   const selectedItems = pageItems.filter((item) => selectedIds.includes(item.id));
   const selectedItem = pageItems.find((item) => item.id === selectedId);
   const allPageSelected = pageItems.length > 0 && pageItems.every((item) => selectedIds.includes(item.id));
-  const canBulkResolve = selectedItems.length > 0
-    && selectedItems.every((item) => item.review_status === 'reviewed');
-  const statusLabels = {
-    pending: 'Needs review',
-    reviewed: 'Reviewed',
-    accepted: 'Accepted',
-    rejected: 'Rejected',
-    duplicate: 'Duplicate',
-  };
-  const statusFilters = [
-    { value: 'all', label: 'All' },
-    { value: 'pending', label: 'Needs review' },
-    { value: 'reviewed', label: 'Reviewed' },
-    { value: 'accepted', label: 'Accepted' },
-    { value: 'rejected', label: 'Rejected' },
-    { value: 'duplicate', label: 'Duplicate' },
-  ];
+  const canBulkResolve = canResolveSelection(selectedItems);
+  const alreadyResolved = selectedItems.filter((item) => !isResolvableReviewItem(item));
+  // Flagging is advisory: it annotates the queue and merges nothing.
+  const duplicateFlags = findPossibleDuplicates(pageItems);
+  const itemsById = new Map(pageItems.map((item) => [item.id, item]));
   const toggleCandidate = (id, checked) => {
     setSelectedIds((current) => checked
       ? [...new Set([...current, id])]
       : current.filter((value) => value !== id));
+    // Checking a row is also how an admin picks the one to look at.
+    if (checked) setSelectedId(id);
+    else if (selectedId === id) setSelectedId(null);
   };
   const togglePage = (checked) => {
     setSelectedIds(checked ? pageItems.map((item) => item.id) : []);
+  };
+  const clearSelection = () => {
+    setSelectedIds([]);
+    setReasonOpen(false);
   };
   const resolveSelected = async (decision) => {
     if (!canBulkResolve || bulkSaving) return;
     requestGuard.invalidate();
     setBulkSaving(true);
     setBulkError('');
+    setAnnouncement('');
     setError('');
     let completed = 0;
+    const skipped = [];
     try {
       for (const item of selectedItems) {
-        await adminApi.reviewDiscovery(token, item.id, {
-          decision,
-          ...(decision === 'accepted' ? { values: item.extracted_values } : {}),
-        });
+        if (!isResolvableReviewItem(item)) {
+          skipped.push(item.id);
+          continue;
+        }
+        // A pending candidate has to be marked reviewed before the backend
+        // will resolve it; both calls happen here.
+        // Bulk decisions publish the extracted values as they are; only the
+        // details panel offers field edits.
+        for (const step of buildBulkDecisionSteps(item, decision, { note: bulkNote })) {
+          await adminApi.reviewDiscovery(token, item.id, step);
+        }
         completed += 1;
       }
+      const skippedNote = skipped.length
+        ? ` ${skipped.length} already resolved candidate(s) were left unchanged.`
+        : '';
       setAnnouncement(
-        decision === 'accepted'
-          ? `${completed} candidate(s) approved as unverified scholarships.`
-          : `${completed} candidate(s) rejected.`,
+        (decision === 'accepted'
+          ? `${completed} candidate(s) approved; an unverified scholarship was created for each.`
+          : `${completed} candidate(s) rejected; no scholarship was created.`) + skippedNote,
       );
       setSelectedIds([]);
       setSelectedId(null);
+      setBulkNote('');
+      setReasonOpen(false);
     } catch (failure) {
       setBulkError(completed
         ? `${completed} candidate(s) were resolved before the next action failed: ${failure.message}`
         : failure.message);
     } finally {
-      setSelectedIds([]);
-      setSelectedId(null);
       setBulkSaving(false);
       setLoading(true);
       setRefresh((value) => value + 1);
@@ -679,30 +1349,24 @@ function DiscoveryReviewQueue({ token }) {
       <header className="admin-review-page-header">
         <div>
           <h1>Review Queue</h1>
-          <p>Check discovered candidates before they are published.</p>
         </div>
-        <div className="admin-review-bulk-actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={!canBulkResolve || bulkSaving}
-            title={!canBulkResolve ? 'Select reviewed candidates to approve.' : undefined}
-            onClick={() => resolveSelected('accepted')}
-          >
-            {bulkSaving ? 'Working...' : 'Approve selected'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-outline"
-            disabled={!canBulkResolve || bulkSaving}
-            title={!canBulkResolve ? 'Select reviewed candidates to reject.' : undefined}
-            onClick={() => resolveSelected('rejected')}
-          >
-            Reject selected
-          </button>
+        <div className="admin-review-pending-indicator" aria-label={`${formatReviewCount(reviewCounts?.pending)} candidates pending review`}>
+          <Clock3 size={17} aria-hidden="true" />
+          <span><strong>{formatReviewCount(reviewCounts?.pending)}</strong> pending review</span>
         </div>
       </header>
+      {reviewCountsError && (
+        <p className="admin-notice is-error" role="alert">
+          Filter counts unavailable: {reviewCountsError}{' '}
+          <button type="button" className="admin-link" onClick={retryLoad}>Retry</button>
+        </p>
+      )}
       {announcement && <p className="admin-notice is-success" role="status">{announcement}</p>}
+      {alreadyResolved.length > 0 && (
+        <p className="admin-notice" role="status">
+          {alreadyResolved.length} selected candidate(s) are already resolved and will be left unchanged.
+        </p>
+      )}
       {bulkError && (
         <p className="admin-notice is-error" role="alert">
           {bulkError} <button type="button" className="admin-link" onClick={() => setBulkError('')}>Dismiss</button>
@@ -710,10 +1374,86 @@ function DiscoveryReviewQueue({ token }) {
       )}
       {viewState === 'error' && <RetryNotice message={error} onRetry={retryLoad} />}
       <div className="admin-review-workspace">
-        <section className="admin-card admin-review-list" aria-label="Discovery candidates">
+        <div className="admin-review-main">
+          <div className="admin-review-summary" role="group" aria-label="Review status summary">
+            <article className="admin-review-summary-card is-pending">
+              <span className="admin-review-summary-icon"><Clock3 size={21} aria-hidden="true" /></span>
+              <div><span>Pending</span><strong>{formatReviewCount(reviewCounts?.pending)}</strong></div>
+            </article>
+            <article className="admin-review-summary-card is-approved">
+              <span className="admin-review-summary-icon"><CircleCheck size={21} aria-hidden="true" /></span>
+              <div><span>Approved</span><strong>{formatReviewCount(reviewCounts?.accepted)}</strong></div>
+            </article>
+            <article className="admin-review-summary-card is-rejected">
+              <span className="admin-review-summary-icon"><X size={21} aria-hidden="true" /></span>
+              <div><span>Rejected</span><strong>{formatReviewCount(reviewCounts?.rejected)}</strong></div>
+            </article>
+          </div>
+          <section className="admin-card admin-review-list" aria-label="Discovery candidates">
+          {selectedItems.length > 0 && (
+            <div className="admin-review-selection-bar" role="group" aria-label="Actions for the selected candidates">
+              <span className="admin-review-selection-count">{selectedItems.length} selected</span>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={!canBulkResolve || bulkSaving}
+                onClick={() => resolveSelected('accepted')}
+              >
+                {bulkSaving ? 'Working...' : 'Approve'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={!canBulkResolve || bulkSaving}
+                onClick={() => resolveSelected('rejected')}
+              >
+                Reject
+              </button>
+              <div className="admin-review-reason-popover">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  aria-expanded={reasonOpen}
+                  aria-controls="bulk-reason-popover"
+                  disabled={bulkSaving}
+                  onClick={() => setReasonOpen((value) => !value)}
+                >
+                  {bulkNote.trim() ? 'Reason added' : 'Add reason'}
+                </button>
+                <div id="bulk-reason-popover" className="admin-review-reason-popover-body" hidden={!reasonOpen}>
+                  <label className="admin-field">
+                    <span>Reason (optional)</span>
+                    <input
+                      type="text"
+                      maxLength={1000}
+                      value={bulkNote}
+                      onChange={(event) => setBulkNote(event.target.value)}
+                      placeholder="Recorded with the decision"
+                      disabled={bulkSaving}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="admin-link"
+                    onClick={() => setReasonOpen(false)}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="admin-link admin-review-selection-clear"
+                disabled={bulkSaving}
+                onClick={clearSelection}
+              >
+                <X size={13} aria-hidden="true" /> Clear
+              </button>
+            </div>
+          )}
           <div className="admin-review-toolbar">
             <div className="admin-review-filters" role="group" aria-label="Filter candidates by review status">
-              {statusFilters.map((filter) => (
+              {REVIEW_FILTERS.map((filter) => (
                 <button
                   type="button"
                   key={filter.value}
@@ -723,6 +1463,7 @@ function DiscoveryReviewQueue({ token }) {
                   onClick={() => changeStatus(filter.value)}
                 >
                   {filter.label}
+                  <span className="admin-review-filter-count">{formatReviewCount(reviewCounts?.[filter.value])}</span>
                 </button>
               ))}
             </div>
@@ -751,10 +1492,10 @@ function DiscoveryReviewQueue({ token }) {
                       disabled={viewState !== 'results' || bulkSaving}
                     />
                   </th>
-                  <th>Candidate</th>
+                  <th>Scholarship</th>
                   <th>Source</th>
                   <th>Discovered</th>
-                  <th>Confidence</th>
+                  <th>Evidence</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -772,12 +1513,36 @@ function DiscoveryReviewQueue({ token }) {
                 {viewState === 'empty' && (
                   <tr><td className="admin-review-empty" colSpan="6">No candidates match this filter.</td></tr>
                 )}
-                {viewState === 'results' && result.items.map((item) => (
-                  <tr
-                    key={item.id}
-                    className={`${selectedId === item.id ? 'is-current ' : ''}${selectedIds.includes(item.id) ? 'is-checked' : ''}`}
-                  >
-                    <td className="admin-review-checkbox-cell">
+                {viewState === 'results' && result.items.map((item) => {
+                  const name = item.candidate_name || item.extracted_values?.name || 'Unnamed scholarship';
+                  const flag = duplicateFlags.get(item.id);
+                  const strength = getCandidateEvidenceStrength(item);
+                  const { mustCheck } = groupReviewReasons(item);
+                  const needsChecks = mustCheck.length > 0
+                    || item.missing_required_fields.length > 0
+                    || item.conflicting_values.length > 0;
+                  return (
+                    <tr
+                      key={item.id}
+                      className={`${selectedId === item.id ? 'is-current ' : ''}${selectedIds.includes(item.id) ? 'is-checked' : ''}`}
+                      onClick={() => setSelectedId(item.id)}
+                      onKeyDown={(event) => {
+                        // Only the row itself: Space must still toggle the
+                        // checkbox and Enter must still work in the name button.
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedId(item.id);
+                        }
+                      }}
+                      tabIndex={0}
+                      aria-selected={selectedId === item.id}
+                      style={{ cursor: 'pointer' }}
+                    >
+                    <td
+                      className="admin-review-checkbox-cell"
+                      onClick={(event) => event.stopPropagation()}
+                    >
                       <input
                         type="checkbox"
                         checked={selectedIds.includes(item.id)}
@@ -787,27 +1552,52 @@ function DiscoveryReviewQueue({ token }) {
                       />
                     </td>
                     <td>
-                      <button type="button" className="admin-review-candidate-button" onClick={() => setSelectedId(item.id)}>
-                        {item.candidate_name || item.extracted_values?.name || 'Unnamed scholarship'}
+                      <button
+                        type="button"
+                        className="admin-review-candidate-button"
+                        title={name}
+                        onClick={() => setSelectedId(item.id)}
+                      >
+                        {name}
                       </button>
-                      <small>{item.host_country || 'Country not recorded'}</small>
+                      <small>{item.host_country || item.extracted_values?.country || 'Country not recorded'}</small>
+                      {flag && (
+                        <small
+                          className="admin-review-duplicate-badge"
+                          title={`Possible duplicate: ${DUPLICATE_REASON_TEXT[flag.reason] || flag.reason}. Nothing is merged.`}
+                        >
+                          <CopyCheck size={12} aria-hidden="true" />
+                          <span>Duplicate of</span>
+                          {flag.matchIds.map((id) => (
+                            <strong key={id}>#{id}</strong>
+                          ))}
+                        </small>
+                      )}
                     </td>
-                    <td>{item.source_name}</td>
-                    <td>{formatRunTime(item.created_at)}</td>
-                    <td><span className="admin-review-confidence">Not recorded</span></td>
-                    <td><span className={`admin-review-status is-${item.review_status}`}>{statusLabels[item.review_status] || item.review_status}</span></td>
-                  </tr>
-                ))}
+                    <td>
+                      <div className="admin-review-source">
+                        <span>{item.source_name || 'Source not recorded'}</span>
+                        {getSourceDomain(item) && <small>{getSourceDomain(item)}</small>}
+                      </div>
+                    </td>
+                    <td>
+                      <time
+                        className="admin-review-discovered"
+                        dateTime={item.created_at || undefined}
+                        title={formatAbsoluteTime(item.created_at) || undefined}
+                      >
+                        <span>{formatRelativeTime(item.created_at) || formatAbsoluteTime(item.created_at) || 'Not recorded'}</span>
+                      </time>
+                    </td>
+                    <td>
+                      <EvidenceMeter strength={strength} needsChecks={needsChecks} compact />
+                    </td>
+                    <td><span className={`admin-review-status is-${item.review_status}`}>{getReviewStatusLabel(item.review_status)}</span></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-          </div>
-          <div className="admin-review-legend" aria-label="Review status key">
-            <span>Status key:</span>
-            <span className="admin-review-status is-pending">Needs review</span>
-            <span className="admin-review-status is-reviewed">Reviewed</span>
-            <span className="admin-review-status is-accepted">Accepted</span>
-            <span className="admin-review-status is-rejected">Rejected</span>
-            <span className="admin-review-status is-duplicate">Duplicate</span>
           </div>
           {result && viewState !== 'error' && (
             <footer className="admin-review-pagination">
@@ -825,18 +1615,32 @@ function DiscoveryReviewQueue({ token }) {
               </div>
             </footer>
           )}
-        </section>
+          </section>
+        </div>
         {selectedItem
-          ? <DiscoveryReviewCard key={selectedItem.id} item={selectedItem} token={token} onDone={handleDone} saving={bulkSaving} />
+          ? (
+            <DiscoveryReviewCard
+              key={selectedItem.id}
+              item={selectedItem}
+              token={token}
+              onDone={handleDone}
+              saving={bulkSaving}
+              duplicateFlag={duplicateFlags.get(selectedItem.id) || null}
+              itemsById={itemsById}
+            />
+          )
           : (
             <aside className="admin-card admin-review-details admin-review-details-empty" aria-label="Candidate details">
-              <h2>Candidate details</h2>
-              <p>Select a candidate to review its extracted fields.</p>
-              <dl className="admin-review-detail-fields">
-                {['Name', 'Source URL', 'Deadline', 'Award amount', 'Eligibility', 'Confidence'].map((label) => (
-                  <div key={label}><dt>{label}</dt><dd>—</dd></div>
-                ))}
-              </dl>
+              <div className="admin-review-empty-block">
+                <span className="admin-review-empty-icon"><ClipboardList size={24} aria-hidden="true" /></span>
+                <h2>Ready to review?</h2>
+                <p>Select a scholarship candidate from the list to inspect its details, evidence, and verification status.</p>
+                {Number.isInteger(reviewCounts?.pending) && (
+                  <span className="admin-review-empty-pending">
+                    {formatReviewCount(reviewCounts.pending)} candidates pending review
+                  </span>
+                )}
+              </div>
             </aside>
           )}
       </div>
@@ -927,7 +1731,6 @@ function AdminDashboard({ token }) {
         <div>
           <span className="admin-eyebrow">Scholarship operations</span>
           <h1>Admin Dashboard</h1>
-          <p>Scholarship management and discovery overview</p>
         </div>
         <div className={`admin-system-status${monitoringAvailable ? ' is-available' : ''}`} role="status">
           <span aria-hidden="true" />
@@ -1001,7 +1804,7 @@ function AdminDashboard({ token }) {
                         <td><strong>{item.candidate_name || 'Unnamed scholarship'}</strong><small>{item.host_country || 'Host country not recorded'}</small></td>
                         <td>{item.source_name}</td>
                         <td>{formatRunTime(item.created_at)}</td>
-                        <td><span className="admin-review-status">{item.review_status.replace(/_/g, ' ')}</span></td>
+                        <td><span className={`admin-review-status is-${item.review_status}`}>{getReviewStatusLabel(item.review_status)}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1067,7 +1870,7 @@ function AdminDashboard({ token }) {
             {monitoring && runs.slice(0, 4).map((run) => (
               <div className="admin-recent-run" key={run.run_id}>
                 <span className={`admin-run-marker is-${run.status}`} />
-                <div><strong>{run.trigger_type.replace(/_/g, ' ')}</strong><small>{formatRunTime(run.started_at)}</small></div>
+                <div><strong>{humanizeEnum(run.trigger_type)}</strong><small>{formatRunTime(run.started_at)}</small></div>
                 <span className={`admin-run-status is-${run.status}`}>{run.status}</span>
                 <small className="admin-run-count">{run.candidates_discovered} candidates</small>
               </div>
@@ -1086,12 +1889,82 @@ function ListChecksIcon() {
   return <ListChecks size={19} aria-hidden="true" />;
 }
 
+/**
+ * An in-page confirmation, not window.confirm.
+ *
+ * Escape cancels, the confirm button takes focus on open, and the backdrop is
+ * a sibling button so a click outside also cancels without trapping anything.
+ */
+function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel, busy = false }) {
+  const confirmRef = useRef(null);
+  useEffect(() => {
+    confirmRef.current?.focus();
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [onCancel]);
+
+  return (
+    <div className="admin-modal-backdrop">
+      <div
+        className="admin-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="admin-modal-title"
+      >
+        <h2 id="admin-modal-title">{title}</h2>
+        <div className="admin-modal-body">{body}</div>
+        <div className="admin-modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            ref={confirmRef}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? 'Starting…' : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A value that is configured on the server and cannot be changed here. */
+function ReadOnlySetting({ label, description, badges }) {
+  return (
+    <div className="admin-discovery-setting">
+      <div className="admin-discovery-setting-text">
+        <strong>{label}</strong>
+        {description && <p>{description}</p>}
+      </div>
+      <div className="admin-discovery-setting-values">
+        {badges.map((badge) => (
+          <span
+            key={badge.text}
+            className={`admin-discovery-config-badge${badge.tone ? ` is-${badge.tone}` : ''}`}
+          >
+            {badge.text}
+          </span>
+        ))}
+        <span className="admin-discovery-config-note">Set in server configuration</span>
+      </div>
+    </div>
+  );
+}
+
 function DiscoveryMonitoring({ token, view = 'overview' }) {
   const [monitoring, setMonitoring] = useState(null);
   const [error, setError] = useState('');
   const [manualError, setManualError] = useState('');
   const [manualMessage, setManualMessage] = useState('');
   const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [requestGuard] = useState(createLatestRequestGuard);
@@ -1118,13 +1991,42 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
     return () => requestGuard.invalidate();
   }, [load, refresh, requestGuard]);
 
+  // Poll only while a run is actually active, only while the tab is visible,
+  // and only ever through one interval. A hidden tab left polling for hours
+  // is what buried the backend in requests.
+  const workerActive = isDiscoveryWorkerActive(monitoring?.worker_status);
   useEffect(() => {
-    if (!isDiscoveryWorkerActive(monitoring?.worker_status)) return undefined;
-    const intervalId = window.setInterval(() => {
-      setRefresh((value) => value + 1);
-    }, 4000);
-    return () => window.clearInterval(intervalId);
-  }, [monitoring?.worker_status]);
+    if (!workerActive) return undefined;
+
+    let intervalId = null;
+    const stop = () => {
+      if (intervalId !== null) {
+        window.clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    const start = () => {
+      if (intervalId !== null) return;
+      intervalId = window.setInterval(() => {
+        setRefresh((value) => value + 1);
+      }, MONITORING_POLL_MS);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setRefresh((value) => value + 1);
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    if (document.visibilityState === 'visible') start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stop();
+    };
+  }, [workerActive]);
 
   const retry = () => {
     requestGuard.invalidate();
@@ -1138,11 +2040,13 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
     setManualError('');
     setManualMessage('');
     adminApi.startManualDiscovery(token)
-      .then((run) => {
-        setManualMessage(`Manual discovery started (${run.run_id}).`);
+      .then(() => {
+        setConfirmOpen(false);
+        setManualMessage('Manual discovery started.');
         setRefresh((value) => value + 1);
       })
       .catch((failure) => {
+        setConfirmOpen(false);
         setManualError(formatDiscoveryWorkerError(failure));
         setRefresh((value) => value + 1);
       })
@@ -1158,34 +2062,34 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
   const runIsActive = isDiscoveryWorkerActive(workerStatus);
   const workerBlocksSubmission = runIsActive
     || (workerStatus === 'interrupted_unknown' && !monitoring?.worker_recoverable);
-  const lastRunStatus = lastRun?.display_status === 'succeeded'
-    ? 'Success'
-    : lastRun?.display_status === 'partial'
-      ? 'Partial Failure'
-      : lastRun?.display_status === 'failed'
-        ? 'Failed'
-        : lastRun?.display_status === 'running'
-          ? 'Running'
-          : null;
 
   if (view === 'overview') {
-    const showTime = (value) => value ? formatRunTime(value) : '—';
-    const configStatus = monitoring
-      ? `${monitoring.enabled ? 'Enabled' : 'Disabled'} (configured) · ${monitoring.current_run_status}`
-      : '—';
+    const statusLine = getDiscoveryStatusLine(monitoring);
+    const runSummary = getLastRunSummary(monitoring);
+    const manualPlan = getManualRunPlan(monitoring);
+    const progress = getRunProgress(monitoring);
+    const analytics = getDiscoveryAnalyticsCounts(monitoring);
+    const pipelineRun = analytics.run;
+    const nextStep = getDiscoveryNextStep(monitoring);
+    const failureNote = getLastFailureNote(monitoring);
+    const runStatus = pipelineRun?.display_status || pipelineRun?.status || workerStatus;
+    const showTime = (value) => formatTimeWithRelative(value);
+    const formatMetricValue = (value) => (
+      value === null ? '—' : value.toLocaleString()
+    );
 
     return (
       <div className="admin-discovery-page">
         <header className="admin-discovery-page-header">
           <div>
             <h1>Automated Discovery</h1>
-            <p>Configure and monitor scholarship discovery</p>
           </div>
           <div className="admin-discovery-header-actions">
-            <span className="admin-discovery-system-status" role="status">
-              <span aria-hidden="true" />
-              {monitoring ? 'Scheduler process health: not reported' : loading ? 'Loading monitoring' : 'Monitoring unavailable'}
-            </span>
+            {!monitoring && (
+              <span className="admin-discovery-system-status" role="status">
+                {loading ? 'Loading' : 'Monitoring unavailable'}
+              </span>
+            )}
             <button type="button" className="btn btn-outline" onClick={retry}>Refresh</button>
           </div>
         </header>
@@ -1197,149 +2101,274 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
             <section className="admin-discovery-panel" aria-label="Discovery controls">
               <header className="admin-discovery-panel-header">
                 <h2>Automatic and manual discovery</h2>
-                <span className="admin-discovery-unavailable">
-                  {monitoring ? `${monitoring.interval_hours}-hour interval` : 'Configuration unavailable'}
-                </span>
               </header>
-              <div className="admin-discovery-control-row">
-                <div>
-                  <strong>Automated discovery</strong>
-                  <p>{monitoring ? `Scheduler is ${monitoring.enabled ? 'enabled' : 'disabled'} in configuration` : 'Scheduler configuration is unavailable'}</p>
-                </div>
-                <button
-                  type="button"
-                  className={`admin-discovery-toggle${monitoring?.enabled ? ' is-on' : ''}`}
-                  disabled
-                  aria-pressed={Boolean(monitoring?.enabled)}
-                  aria-label={`Automated discovery ${monitoring?.enabled ? 'enabled' : 'disabled'} in configuration; toggle unavailable`}
-                >
-                  <span />
-                </button>
-              </div>
-              <div className="admin-discovery-control-row">
-                <div>
-                  <strong>Schedule</strong>
-                  <p>Configured interval between scheduled runs</p>
-                </div>
-                <select disabled value={monitoring ? String(monitoring.interval_hours) : ''} aria-label="Configured discovery interval">
-                  {monitoring
-                    ? <option value={String(monitoring.interval_hours)}>Every {monitoring.interval_hours} hours</option>
-                    : <option value="">Not available</option>}
-                </select>
-              </div>
-              <div className="admin-discovery-control-row">
-                <div>
+
+              {/* 1: read-only configuration reads as status, never as a control. */}
+              <ReadOnlySetting
+                label="Automatic runs"
+                description="Scheduled discovery without anyone starting it"
+                badges={[{
+                  text: monitoring ? (monitoring.enabled ? 'On' : 'Off') : 'Unknown',
+                  tone: monitoring?.enabled ? 'on' : 'off',
+                }]}
+              />
+              <ReadOnlySetting
+                label="Schedule"
+                description="How often a scheduled run starts"
+                badges={[{
+                  text: monitoring ? `Every ${monitoring.interval_hours} hours` : 'Unknown',
+                }]}
+              />
+
+              <div className="admin-discovery-setting">
+                <div className="admin-discovery-setting-text">
                   <strong>Run discovery now</strong>
                   <p>
                     {workerStatus === 'interrupted_unknown'
                       ? monitoring.worker_recoverable
-                        ? 'The last run was interrupted. A new run will reconcile it after obtaining the exclusive advisory lock.'
-                        : 'The last run state cannot be verified. Refresh monitoring before retrying.'
+                        ? 'The last run was interrupted. Starting a new one will tidy it up.'
+                        : 'The last run state cannot be verified. Refresh before retrying.'
                       : activeRun
-                      ? `${activeRun.trigger_type.replace(/_/g, ' ')} discovery is active. Wait for it to finish.`
-                      : workerStatus === 'submitting'
-                        ? 'Manual discovery is being submitted.'
-                        : workerStatus === 'starting'
-                          ? 'Discovery is waiting for its worker to start.'
-                      : 'Start a manual run without changing the automatic schedule.'}
+                        ? 'A run is already going. Wait for it to finish.'
+                        : workerStatus === 'submitting'
+                          ? 'Starting the run.'
+                          : workerStatus === 'starting'
+                            ? 'Waiting for the worker to start.'
+                            : 'Starts one run now. The automatic schedule is unchanged.'}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={runDiscoveryNow}
-                  disabled={manualSubmitting || workerBlocksSubmission || !monitoring}
-                >
-                  {manualSubmitting || workerStatus === 'submitting'
-                    ? 'Submitting…'
-                    : workerStatus === 'starting'
+                <div className="admin-discovery-setting-values">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={manualSubmitting || workerBlocksSubmission || !monitoring}
+                  >
+                    {manualSubmitting || workerStatus === 'submitting'
                       ? 'Starting…'
-                      : workerStatus === 'running'
-                        ? 'Discovery running'
-                        : workerStatus === 'interrupted_unknown' && !monitoring?.worker_recoverable
-                          ? 'State unverified'
-                        : 'Run Discovery Now'}
-                </button>
+                      : workerStatus === 'starting'
+                        ? 'Starting…'
+                        : workerStatus === 'running'
+                          ? 'Run in progress'
+                          : workerStatus === 'interrupted_unknown' && !monitoring?.worker_recoverable
+                            ? 'State unverified'
+                            : 'Run Discovery Now'}
+                  </button>
+                </div>
               </div>
+
               {manualError && <p className="admin-notice is-error" role="alert">{manualError}</p>}
-              {manualMessage && !manualError && <p className="admin-discovery-run-message" role="status">{manualMessage}</p>}
-              {monitoring && (
-                <p className="admin-discovery-run-message" role="status">
-                  Worker: {workerStatusLabel}
-                  {monitoring.worker_run_id ? ` · Run ${monitoring.worker_run_id}` : ''}
-                  {monitoring.worker_trigger_type ? ` · ${monitoring.worker_trigger_type.replace(/_/g, ' ')}` : ''}
-                  {monitoring.worker_started_at
-                    ? ` · Started ${showTime(monitoring.worker_started_at)}`
-                    : monitoring.worker_submitted_at
-                      ? ` · Submitted ${showTime(monitoring.worker_submitted_at)}`
-                      : ''}
-                  {` · ${monitoring.worker_duration_seconds ?? 0}s`}
-                  {monitoring.worker_stage ? ` · Stage: ${monitoring.worker_stage}` : ''}
-                  {monitoring.worker_error ? ` · ${monitoring.worker_error}` : ''}
+              {manualMessage && !manualError && (
+                <p className="admin-discovery-run-message" role="status">{manualMessage}</p>
+              )}
+
+              {/* 4: progress from the monitoring data already being polled. */}
+              {progress && (
+                <div className="admin-discovery-progress" role="status">
+                  <span className="admin-discovery-progress-dot" aria-hidden="true" />
+                  <div>
+                    <strong>
+                      {progress.sourceName || progress.stageLabel || workerStatusLabel}
+                    </strong>
+                    <p>
+                      {[progress.position, progress.elapsed ? `${progress.elapsed} elapsed` : '']
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 2: one line, in plain words, with the run id in the tooltip. */}
+              {runSummary && !progress && (
+                <p className="admin-discovery-run-summary" title={runSummary.title} role="status">
+                  {runSummary.text}
                 </p>
               )}
-              <p className="admin-discovery-control-note">
-                Automatic enablement and interval come from backend configuration. Manual runs remain available independently; scheduler process health is not reported by this API.
-              </p>
             </section>
 
-            <section className="admin-discovery-panel" aria-label="Latest discovery run pipeline">
-              <h2>Latest run pipeline</h2>
-              {lastRun && (
-                <p className="admin-discovery-last-run">
-                  {lastRun.trigger_type.replace(/_/g, ' ')} run · {showTime(lastRun.started_at)}
-                  {lastRunStatus ? ` · ${lastRunStatus}` : ''}
-                </p>
-              )}
-              <div className="admin-discovery-pipeline">
-                <div><span>Sources attempted</span><strong>{lastRun?.sources_attempted ?? '—'}</strong></div>
-                <div><span>Sources succeeded</span><strong>{lastRun?.sources_succeeded ?? '—'}</strong></div>
-                <div><span>Candidates found</span><strong>{lastRun?.candidates_discovered ?? '—'}</strong></div>
-                <div><span>Awaiting review</span><strong>{lastRun?.candidates_queued_for_review ?? '—'}</strong></div>
+            <section className="admin-discovery-panel" aria-label="Scholarship discovery analytics">
+              <div className="admin-discovery-analytics-header">
+                <div>
+                  <h2>Scholarship discovery analytics</h2>
+                  <p>Latest run outcomes and current review workload.</p>
+                </div>
+                <div className="admin-discovery-analytics-actions">
+                  <Link className="admin-discovery-review-link" to="/admin/scholarships?section=reviews">
+                    Review queue <ArrowRight size={13} aria-hidden="true" />
+                  </Link>
+                  {runIsActive && (
+                    <span className="admin-discovery-live-status" role="status">
+                      <Activity size={14} aria-hidden="true" />
+                      Updating live
+                    </span>
+                  )}
+                </div>
               </div>
-              {lastRun?.error_summary && (
-                <p className="admin-discovery-last-run" role="status">
-                  Failure category: {lastRun.error_summary}
+              {pipelineRun && (
+                <dl className="admin-discovery-analytics-summary">
+                  <div>
+                    <dt><Globe2 size={14} aria-hidden="true" /> Sources attempted / succeeded</dt>
+                    <dd>
+                      {formatMetricValue(analytics.sourcesAttempted)}
+                      {' / '}
+                      {formatMetricValue(analytics.sourcesSucceeded)}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt><BookOpen size={14} aria-hidden="true" /> Candidates found</dt>
+                    <dd>{formatMetricValue(analytics.candidatesFound)}</dd>
+                  </div>
+                  <div>
+                    <dt><Activity size={14} aria-hidden="true" /> Run status</dt>
+                    <dd>
+                      <span className={`admin-discovery-run-status is-${runStatus}`}>
+                        {humanizeEnum(runStatus)}
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt><Clock3 size={14} aria-hidden="true" /> Run duration</dt>
+                    <dd>
+                      {formatDiscoveryDuration(
+                        pipelineRun.duration_seconds ?? monitoring?.worker_duration_seconds,
+                      ) || '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt><Radar size={14} aria-hidden="true" /> Last run</dt>
+                    <dd>
+                      {pipelineRun.started_at
+                        ? (
+                          <time dateTime={pipelineRun.started_at}>
+                            {formatAbsoluteTime(pipelineRun.started_at) || '—'}
+                          </time>
+                        )
+                        : '—'}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+              <DiscoveryAnalyticsChart
+                counts={analytics}
+                hasRun={Boolean(pipelineRun)}
+                loading={(loading && !monitoring) || (runIsActive && !pipelineRun)}
+                error={!monitoring ? error : ''}
+              />
+              {pipelineRun?.display_status === 'failed' && !failureNote && (
+                <p className="admin-discovery-analytics-error" role="alert">
+                  {pipelineRun.error_summary || 'The latest discovery run failed.'}
                 </p>
               )}
-              {monitoring?.last_failed_run && monitoring.last_failed_run.run_id !== lastRun?.run_id && (
-                <p className="admin-discovery-last-run" role="status">
-                  Last failure: {showTime(monitoring.last_failed_run.completed_at)}
-                  {monitoring.last_failed_run.error_summary
-                    ? ` · ${monitoring.last_failed_run.error_summary}`
-                    : ` · ${monitoring.last_failed_run.failed_sources.length} source failure(s)`}
+              {/* The failure detail remains linked to its full run history. */}
+              {failureNote && (
+                <p className="admin-discovery-failure-note" role="status">
+                  {failureNote.text}
+                  {' '}
+                  <Link to="/admin/scholarships?section=history">See history</Link>
                 </p>
               )}
-              {!lastRun && !error && <p className="admin-discovery-empty" role="status">No discovery run has been recorded yet.</p>}
             </section>
           </div>
 
           <aside className="admin-discovery-side">
+            {/* 10: one next action, rather than a list of links. */}
+            {nextStep && (
+              <section
+                className={`admin-discovery-panel admin-discovery-next-step${nextStep.cta === 'Review now' ? ' is-pending' : ''}`}
+                aria-label="Next step"
+              >
+                <h2>Next step</h2>
+                <p>{nextStep.text}</p>
+                {nextStep.href && nextStep.cta && (
+                  <Link className="btn btn-primary" to={nextStep.href}>
+                    {nextStep.cta} <ArrowRight size={14} aria-hidden="true" />
+                  </Link>
+                )}
+              </section>
+            )}
+
+            {/* 3: status and times only; the counts live in the pipeline. */}
             <section className="admin-discovery-panel" aria-label="Discovery overview">
               <h2>Overview</h2>
               <dl className="admin-discovery-overview">
-                <div><dt>Status</dt><dd>{configStatus}{monitoring?.current_run_status === 'running' ? ' · Run active' : ''}</dd></div>
+                <div>
+                  <dt>Status</dt>
+                  <dd className="admin-discovery-overview-status">
+                    <span className={`admin-discovery-overview-badge is-${monitoring ? (monitoring.enabled ? 'on' : 'off') : 'unknown'}`}>
+                      {statusLine.automatic.replace('Automatic runs: ', '')}
+                    </span>
+                    <span className={`admin-discovery-overview-badge ${runIsActive ? 'is-running' : 'is-idle'}`}>
+                      {statusLine.run}
+                    </span>
+                  </dd>
+                </div>
                 <div><dt>Last run</dt><dd>{showTime(lastRun?.started_at)}</dd></div>
-                <div><dt>Last completed run</dt><dd>{showTime(monitoring?.last_completed_run?.completed_at)}</dd></div>
-                <div><dt>Last failed run</dt><dd>{showTime(monitoring?.last_failed_run?.completed_at)}</dd></div>
-                <div><dt>Last scheduled run</dt><dd>{showTime(monitoring?.last_scheduled_run?.started_at)}</dd></div>
-                <div><dt>Next scheduled run</dt><dd>{showTime(monitoring?.next_scheduled_run)}</dd></div>
-                <div><dt>Manual run</dt><dd>{monitoring?.current_manual_run?.status || 'Idle'}</dd></div>
-                <div><dt>Sources attempted</dt><dd>{lastRun?.sources_attempted ?? '—'}</dd></div>
-                <div><dt>New candidates</dt><dd>{lastRun?.candidates_discovered ?? '—'}</dd></div>
-                <div><dt>Requiring review</dt><dd>{monitoring ? candidateCounts.awaitingReview : '—'}</dd></div>
+                <div><dt>Next scheduled run</dt><dd>{getNextScheduledRunText(monitoring)}</dd></div>
+                <div>
+                  <dt>Manual run</dt>
+                  <dd>
+                    <span className={`admin-discovery-overview-badge ${monitoring?.current_manual_run?.status === 'running' ? 'is-running' : 'is-idle'}`}>
+                      {monitoring?.current_manual_run?.status === 'running' ? 'In progress' : 'Not running'}
+                    </span>
+                  </dd>
+                </div>
               </dl>
             </section>
 
-            <section className="admin-discovery-panel admin-discovery-go-to" aria-label="Discovery navigation">
-              <h2>Go to</h2>
-              <Link to="/admin/scholarships?section=sources">Discovery Sources <ArrowRight size={14} aria-hidden="true" /></Link>
-              <Link to="/admin/scholarships?section=reviews">Review Queue <ArrowRight size={14} aria-hidden="true" /></Link>
-              <Link to="/admin/scholarships?section=history">Discovery History <ArrowRight size={14} aria-hidden="true" /></Link>
-              <Link to="/admin/scholarships?section=publications">Discovery Publications <ArrowRight size={14} aria-hidden="true" /></Link>
-            </section>
+            {/* 2: the developer-facing detail, out of the way but not lost. */}
+            {monitoring && (
+              <section className="admin-discovery-panel admin-discovery-technical" aria-label="Technical details">
+                <AccordionSection id="discovery-technical" label="Technical details">
+                  <dl className="admin-discovery-overview">
+                    <div><dt>Worker</dt><dd>{workerStatusLabel}</dd></div>
+                    {monitoring.worker_run_id && (
+                      <div><dt>Run id</dt><dd className="admin-discovery-run-id">{monitoring.worker_run_id}</dd></div>
+                    )}
+                    {monitoring.worker_stage && (
+                      <div><dt>Stage</dt><dd>{humanizeEnum(monitoring.worker_stage)}</dd></div>
+                    )}
+                    <div>
+                      <dt>Worker duration</dt>
+                      <dd>{formatDiscoveryDuration(monitoring.worker_duration_seconds) || '—'}</dd>
+                    </div>
+                    <div><dt>Scheduler process health</dt><dd>Not reported by this API</dd></div>
+                    <div><dt>Last completed run</dt><dd>{showTime(monitoring.last_completed_run?.completed_at)}</dd></div>
+                    <div><dt>Last failed run</dt><dd>{showTime(monitoring.last_failed_run?.completed_at)}</dd></div>
+                    <div><dt>Last scheduled run</dt><dd>{showTime(monitoring.last_scheduled_run?.started_at)}</dd></div>
+                    <div><dt>Review candidates</dt><dd>{candidateCounts.totalReviewCandidates}</dd></div>
+                    <div><dt>Database</dt><dd>{monitoring.database_name}</dd></div>
+                  </dl>
+                  {monitoring.worker_error && (
+                    <p className="admin-discovery-failure-note">{monitoring.worker_error}</p>
+                  )}
+                </AccordionSection>
+              </section>
+            )}
           </aside>
         </div>
+
+        {confirmOpen && (
+          <ConfirmDialog
+            title="Run discovery now?"
+            confirmLabel="Run discovery"
+            busy={manualSubmitting}
+            onCancel={() => setConfirmOpen(false)}
+            onConfirm={runDiscoveryNow}
+            body={(
+              <>
+                <p>
+                  {manualPlan.sourceCount === null
+                    ? 'This starts one discovery run over the sources set in the server configuration.'
+                    : `This checks ${manualPlan.sourceCount} source${manualPlan.sourceCount === 1 ? '' : 's'} and usually takes about ${manualPlan.lowerMinutes}–${manualPlan.upperMinutes} minutes.`}
+                </p>
+                <p className="admin-discovery-config-note">
+                  Candidates go to the Review Queue. Nothing reaches students without your approval.
+                </p>
+              </>
+            )}
+          />
+        )}
       </div>
     );
   }
@@ -1359,8 +2388,8 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
         <>
           <div className="admin-tiles" aria-label="Discovery status">
             <div className="admin-tile">
-              <strong>{monitoring.enabled ? 'Enabled' : 'Disabled'}</strong>
-              <span>Scheduler configuration</span>
+              <strong>{monitoring.enabled ? 'On' : 'Off'}</strong>
+              <span>Automatic runs</span>
             </div>
             <div className="admin-tile">
               <strong>{getDiscoveryWorkerStatusLabel(monitoring.worker_status)}</strong>
@@ -1376,24 +2405,13 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
             </div>
           </div>
           <dl className="admin-monitoring-times">
-            <div><dt>Last attempted run</dt><dd>{formatRunTime(monitoring.last_attempted_run?.started_at)}</dd></div>
-            <div><dt>Last completed run</dt><dd>{formatRunTime(monitoring.last_completed_run?.completed_at)}</dd></div>
-            <div><dt>Last failed run</dt><dd>{formatRunTime(monitoring.last_failed_run?.completed_at)}</dd></div>
-            <div><dt>Last successful run</dt><dd>{formatRunTime(monitoring.last_successful_run?.completed_at)}</dd></div>
-            <div><dt>Next scheduled run</dt><dd>{formatRunTime(monitoring.next_scheduled_run)}</dd></div>
-            <div><dt>Interval</dt><dd>{monitoring.interval_hours} hours</dd></div>
+            <div><dt>Last attempted run</dt><dd>{formatTimeWithRelative(monitoring.last_attempted_run?.started_at)}</dd></div>
+            <div><dt>Last completed run</dt><dd>{formatTimeWithRelative(monitoring.last_completed_run?.completed_at)}</dd></div>
+            <div><dt>Last failed run</dt><dd>{formatTimeWithRelative(monitoring.last_failed_run?.completed_at)}</dd></div>
+            <div><dt>Last successful run</dt><dd>{formatTimeWithRelative(monitoring.last_successful_run?.completed_at)}</dd></div>
+            <div><dt>Next scheduled run</dt><dd>{getNextScheduledRunText(monitoring)}</dd></div>
+            <div><dt>Interval</dt><dd>Every {monitoring.interval_hours} hours</dd></div>
           </dl>
-          <p className="admin-discovery-run-message" role="status">
-            {monitoring.worker_run_id ? `Run ${monitoring.worker_run_id}` : 'No active run ID'}
-            {monitoring.worker_trigger_type ? ` · ${monitoring.worker_trigger_type.replace(/_/g, ' ')}` : ''}
-            {monitoring.worker_started_at ? ` · Started ${formatRunTime(monitoring.worker_started_at)}` : ''}
-            {!monitoring.worker_started_at && monitoring.worker_submitted_at
-              ? ` · Submitted ${formatRunTime(monitoring.worker_submitted_at)}`
-              : ''}
-            {` · ${monitoring.worker_duration_seconds ?? 0}s`}
-            {monitoring.worker_stage ? ` · Stage: ${monitoring.worker_stage}` : ''}
-            {monitoring.worker_error ? ` · ${monitoring.worker_error}` : ''}
-          </p>
           <h3>Recent run history</h3>
           {monitoring.recent_runs.length === 0
             ? <p className="admin-muted">No discovery runs have been recorded.</p>
@@ -1409,10 +2427,10 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
                   <tbody>
                     {monitoring.recent_runs.map((run) => (
                       <tr key={run.run_id}>
-                        <td>{run.run_id}</td>
+                        <td title={`Run ${run.run_id}`}>{formatAbsoluteTime(run.started_at)}</td>
                         <td>{run.trigger_type.replace('_', ' ')}</td>
-                        <td>{formatRunTime(run.started_at)}</td>
-                        <td>{run.duration_seconds}s</td>
+                        <td>{formatTimeWithRelative(run.started_at)}</td>
+                        <td>{formatDiscoveryDuration(run.duration_seconds) || '—'}</td>
                         <td>{run.status}</td>
                         <td>{run.sources_succeeded} succeeded / {run.sources_failed} failed of {run.sources_attempted}</td>
                         <td>{run.candidates_discovered}</td>
@@ -1430,8 +2448,11 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
               {monitoring.recent_runs
                 .filter((run) => run.error_summary || run.failed_sources.length > 0)
                 .map((run) => (
-                  <details key={run.run_id}>
-                    <summary>{run.run_id} · {run.error_summary || `${run.sources_failed} source failure(s)`}</summary>
+                  <AccordionSection
+                    key={run.run_id}
+                    id={`run-failure-${run.run_id}`}
+                    label={`${formatAbsoluteTime(run.started_at)} · ${run.error_summary || formatFailureCount(run.sources_failed)}`}
+                  >
                     {run.failed_sources.length > 0 && (
                       <ul>
                         {run.failed_sources.map((source) => (
@@ -1442,7 +2463,7 @@ function DiscoveryMonitoring({ token, view = 'overview' }) {
                         ))}
                       </ul>
                     )}
-                  </details>
+                  </AccordionSection>
                 ))}
             </div>
           )}
@@ -1541,7 +2562,6 @@ function DiscoveryHistory({ token }) {
       <header className="admin-history-page-header">
         <div>
           <h1>Discovery History</h1>
-          <p>Past discovery runs and their results.</p>
         </div>
         <label className="admin-history-range">
           <span className="admin-sr-only">History date range</span>
@@ -1628,7 +2648,7 @@ function DiscoveryHistory({ token }) {
                   <td><span className={`admin-history-status is-${run.display_status}`}>{statusLabels[run.display_status] || run.display_status}</span></td>
                   <td>
                     <strong>{formatRunTime(run.started_at)}</strong>
-                    <small>{run.trigger_type.replace(/_/g, ' ')} · {run.run_id.slice(0, 8)}</small>
+                    <small>{humanizeEnum(run.trigger_type)} · {run.run_id.slice(0, 8)}</small>
                   </td>
                   <td>{run.duration_seconds}s</td>
                   <td>{run.sources_succeeded}/{run.sources_attempted}</td>
@@ -1669,32 +2689,84 @@ function DiscoveryHistory({ token }) {
       {selectedRun && (
         <section className="admin-history-log" aria-label={`Run log details for ${selectedRun.run_id}`}>
           <header>
-            <div>
+            <div className="admin-history-log-heading">
               <h2>Run log details</h2>
-              <p>{selectedRun.run_id} · {selectedRun.trigger_type.replace(/_/g, ' ')} · {formatRunTime(selectedRun.started_at)}</p>
+              <p>Run outcome, processing totals, and source diagnostics.</p>
             </div>
             <button type="button" className="admin-link" onClick={() => setSelectedRunId('')}>Close</button>
           </header>
-          <dl>
-            <div><dt>Outcome</dt><dd>{statusLabels[selectedRun.display_status] || selectedRun.display_status}</dd></div>
-            <div><dt>Sources</dt><dd>{selectedRun.sources_succeeded} succeeded, {selectedRun.sources_failed} failed of {selectedRun.sources_attempted}</dd></div>
+          <dl className="admin-history-log-meta">
+            <div><dt>Run ID</dt><dd><code>{selectedRun.run_id}</code></dd></div>
+            <div><dt>Trigger</dt><dd>{humanizeEnum(selectedRun.trigger_type)}</dd></div>
+            <div><dt>Started</dt><dd>{formatRunTime(selectedRun.started_at)}</dd></div>
+          </dl>
+          <dl className="admin-history-log-metrics">
+            <div className={`is-outcome is-${selectedRun.display_status}`}>
+              <dt>Outcome</dt>
+              <dd>
+                <span className={`admin-history-status is-${selectedRun.display_status}`}>
+                  {statusLabels[selectedRun.display_status] || selectedRun.display_status}
+                </span>
+              </dd>
+            </div>
+            <div className="is-sources">
+              <dt>Sources</dt>
+              <dd>
+                <span className="is-success"><strong>{selectedRun.sources_succeeded}</strong> succeeded</span>
+                <span className="is-failure"><strong>{selectedRun.sources_failed}</strong> failed</span>
+                <small>of {selectedRun.sources_attempted} attempted</small>
+              </dd>
+            </div>
             <div><dt>Pages fetched</dt><dd>{selectedRun.pages_fetched}</dd></div>
             <div><dt>Candidates discovered</dt><dd>{selectedRun.candidates_discovered}</dd></div>
             <div><dt>Review candidates queued</dt><dd>{selectedRun.candidates_queued_for_review}</dd></div>
-            <div><dt>Scholarships created</dt><dd>{selectedRun.scholarships_created} (unverified)</dd></div>
+            <div className="is-created">
+              <dt>Scholarships created</dt>
+              <dd><strong>{selectedRun.scholarships_created}</strong><small>Unverified</small></dd>
+            </div>
           </dl>
-          {selectedRun.error_summary && <p className="admin-notice is-error">{selectedRun.error_summary}</p>}
+          {selectedRun.error_summary && (
+            <div className="admin-history-run-error" role="alert">
+              <strong>Run error</strong>
+              <p>{selectedRun.error_summary}</p>
+            </div>
+          )}
           {selectedRun.failed_sources.length > 0 ? (
-            <ul>
-              {selectedRun.failed_sources.map((source) => (
-                <li key={`${selectedRun.run_id}-${source.source_id}`}>
-                  <strong>{source.source_name || source.source_id}:</strong>{' '}
-                  {formatDiscoverySourceFailure(source)}
-                </li>
-              ))}
-            </ul>
+            <section className="admin-history-failures" aria-label="Failed sources">
+              <header>
+                <h3>Failed sources</h3>
+                <span>{selectedRun.failed_sources.length}</span>
+              </header>
+              <ul>
+                {selectedRun.failed_sources.map((source) => {
+                  const failureDetails = getDiscoverySourceFailureDetails(source);
+                  return (
+                    <li key={`${selectedRun.run_id}-${source.source_id}`}>
+                      <div className="admin-history-failure-heading">
+                        <strong>{source.source_name || source.source_id}</strong>
+                        <span>Failed</span>
+                      </div>
+                      {failureDetails.length > 0 ? (
+                        <dl className="admin-history-failure-details">
+                          {failureDetails.map(({ label, value }) => (
+                            <div key={label}>
+                              <dt>{label === 'HTTP' ? 'HTTP status' : label}</dt>
+                              <dd>
+                                {['Category', 'Stage', 'Page'].includes(label) ? humanizeEnum(value) : value}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : (
+                        <p>{formatDiscoverySourceFailure(source)}</p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
           ) : !selectedRun.error_summary && (
-            <p className="admin-muted">No source errors were recorded for this run.</p>
+            <p className="admin-history-log-empty">No source errors were recorded for this run.</p>
           )}
         </section>
       )}
@@ -1764,6 +2836,28 @@ function DiscoverySources({ token }) {
     currentPage * SOURCE_PAGE_SIZE,
     (currentPage + 1) * SOURCE_PAGE_SIZE,
   );
+  const sourceSummary = sources
+    ? {
+      total: sources.length,
+      active: sources.filter((source) => source.active).length,
+      errors: sources.filter((source) => source.status === 'failed').length,
+    }
+    : null;
+  const sourceFilterCounts = {
+    all: sourceSummary?.total ?? null,
+    active: sourceSummary?.active ?? null,
+    paused: null,
+    errors: sourceSummary?.errors ?? null,
+  };
+  const sourceStats = [
+    { key: 'total', label: 'Total sources', value: sourceSummary?.total ?? null, icon: Globe2 },
+    { key: 'active', label: 'Active sources', value: sourceSummary?.active ?? null, icon: CircleCheck },
+    { key: 'paused', label: 'Paused sources', value: null, icon: Clock3, note: 'Not tracked' },
+    { key: 'errors', label: 'Sources with errors', value: sourceSummary?.errors ?? null, icon: ShieldAlert },
+  ];
+  const formatSourceCount = (value) => (
+    Number.isInteger(value) && value >= 0 ? value.toLocaleString() : '—'
+  );
   const statusLabels = {
     not_checked: 'Not checked',
     pending: 'Running',
@@ -1771,51 +2865,80 @@ function DiscoverySources({ token }) {
     failed: 'Error',
     partial_failure: 'Partial failure',
     skipped: 'Skipped',
+    inactive: 'Inactive',
     trust_review_required: 'Trust review',
   };
   const formatCheckedAt = (value) => {
-    if (!value) return 'Never checked';
-    return Number.isNaN(new Date(value).getTime()) ? 'Unknown' : formatRunTime(value);
+    if (!value) return <span className="admin-source-never-checked">Never checked</span>;
+    if (Number.isNaN(new Date(value).getTime())) return <span>Unknown</span>;
+    const absoluteTime = formatAbsoluteTime(value);
+    return (
+      <time className="admin-source-checked-at" dateTime={value} title={absoluteTime}>
+        <span>{formatRelativeTime(value) || absoluteTime}</span>
+        <small>{absoluteTime}</small>
+      </time>
+    );
   };
 
   return (
     <div className="admin-sources-page">
       <header className="admin-discovery-page-header">
         <div>
-          <h1>Discovery Sources</h1>
-          <p>Review the curated sources used by scholarship discovery.</p>
+          <div className="admin-sources-title">
+            <h1>Discovery Sources</h1>
+            <span className="admin-sources-total">{formatSourceCount(sourceSummary?.total)} sources</span>
+          </div>
         </div>
         <div className="admin-sources-header-actions">
           <span className="admin-sources-readonly"><Globe2 size={13} aria-hidden="true" /> Curated registry</span>
-          <button type="button" className="btn btn-outline" onClick={retry}>Refresh</button>
           <button
             type="button"
-            className="btn btn-primary"
+            className="btn btn-primary admin-sources-add-button"
             disabled
             title="Sources are managed in the curated registry and cannot be added from Admin."
           >
             <Plus size={14} aria-hidden="true" /> Add source
           </button>
+          <button type="button" className="btn btn-outline" onClick={retry}>Refresh</button>
         </div>
       </header>
 
+      <section className="admin-sources-summary" aria-label="Source summary">
+        {sourceStats.map((stat) => {
+          const Icon = stat.icon;
+          return (
+            <div className={`admin-sources-stat is-${stat.key}`} key={stat.key}>
+              <span className="admin-sources-stat-icon"><Icon size={16} aria-hidden="true" /></span>
+              <div>
+                <span className="admin-sources-stat-label">{stat.label}</span>
+                <strong>{formatSourceCount(stat.value)}</strong>
+                {stat.note && <small>{stat.note}</small>}
+              </div>
+            </div>
+          );
+        })}
+      </section>
+
       <section className="admin-sources-card" aria-label="Discovery source registry">
         <div className="admin-sources-toolbar">
-          <div className="admin-sources-filters" role="group" aria-label="Filter discovery sources">
-            {['all', 'active', 'paused', 'errors'].map((value) => (
-              <button
-                key={value}
-                type="button"
-                className={filter === value ? 'is-selected' : ''}
-                aria-pressed={value === 'paused' ? undefined : filter === value}
-                disabled={value === 'paused'}
-                title={value === 'paused' ? 'The curated registry does not expose a pause state.' : undefined}
-                onClick={() => { setFilter(value); setPage(0); }}
+          <label className="admin-sources-filter">
+            <span>Status</span>
+            <span className="admin-sources-filter-control">
+              <select
+                value={filter}
+                aria-label="Filter discovery sources"
+                title="Paused sources cannot be filtered because the curated registry does not expose a pause state."
+                onChange={(event) => { setFilter(event.target.value); setPage(0); }}
               >
-                {value[0].toUpperCase() + value.slice(1)}
-              </button>
-            ))}
-          </div>
+                {['all', 'active', 'paused', 'errors'].map((value) => (
+                  <option key={value} value={value} disabled={value === 'paused'}>
+                    {value[0].toUpperCase() + value.slice(1)} ({formatSourceCount(sourceFilterCounts[value])})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} aria-hidden="true" />
+            </span>
+          </label>
           <label className="admin-sources-search">
             <Search size={15} aria-hidden="true" />
             <input
@@ -1828,9 +2951,12 @@ function DiscoverySources({ token }) {
           </label>
         </div>
 
-        <p className="admin-sources-note">
-          Active means eligible under the curated source rules; run status reflects recorded history, not scheduler health. Candidate counts include all recorded review items from each source, not only pending items. Add, edit, and pause are unavailable.
-        </p>
+        <div className="admin-sources-note" role="note">
+          <Info size={15} aria-hidden="true" />
+          <p>
+            Active means eligible under the curated source rules; run status reflects recorded history, not scheduler health. Candidate counts include all recorded review items from each source, not only pending items. Add, edit, and pause are unavailable.
+          </p>
+        </div>
         {error && <RetryNotice message={error} onRetry={retry} />}
         {!sources && loading && <p className="admin-sr-only" role="status">Loading discovery sources</p>}
 
@@ -1862,18 +2988,30 @@ function DiscoverySources({ token }) {
               {pageSources.map((source) => (
                 <tr key={source.source_id}>
                   <td>
-                    <strong className="admin-source-name">{source.name}</strong>
-                    <small>{source.country_or_region}</small>
+                    <div className="admin-source-identity">
+                      {/university|institution|college/i.test(source.category || '')
+                        ? <Building2 size={16} aria-hidden="true" />
+                        : <Globe2 size={16} aria-hidden="true" />}
+                      <div>
+                        <strong className="admin-source-name">{source.name}</strong>
+                        <small>{source.country_or_region || source.official_domain}</small>
+                      </div>
+                    </div>
                   </td>
                   <td>
-                    <a className="admin-source-url" href={source.source_url} target="_blank" rel="noreferrer">
-                      {source.official_domain}
+                    <a className="admin-source-url" href={source.source_url} target="_blank" rel="noreferrer" title={source.source_url}>
+                      <span>{source.official_domain}</span>
+                      <ExternalLink size={12} aria-hidden="true" />
                     </a>
                   </td>
-                  <td><span className="admin-source-type">{source.category.replace(/_/g, ' ')}</span></td>
+                  <td><span className="admin-source-type">{humanizeEnum(source.category)}</span></td>
                   <td><span className={`admin-source-status is-${source.status}`}>{statusLabels[source.status] || 'Unknown'}</span></td>
                   <td>{formatCheckedAt(source.last_checked)}</td>
-                  <td>{Number.isFinite(source.review_candidates) ? source.review_candidates : '—'}</td>
+                  <td>
+                    <span className="admin-source-review-count">
+                      {Number.isFinite(source.review_candidates) ? source.review_candidates.toLocaleString() : '—'}
+                    </span>
+                  </td>
                   <td>
                     <div className="admin-source-actions" title="Source management is not available in Admin.">
                       <button type="button" disabled>Edit</button>
@@ -1892,12 +3030,15 @@ function DiscoverySources({ token }) {
 
         {sources && (
           <footer className="admin-sources-pagination">
-            <span>
-              Showing {visibleSources.length ? currentPage * SOURCE_PAGE_SIZE + 1 : 0}–{Math.min((currentPage + 1) * SOURCE_PAGE_SIZE, visibleSources.length)} of {visibleSources.length}
+            <span className="admin-sources-pagination-range">
+              <strong>
+                Showing {visibleSources.length ? currentPage * SOURCE_PAGE_SIZE + 1 : 0}–{Math.min((currentPage + 1) * SOURCE_PAGE_SIZE, visibleSources.length)}
+              </strong>
+              <span> of {visibleSources.length.toLocaleString()} sources</span>
             </span>
             <div>
               <button type="button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} aria-label="Previous source page">
-                <ArrowLeft size={14} aria-hidden="true" /> Prev
+                <ArrowLeft size={14} aria-hidden="true" /> Previous
               </button>
               <button type="button" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)} aria-label="Next source page">
                 Next <ArrowRight size={14} aria-hidden="true" />
@@ -1918,7 +3059,7 @@ const VERIFICATION_CHECKLIST = [
   { key: 'application', label: 'Application link works', note: 'Leads to the real application' },
 ];
 
-function VerificationDetails({ token, scholarshipId, onChanged }) {
+function VerificationDetails({ token, scholarshipId, onChanged, currentStatus }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -1965,6 +3106,9 @@ function VerificationDetails({ token, scholarshipId, onChanged }) {
   const officialUrl = scholarship?.official_info_url || scholarship?.official_url;
   const hasConflicts = Boolean(detail?.issues.some((issue) => issue.code === 'conflict'));
   const allChecksComplete = VERIFICATION_CHECKLIST.every(({ key }) => checks[key]);
+  const completedChecks = VERIFICATION_CHECKLIST.filter(({ key }) => checks[key]).length;
+  const verificationStatus = currentStatus
+    || (scholarship?.verification_status === 'verified' ? 'verified' : 'unverified');
   const verifiedBy = detail?.audit.find((entry) => entry.action === 'verification')?.actor_email || '—';
   const alreadyNeedsRecheck = Boolean(detail?.issues.some((issue) => issue.code === 'needs_reverification'));
 
@@ -2017,22 +3161,63 @@ function VerificationDetails({ token, scholarshipId, onChanged }) {
 
   return (
     <aside className="admin-card admin-verification-details" aria-label="Verification checklist">
-      <h2>Verification checklist</h2>
-      {loading && <p role="status">Loading scholarship details...</p>}
-      {loadError && <RetryNotice message={loadError} onRetry={retry} />}
-      {!loading && !loadError && !detail && <p>Select a scholarship to start verifying it.</p>}
+      {loading && (
+        <div className="admin-verification-state" role="status">
+          <span className="admin-verification-state-icon"><Clock3 size={19} aria-hidden="true" /></span>
+          <h2>Loading verification workspace</h2>
+          <p>Loading scholarship details...</p>
+          <div className="admin-verification-state-skeleton" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+        </div>
+      )}
+      {loadError && (
+        <div className="admin-verification-state is-error" role="alert">
+          <span className="admin-verification-state-icon"><ShieldAlert size={19} aria-hidden="true" /></span>
+          <h2>Verification workspace unavailable</h2>
+          <p>{loadError}</p>
+          <button type="button" className="btn btn-outline" onClick={retry}>Try again</button>
+        </div>
+      )}
       {detail && (
         <>
-          {!loading && (
-            <p className="admin-verification-prompt">
-              {scholarship.name} · {scholarship.verification_status || 'unverified'}
-            </p>
-          )}
+          <header className="admin-verification-detail-header">
+            <div className="admin-verification-detail-heading">
+              <h2>Candidate Details</h2>
+              <span className={`admin-verification-status is-${verificationStatus}`}>
+                {humanizeEnum(verificationStatus)}
+              </span>
+            </div>
+            <strong className="admin-verification-detail-title" title={scholarship.name}>{scholarship.name}</strong>
+            <dl className="admin-verification-detail-meta">
+              <div><dt>Country</dt><dd>{scholarship.country || '—'}</dd></div>
+              <div><dt>Provider</dt><dd>{scholarship.provider || '—'}</dd></div>
+            </dl>
+          </header>
           {notice && <p className="admin-notice is-success" role="status">{notice}</p>}
           {actionError && <p className="admin-notice is-error" role="alert">{actionError}</p>}
+          <div className="admin-verification-progress">
+            <div className="admin-verification-progress-label">
+              <span>Verification progress</span>
+              <strong>{completedChecks}/{VERIFICATION_CHECKLIST.length}</strong>
+            </div>
+            <div
+              className="admin-verification-progress-track"
+              role="progressbar"
+              aria-label="Verification checklist progress"
+              aria-valuemin={0}
+              aria-valuemax={VERIFICATION_CHECKLIST.length}
+              aria-valuenow={completedChecks}
+            >
+              <span style={{ width: `${(completedChecks / VERIFICATION_CHECKLIST.length) * 100}%` }} />
+            </div>
+          </div>
+          <h3 className="admin-verification-section-title">Verification checklist</h3>
           <div className="admin-verification-checklist">
             {VERIFICATION_CHECKLIST.map(({ key, label, note }) => (
-              <label className="admin-verification-check" key={key}>
+              <label className={`admin-verification-check${checks[key] ? ' is-complete' : ''}`} key={key}>
                 <input
                   type="checkbox"
                   checked={Boolean(checks[key])}
@@ -2055,7 +3240,7 @@ function VerificationDetails({ token, scholarshipId, onChanged }) {
             </label>
           )}
           <label className="admin-verification-notes">
-            <span>Add notes about what you checked</span>
+            <span>Verification notes</span>
             <textarea
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
@@ -2096,27 +3281,8 @@ function VerificationDetails({ token, scholarshipId, onChanged }) {
           </p>
         </>
       )}
-      {!detail && !loading && !loadError && (
-        <>
-          <div className="admin-verification-checklist is-placeholder">
-            {VERIFICATION_CHECKLIST.map(({ key, label, note }) => (
-              <label className="admin-verification-check" key={key}>
-                <input type="checkbox" disabled />
-                <span><strong>{label}</strong><small>{note}</small></span>
-              </label>
-            ))}
-          </div>
-          <textarea className="admin-verification-placeholder-notes" disabled placeholder="Add notes about what you checked" />
-          <dl className="admin-verification-meta">
-            <div><dt>Verified by</dt><dd>—</dd></div>
-            <div><dt>Verified on</dt><dd>—</dd></div>
-          </dl>
-          <div className="admin-verification-actions">
-            <button type="button" className="btn btn-primary" disabled>Mark verified</button>
-            <button type="button" className="btn btn-outline" disabled>Flag for recheck</button>
-            <button type="button" className="btn btn-outline" disabled>Open official source</button>
-          </div>
-        </>
+      {!loading && !loadError && !detail && (
+        <p className="admin-verification-prompt">Scholarship details are unavailable.</p>
       )}
     </aside>
   );
@@ -2127,11 +3293,15 @@ function VerificationQueue({ token }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [result, setResult] = useState(null);
+  const [summaryStats, setSummaryStats] = useState(null);
+  const [summaryError, setSummaryError] = useState('');
+  const [summaryLoading, setSummaryLoading] = useState(true);
   const [selectedId, setSelectedId] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [requestGuard] = useState(createLatestRequestGuard);
+  const [summaryRequestGuard] = useState(createLatestRequestGuard);
 
   const load = useCallback(() => {
     const requestId = requestGuard.begin();
@@ -2164,6 +3334,38 @@ function VerificationQueue({ token }) {
     return () => requestGuard.invalidate();
   }, [load, refresh, requestGuard]);
 
+  useEffect(() => {
+    const requestId = summaryRequestGuard.begin();
+    const recheckQuery = new URLSearchParams({
+      skip: '0',
+      limit: '1',
+      archived: 'false',
+      issue: 'verification_recheck',
+    });
+    Promise.allSettled([
+      adminApi.summary(token),
+      adminApi.list(token, recheckQuery.toString()),
+    ]).then(([summaryResult, recheckResult]) => {
+      if (!summaryRequestGuard.isCurrent(requestId)) return;
+      const summary = summaryResult.status === 'fulfilled' ? summaryResult.value : null;
+      const rechecks = recheckResult.status === 'fulfilled' ? recheckResult.value : null;
+      const failures = [summaryResult, recheckResult]
+        .filter((response) => response.status === 'rejected')
+        .map((response) => (
+          response.reason instanceof Error ? response.reason.message : String(response.reason)
+        ));
+      setSummaryStats({
+        total: summary?.total ?? null,
+        unverified: summary?.unverified ?? null,
+        needsRecheck: rechecks?.total ?? null,
+        verified: summary?.verified ?? null,
+      });
+      setSummaryError(failures.join(' '));
+      setSummaryLoading(false);
+    });
+    return () => summaryRequestGuard.invalidate();
+  }, [summaryRequestGuard, token, refresh]);
+
   const updateQuery = (update) => {
     requestGuard.invalidate();
     setResult(null);
@@ -2192,6 +3394,8 @@ function VerificationQueue({ token }) {
     requestGuard.invalidate();
     setResult(null);
     setLoading(true);
+    setSummaryLoading(true);
+    setSummaryError('');
     setRefresh((value) => value + 1);
   }, [requestGuard]);
 
@@ -2203,6 +3407,13 @@ function VerificationQueue({ token }) {
   ];
   const rows = result?.items || [];
   const pageCount = result ? Math.ceil(result.total / PAGE_SIZE) : 0;
+  const selectedRow = rows.find((row) => row.id === selectedId);
+  const filterCounts = {
+    all: summaryStats?.total,
+    unverified: summaryStats?.unverified,
+    needs_recheck: summaryStats?.needsRecheck,
+    verified: summaryStats?.verified,
+  };
   const rowStatus = (row) => {
     if (row.issues.some((issue) => ['needs_reverification', 'stale_verification'].includes(issue.code))) return 'needs_recheck';
     if (row.issues.some((issue) => issue.code === 'broken_source')) return 'source_unreachable';
@@ -2220,11 +3431,38 @@ function VerificationQueue({ token }) {
       <header className="admin-verification-page-header">
         <div>
           <h1>Verification</h1>
-          <p>Confirm scholarship details against official sources before they show as verified.</p>
         </div>
+        <button type="button" className="btn btn-outline" onClick={refreshList}>
+          Refresh
+        </button>
       </header>
+      {summaryError && <RetryNotice message={summaryError} onRetry={refreshList} />}
+      <section className="admin-verification-stats" aria-label="Verification summary" aria-busy={summaryLoading}>
+        {[
+          { key: 'total', label: 'Total Scholarships', value: summaryStats?.total, icon: BookOpen, tone: 'blue' },
+          { key: 'unverified', label: 'Unverified', value: summaryStats?.unverified, icon: Clock3, tone: 'neutral' },
+          { key: 'needsRecheck', label: 'Needs Recheck', value: summaryStats?.needsRecheck, icon: ShieldAlert, tone: 'amber' },
+          { key: 'verified', label: 'Verified', value: summaryStats?.verified, icon: CircleCheck, tone: 'green' },
+        ].map(({ key, label, value, icon: Icon, tone }) => (
+          <article className={`admin-stat-card admin-verification-stat-card is-${tone}`} key={key}>
+            <span className={`admin-stat-icon is-${tone}`}><Icon size={17} aria-hidden="true" /></span>
+            <div><span>{label}</span><strong>{value ?? '—'}</strong></div>
+          </article>
+        ))}
+      </section>
       <div className="admin-verification-workspace">
         <section className="admin-card admin-verification-list" aria-label="Scholarships to verify">
+          <div className="admin-verification-list-heading">
+            <div>
+              <h2>Scholarships</h2>
+              <p>Browse records and select one to verify.</p>
+            </div>
+            <span>
+              {result
+                ? `${formatReviewCount(result.total)} results`
+                : loading ? 'Loading...' : 'Unavailable'}
+            </span>
+          </div>
           <div className="admin-verification-toolbar">
             <div className="admin-verification-filters" role="group" aria-label="Filter scholarships by verification">
               {filters.map((filter) => (
@@ -2236,6 +3474,9 @@ function VerificationQueue({ token }) {
                   onClick={() => { if (status !== filter.value) updateQuery(() => setStatus(filter.value)); }}
                 >
                   {filter.label}
+                  <span className="admin-verification-filter-count">
+                    {filterCounts[filter.value] ?? '—'}
+                  </span>
                 </button>
               ))}
             </div>
@@ -2253,25 +3494,33 @@ function VerificationQueue({ token }) {
           {error && <RetryNotice message={error} onRetry={retry} />}
           <div className="admin-table-scroll admin-verification-table-scroll">
             <table className="admin-table admin-verification-table">
+              <colgroup>
+                <col style={{ width: '5%' }} />
+                <col style={{ width: '27%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '17%' }} />
+                <col style={{ width: '15%' }} />
+              </colgroup>
               <thead>
                 <tr>
+                  <th><span className="admin-sr-only">Select for review</span></th>
                   <th>Scholarship</th>
                   <th>Provider</th>
                   <th>Last verified</th>
                   <th>Official source</th>
                   <th>Status</th>
-                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {!result && loading && Array.from({ length: 5 }, (_, index) => (
                   <tr className="admin-skeleton-row" key={`verification-skeleton-${index}`} aria-hidden="true">
+                    <td><span className="admin-skeleton-checkbox" /></td>
                     <td><span className="admin-skeleton-line is-long" /></td>
                     <td><span className="admin-skeleton-line is-short" /></td>
                     <td><span className="admin-skeleton-line is-short" /></td>
                     <td><span className="admin-skeleton-line" /></td>
                     <td><span className="admin-skeleton-pill" /></td>
-                    <td><span className="admin-skeleton-line is-short" /></td>
                   </tr>
                 ))}
                 {result && !loading && rows.length === 0 && (
@@ -2281,8 +3530,20 @@ function VerificationQueue({ token }) {
                   const currentStatus = rowStatus(row);
                   return (
                     <tr key={row.id} className={selectedId === row.id ? 'is-selected' : ''}>
-                      <td><strong>{row.name}</strong></td>
-                      <td>{row.provider || '—'}</td>
+                      <td className="admin-verification-select-cell">
+                        <input
+                          type="checkbox"
+                          checked={selectedId === row.id}
+                          onChange={(event) => setSelectedId(event.target.checked ? row.id : null)}
+                          aria-label={`Select ${row.name} for review`}
+                        />
+                      </td>
+                      <td><strong title={row.name}>{row.name}</strong></td>
+                      <td>
+                        <span className="admin-verification-provider" title={row.provider || undefined}>
+                          {row.provider || '—'}
+                        </span>
+                      </td>
                       <td>{row.last_verified_date ? formatRunTime(row.last_verified_date) : '—'}</td>
                       <td>
                         {row.official_source_url
@@ -2290,19 +3551,11 @@ function VerificationQueue({ token }) {
                           : '—'}
                       </td>
                       <td><span className={`admin-verification-status is-${currentStatus}`}>{statusLabels[currentStatus]}</span></td>
-                      <td><button type="button" className="admin-verification-review" onClick={() => setSelectedId(row.id)}>Review</button></td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-          </div>
-          <div className="admin-verification-legend" aria-label="Verification status key">
-            <span>Status key:</span>
-            <span className="admin-verification-status is-verified">Verified</span>
-            <span className="admin-verification-status is-needs_recheck">Needs recheck</span>
-            <span className="admin-verification-status is-source_unreachable">Source unreachable</span>
-            <span className="admin-verification-status is-unverified">Unverified</span>
           </div>
           {result && (
             <footer className="admin-verification-pagination">
@@ -2321,7 +3574,13 @@ function VerificationQueue({ token }) {
           )}
         </section>
         {selectedId
-          ? <VerificationDetails key={selectedId} token={token} scholarshipId={selectedId} onChanged={refreshList} />
+          ? <VerificationDetails
+            key={selectedId}
+            token={token}
+            scholarshipId={selectedId}
+            currentStatus={selectedRow ? rowStatus(selectedRow) : null}
+            onChanged={refreshList}
+          />
           : <VerificationDetailsEmpty />}
       </div>
     </div>
@@ -2331,25 +3590,12 @@ function VerificationQueue({ token }) {
 function VerificationDetailsEmpty() {
   return (
     <aside className="admin-card admin-verification-details" aria-label="Verification checklist">
-      <h2>Verification checklist</h2>
-      <p className="admin-verification-prompt">Select a scholarship to start verifying it.</p>
-      <div className="admin-verification-checklist is-placeholder">
-        {VERIFICATION_CHECKLIST.map(({ key, label, note }) => (
-          <label className="admin-verification-check" key={key}>
-            <input type="checkbox" disabled />
-            <span><strong>{label}</strong><small>{note}</small></span>
-          </label>
-        ))}
-      </div>
-      <textarea className="admin-verification-placeholder-notes" disabled placeholder="Add notes about what you checked" />
-      <dl className="admin-verification-meta">
-        <div><dt>Verified by</dt><dd>—</dd></div>
-        <div><dt>Verified on</dt><dd>—</dd></div>
-      </dl>
-      <div className="admin-verification-actions">
-        <button type="button" className="btn btn-primary" disabled>Mark verified</button>
-        <button type="button" className="btn btn-outline" disabled>Flag for recheck</button>
-        <button type="button" className="btn btn-outline" disabled>Open official source</button>
+      <div className="admin-verification-empty-state">
+        <span className="admin-verification-empty-icon">
+          <ClipboardList size={20} aria-hidden="true" />
+        </span>
+        <h2>Select a scholarship to start verifying it.</h2>
+        <p>Choose a record from the list to inspect its information and checklist.</p>
       </div>
     </aside>
   );
@@ -2388,16 +3634,16 @@ export default function AdminScholarships() {
   if (tab === 'dashboard') return <AdminDashboard token={token} />;
 
   const sectionTitles = {
-    records: ['Scholarships', 'Manage verified and unverified scholarship records.'],
-    duplicates: ['Duplicates', 'Find and review scholarship records that may describe the same award.'],
-    discovery: ['Automated Discovery', 'Scheduler configuration and recent discovery run monitoring.'],
-    sources: ['Discovery Sources', 'Review the curated sources used by scholarship discovery.'],
-    reviews: ['Discovery Review Queue', 'Review candidates before accepting them as scholarship records.'],
-    verification: ['Verification', 'Confirm scholarship details against official sources before they show as verified.'],
-    history: ['Discovery History', 'Review the recorded outcomes of scholarship discovery runs.'],
-    publications: ['Discovery Publications', 'Inspect approved snapshots, source evidence, freshness, and publication lifecycle.'],
+    records: 'Scholarships',
+    duplicates: 'Duplicates',
+    discovery: 'Automated Discovery',
+    sources: 'Discovery Sources',
+    reviews: 'Discovery Review Queue',
+    verification: 'Verification',
+    history: 'Discovery History',
+    publications: 'Discovery Publications',
   };
-  const [title, subtitle] = sectionTitles[tab];
+  const title = sectionTitles[tab];
 
   return (
     <div className={`page-container admin-page${tab === 'records' ? ' admin-records-page' : ''}${tab === 'discovery' || tab === 'sources' ? ' admin-discovery-shell' : ''}${tab === 'reviews' ? ' admin-review-shell' : ''}${tab === 'verification' ? ' admin-verification-shell' : ''}${tab === 'duplicates' ? ' admin-duplicates-shell' : ''}${tab === 'history' ? ' admin-history-shell' : ''}`}>
@@ -2405,7 +3651,6 @@ export default function AdminScholarships() {
         <header className="admin-header">
           <div>
             <h1>{title}</h1>
-            <p className="admin-muted">{subtitle}</p>
           </div>
           {tab === 'records' && (
             <Link className="btn btn-primary" to="/admin/scholarships/new"><Plus size={16} aria-hidden="true" /> Add scholarship</Link>
@@ -2433,7 +3678,10 @@ export default function AdminScholarships() {
             </label>
           </div>
           <details className="admin-record-more-filters">
-            <summary>More filters{issue || archived ? ' · Active' : ''}</summary>
+            <summary className="admin-chevron-summary">
+              <ChevronRight size={14} aria-hidden="true" />
+              More filters{issue || archived ? ' · Active' : ''}
+            </summary>
             <div className="admin-record-more-controls">
               <label>
                 Data quality
@@ -2467,14 +3715,21 @@ export default function AdminScholarships() {
                 {rows?.items.map((row) => (
                   <tr key={row.id}>
                     <td>
-                      <Link className="admin-record-name" to={`/admin/scholarships/${row.id}`}>{row.name}</Link>
+                      <Link className="admin-record-name" title={row.name} to={`/admin/scholarships/${row.id}`}>{row.name}</Link>
                       {row.issues.length > 0 && <small className="admin-record-issues" title={row.issues.map((item) => item.label).join(', ')}>
                         {row.issues.length} item{row.issues.length === 1 ? '' : 's'} need attention
                       </small>}
                     </td>
-                    <td>{row.provider || '—'}</td>
-                    <td>{row.country?.replace(/\s*\(.*\)\s*$/, '') || '—'}</td>
-                    <td>{row.deadline || '—'}</td>
+                    <td><span className="admin-record-value" title={row.provider || undefined}>{row.provider || '—'}</span></td>
+                    <td>
+                      <span
+                        className="admin-record-value"
+                        title={row.country?.replace(/\s*\(.*\)\s*$/, '') || undefined}
+                      >
+                        {row.country?.replace(/\s*\(.*\)\s*$/, '') || '—'}
+                      </span>
+                    </td>
+                    <td><span className="admin-record-value" title={row.deadline || undefined}>{row.deadline || '—'}</span></td>
                     <td>
                       <span className={`admin-verification-badge is-${row.verification_status === 'verified' ? 'verified' : 'unverified'}`}>
                         {row.verification_status || 'Unverified'}

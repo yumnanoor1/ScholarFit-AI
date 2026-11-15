@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { adminApi } from '../services/adminApi';
 import {
-  getImportConflicts, getImportFieldGroups, importedValueToForm, IMPORT_FIELD_LABELS,
+  buildCandidatePatch, describeImportReading, getImportCandidates, getImportConflicts,
+  getImportFailureGuidance, getImportFieldGroups, importedValueToForm, IMPORT_FIELD_LABELS,
 } from '../services/adminScholarshipImport';
 
 function statusTone(status) {
@@ -22,11 +23,21 @@ export default function AdminScholarshipImport({ token, values, onApply, onStatu
   const [resolutions, setResolutions] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // The failure object, not just its message: a refusal by the official site
+  // carries a category and the status it returned.
+  const [failure, setFailure] = useState(null);
+  const [pastedText, setPastedText] = useState('');
+  const [showPaste, setShowPaste] = useState(false);
+  const [blockedUrl, setBlockedUrl] = useState('');
   const fileInput = useRef(null);
 
   const groups = useMemo(() => getImportFieldGroups(sources), [sources]);
   const conflicts = useMemo(() => getImportConflicts(sources), [sources]);
   const unresolvedCount = conflicts.filter((group) => !Object.hasOwn(resolutions, group.name)).length;
+  const guidance = useMemo(
+    () => (failure ? getImportFailureGuidance(failure) : (error ? { blocked: false, message: error } : null)),
+    [failure, error],
+  );
 
   useEffect(() => {
     onStatusChange({ sourceCount: sources.length, conflictsResolved: unresolvedCount === 0 });
@@ -53,10 +64,11 @@ export default function AdminScholarshipImport({ token, values, onApply, onStatu
     }
 
     setLoading(true);
+    const attemptedUrl = sourceType === 'pdf_upload' ? '' : url.trim();
     try {
       const result = await adminApi.extractScholarshipSource(token, {
         sourceType,
-        url: sourceType === 'pdf_upload' ? undefined : url.trim(),
+        url: sourceType === 'pdf_upload' ? undefined : attemptedUrl,
         file: sourceType === 'pdf_upload' ? file : undefined,
       });
       setSources((current) => [...current, result]);
@@ -65,11 +77,47 @@ export default function AdminScholarshipImport({ token, values, onApply, onStatu
       setFile(null);
       if (fileInput.current) fileInput.current.value = '';
       setError('');
-    } catch (failure) {
-      setError(failure.message);
+      setFailure(null);
+    } catch (caught) {
+      setFailure(caught);
+      setError(caught.message);
+      setBlockedUrl(attemptedUrl);
     } finally {
       setLoading(false);
     }
+  };
+
+  /** Run the same extraction over text the administrator pasted. */
+  const extractPastedText = async () => {
+    if (!pastedText.trim()) {
+      setError('Paste the page text first.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await adminApi.extractScholarshipText(token, {
+        text: pastedText,
+        url: blockedUrl || undefined,
+      });
+      setSources((current) => [...current, result]);
+      setResolutions({});
+      setPastedText('');
+      setShowPaste(false);
+      setError('');
+      setFailure(null);
+    } catch (caught) {
+      setFailure(caught);
+      setError(caught.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** Hand the refused URL to the form and leave the rest to the administrator. */
+  const fillManually = () => {
+    if (blockedUrl) onApply({ official_info_url: blockedUrl });
+    setFailure(null);
+    setError('');
   };
 
   const applyNonConflicting = () => {
@@ -150,7 +198,65 @@ export default function AdminScholarshipImport({ token, values, onApply, onStatu
           />
         </div>
       )}
-      {error && <p className="admin-field-error" role="alert">{error}</p>}
+      {guidance && !guidance.blocked && (
+        <p className="admin-field-error" role="alert">{guidance.message}</p>
+      )}
+      {guidance && guidance.blocked && (
+        <div className="admin-import-blocked" role="alert">
+          <p>{guidance.message}</p>
+          <div className="admin-import-blocked-actions">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => { setShowPaste((value) => !value); setError(''); }}
+            >
+              {showPaste ? 'Hide pasted text' : 'Paste page text'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => { setSourceType('pdf_upload'); setShowPaste(false); setError(''); }}
+            >
+              Upload PDF
+            </button>
+            <button type="button" className="btn btn-outline" onClick={fillManually}>
+              Fill manually
+            </button>
+          </div>
+          <p className="admin-import-blocked-note">
+            Nothing here works around the block: pasting or uploading gives us the
+            same page by hand, and the extraction and evidence checks are unchanged.
+          </p>
+        </div>
+      )}
+      {showPaste && (
+        <div className="admin-field admin-import-input">
+          <label htmlFor="scholarship-import-text">Page text</label>
+          <textarea
+            id="scholarship-import-text"
+            rows={8}
+            value={pastedText}
+            onChange={(event) => setPastedText(event.target.value)}
+            placeholder="Paste the whole scholarship page here"
+            disabled={loading}
+          />
+          <small>
+            {blockedUrl
+              ? `Stored against ${blockedUrl} as the source.`
+              : 'No source URL will be recorded with this text.'}
+          </small>
+          <div className="admin-actions">
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={extractPastedText}
+              disabled={loading || !pastedText.trim()}
+            >
+              {loading ? 'Extracting...' : 'Extract from pasted text'}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="admin-actions">
         <button type="button" className="btn btn-outline" onClick={extract} disabled={loading}>
           {loading ? 'Fetching and extracting...' : 'Extract draft'}
@@ -175,7 +281,36 @@ export default function AdminScholarshipImport({ token, values, onApply, onStatu
                     {source.source.url && <a href={source.source.url} target="_blank" rel="noreferrer">{source.source.url}</a>}
                     <small>{source.source.content_type}{source.source.page_count ? ` · ${source.source.page_count} PDF pages` : ''}</small>
                     <small>{counts.extracted} extracted · {counts.uncertain} uncertain · {counts.not_found} not found</small>
+                    {describeImportReading(source) && (
+                      <small className="admin-muted">{describeImportReading(source)}</small>
+                    )}
                     {source.warnings.map((warning) => <small key={warning} className="admin-field-error">{warning}</small>)}
+                    {/* 3: a long page can describe several awards. Offer them
+                        rather than merging them into one silently. */}
+                    {getImportCandidates(source).length > 0 && (
+                      <div className="admin-import-candidates">
+                        <strong>This page described several scholarships:</strong>
+                        <ul>
+                          {getImportCandidates(source).map((candidate) => (
+                            <li key={`${sourceIndex}-${candidate.index}`}>
+                              <span>{candidate.label}</span>
+                              <small>{candidate.extractedCount} evidenced field{candidate.extractedCount === 1 ? '' : 's'}</small>
+                              <button
+                                type="button"
+                                className="btn btn-outline"
+                                onClick={() => onApply(buildCandidatePatch(candidate, values))}
+                              >
+                                Use this one
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        <small className="admin-muted">
+                          Using one fills the empty form fields it evidenced. The field
+                          list below still shows the merged view of the whole page.
+                        </small>
+                      </div>
+                    )}
                   </li>
                 );
               })}

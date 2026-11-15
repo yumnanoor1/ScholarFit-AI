@@ -677,11 +677,13 @@ class PostgresDocumentIndexingIntegrationTests(unittest.TestCase):
             with self.subTest(requested_scholarship=requested_id):
                 self.assertEqual(query_vector, other_vector)
                 client = MagicMock()
-                client.models.generate_content.return_value.text = "Scholarship-scoped answer."
+                client.chat.completions.create.return_value.choices[0].message.content = (
+                    "Scholarship-scoped answer."
+                )
                 with self.Session() as db, \
                         patch.object(admin_api.rag_service, "get_model_revision", return_value=MODEL_REVISION), \
                         patch.object(admin_api.rag_service, "embed_query", return_value=query_vector), \
-                        patch.object(admin_api.rag_service, "_gemini_client", return_value=client):
+                        patch.object(admin_api.rag_service, "_groq_client", return_value=client):
                     result = admin_api.rag_service.retrieve(
                         db,
                         "query favoring the other scholarship",
@@ -705,7 +707,7 @@ class PostgresDocumentIndexingIntegrationTests(unittest.TestCase):
                     self.assertEqual(answer.status, admin_api.rag_service.STATUS_OK)
                     self.assertEqual([chunk.scholarship_id for chunk in answer.chunks], [requested_id])
                     self.assertEqual([chunk.text for chunk in answer.chunks], [own_text])
-                    contents = client.models.generate_content.call_args.kwargs["contents"]
+                    contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
                     self.assertIn(own_text, contents)
                     self.assertNotIn(other_text, contents)
                     self.assertNotEqual(requested_id, other_id)

@@ -298,11 +298,11 @@ class SettingsTests(unittest.TestCase):
     def test_production_validation_does_not_load_the_model(self):
         with (
             mock.patch("app.services.rag_service._load_model_with_revision") as load_model,
-            mock.patch("app.services.rag_service._gemini_client") as gemini_client,
+            mock.patch("app.services.rag_service._groq_client") as groq_client,
         ):
             self.check()
         load_model.assert_not_called()
-        gemini_client.assert_not_called()
+        groq_client.assert_not_called()
 
     def test_production_allows_only_the_site_itself(self):
         with mock.patch.dict(os.environ, {"APP_ENV": "production", "FRONTEND_URL": "https://fitscholar.example/"}):

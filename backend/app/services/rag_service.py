@@ -10,9 +10,8 @@ loaded at the exact revision in the required MINILM_MODEL_REVISION setting, whic
 Hugging Face commit SHA (never "main" or another moving reference). Only embeddings whose model_name,
 model_revision and dimensions all match are searched; if the setting is missing or invalid, retrieval is
 unavailable. Any future document-indexing process must store embeddings with the exact same model name
-(sentence-transformers/all-MiniLM-L6-v2), the same pinned revision and 384 dimensions. Gemini is only
-used to write the answer from the retrieved text; GEMINI_API_KEY (and optionally GEMINI_MODEL) come from the
-environment and are read when the first answer is requested.
+(sentence-transformers/all-MiniLM-L6-v2), the same pinned revision and 384 dimensions. Groq writes answers
+from the retrieved text using GROQ_API_KEY, with GROQ_API_KEY_2 as the fallback.
 """
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -29,8 +28,10 @@ from sqlalchemy.orm import Session, aliased
 
 from app.core.config import (
     MINILM_MODEL_REVISION_ENV,
-    gemini_model,
+    groq_model,
+    is_groq_fallback_enabled,
     is_valid_minilm_model_revision,
+    scholarship_discovery_settings,
 )
 from app.models.opportunity import Scholarship
 from app.models.scholarship_knowledge import (
@@ -46,11 +47,11 @@ from app.services.source_verification import (
     is_currently_verified,
 )
 from app.services.source_url_safety import safe_source_url, safe_source_urls_in_text
-from app.services.gemini_provider import (
-    GeminiProviderError,
-    classify_gemini_error,
-    create_gemini_client,
-    generate_content,
+from app.services.groq_provider import (
+    GroqProviderError,
+    classify_groq_error,
+    create_groq_client,
+    generate_text_completion,
 )
 
 logger = logging.getLogger(__name__)
@@ -893,20 +894,34 @@ def retrieve(db: Session, query: str, scholarship_id: Optional[int] = None, top_
 
 # ---------- Answer generation ----------
 
-_client = None
+_groq_primary_client = None
+_groq_secondary_client = None
 _client_lock = threading.Lock()
 
 
-def _gemini_client():
-    """Created on first use; None when GEMINI_API_KEY is not set."""
-    global _client
-    api_key = os.getenv("GEMINI_API_KEY")
+def _groq_client():
+    """Created on first use; None when GROQ_API_KEY is not set."""
+    global _groq_primary_client
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         return None
     with _client_lock:
-        if _client is None:
-            _client = create_gemini_client(api_key)
-        return _client
+        if _groq_primary_client is None:
+            _groq_primary_client = create_groq_client(api_key)
+        return _groq_primary_client
+
+
+def _groq_fallback_client():
+    global _groq_secondary_client
+    if not is_groq_fallback_enabled():
+        return None
+    api_key = os.getenv("GROQ_API_KEY_2", "").strip()
+    if not api_key:
+        return None
+    with _client_lock:
+        if _groq_secondary_client is None:
+            _groq_secondary_client = create_groq_client(api_key)
+        return _groq_secondary_client
 
 
 def _model_excerpt(chunk: RetrievedChunk) -> str:
@@ -932,34 +947,35 @@ def _source_block(chunks: List[RetrievedChunk], excerpts: Optional[List[str]] = 
 def _generate(
     question: str, chunks: List[RetrievedChunk], excerpts: Optional[List[str]] = None
 ) -> Optional[str]:
-    """Gemini's answer, or None when there is no key or generation fails."""
+    """Groq's grounded answer, or None when no key is configured or generation fails."""
     try:
-        client = _gemini_client()
-        if client is None:
-            logger.warning("Gemini generation failed: category=missing_api_key")
+        client = _groq_client()
+        fallback_client = _groq_fallback_client()
+        if client is None and fallback_client is None:
+            logger.warning("Groq generation failed: category=missing_api_key")
             return None
-        response = generate_content(
+        response = generate_text_completion(
             client,
-            model=gemini_model(),
+            fallback_client=fallback_client,
+            model=groq_model(),
+            system_instruction=SYSTEM_INSTRUCTION,
             contents=f"Student question:\n{question}\n\nApproved scholarship sources:\n{_source_block(chunks, excerpts)}",
-            config={
-                "system_instruction": SYSTEM_INSTRUCTION,
-                "temperature": 0.2,
-            },
+            temperature=0.2,
+            rate_limit_settings=scholarship_discovery_settings(),
         )
-        text = (response.text or "").strip()
+        text = (response.choices[0].message.content or "").strip()
         return text or None
-    except GeminiProviderError as exc:
+    except GroqProviderError as exc:
         logger.warning(
-            "Gemini generation failed: category=%s http_status=%s",
+            "Groq generation failed: category=%s http_status=%s",
             exc.category,
             exc.http_status,
         )
         return None
     except Exception as exc:
-        category, status = classify_gemini_error(exc)
+        category, status = classify_groq_error(exc)
         logger.warning(
-            "Gemini generation failed: category=%s http_status=%s",
+            "Groq generation failed: category=%s http_status=%s",
             category,
             status,
         )

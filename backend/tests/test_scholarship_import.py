@@ -25,7 +25,7 @@ from app.services.scholarship_discovery_fetch import (
     OfficialSourceFetcher,
 )
 from app.services.scholarship_import import (
-    GeminiScholarshipImportExtractor,
+    GroqScholarshipImportExtractor,
     ScholarshipImportError,
     extract_scholarship_source,
 )
@@ -42,6 +42,8 @@ def _settings(**changes):
         "request_delay_seconds": 0,
         "user_agent": "FitScholarImportTest/1.0",
         "model": "mock-model",
+        "groq_model": "mock-model",
+        "groq_rate_limit_retries": 0,
     }
     values.update(changes)
     return ScholarshipDiscoverySettings(**values)
@@ -135,13 +137,16 @@ class FetchSecurityTests(unittest.TestCase):
             fetcher._resolve_public_addresses("private.example", 443)
 
     def test_every_redirect_destination_is_revalidated(self):
-        resolver = _FakeResolver({"private.example": "127.0.0.1"})
+        resolver = _FakeResolver({
+            "awards.example": "93.184.216.34",
+            "private.example": "127.0.0.1",
+        })
         fetcher = OfficialSourceFetcher(_settings(), resolver=resolver)
 
         def fake_request(source, url):
             parts = fetcher._validate_url(source, url)
             fetcher._resolve_public_addresses(parts.hostname, parts.port or 443)
-            return 302, _headers(location="http://private.example/redirect"), b""
+            return 302, _headers(location="https://private.example/redirect"), b""
 
         with patch.object(fetcher, "_request", side_effect=fake_request):
             with self.assertRaises(DiscoveryFetchError):
@@ -440,8 +445,8 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(draft.values["official_application_url"], "https://apply.example/form")
         self.assertEqual(draft.fields["official_application_url"].page_number, 1)
 
-    def test_gemini_extractor_uses_mocked_client_and_untrusted_source_prompt(self):
-        response = SimpleNamespace(text=json.dumps({
+    def test_groq_extractor_uses_mocked_client_and_untrusted_source_prompt(self):
+        response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
             "fields": {
                 "name": {
                     "value": "Horizon Award",
@@ -449,47 +454,79 @@ class ExtractionTests(unittest.TestCase):
                     "confidence": "high",
                 },
             },
-        }))
-        client = SimpleNamespace(models=SimpleNamespace(generate_content=Mock(return_value=response)))
-        extractor = GeminiScholarshipImportExtractor(_settings(), client=client)
+        })))])
+        client = Mock()
+        client.chat.completions.create.return_value = response
+        extractor = GroqScholarshipImportExtractor(_settings(), client=client)
         result = extractor.extract(_page("The Horizon Award is available."))
         self.assertIn("name", result)
-        prompt = client.models.generate_content.call_args.kwargs["contents"]
+        prompt = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("untrusted evidence", prompt)
         self.assertIn("Allowed scholarship field schema", prompt)
         self.assertEqual(
-            client.models.generate_content.call_args.kwargs["model"],
+            client.chat.completions.create.call_args.kwargs["model"],
             "mock-model",
         )
-        self.assertEqual(
-            client.models.generate_content.call_args.kwargs["config"]["http_options"].timeout,
-            60_000,
+
+    def test_groq_import_keeps_every_request_within_the_chunk_cap(self):
+        """No single request carries more than the cap, and nothing is dropped.
+
+        This used to truncate the page to the cap and discard the rest. It now
+        splits the page instead, so the guarantee is per request rather than
+        per page: each call stays within the budget, and every character is
+        sent in some call.
+        """
+        response = SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content='{"fields":{}}'),
+        )])
+        client = Mock()
+        client.chat.completions.create.return_value = response
+        extractor = GroqScholarshipImportExtractor(
+            _settings(max_provider_chunk_chars=128, groq_max_request_tokens=None),
+            client=client,
         )
 
-    def test_import_uses_shared_model_and_reports_sanitized_provider_category(self):
+        extractor.extract(_page("A" * 2_000))
+
+        prompts = [
+            call.kwargs["messages"][1]["content"]
+            for call in client.chat.completions.create.call_args_list
+        ]
+        self.assertGreater(len(prompts), 1, "a 2,000 character page needs several requests")
+        sent = 0
+        for prompt in prompts:
+            run = max(
+                (len(part) for part in prompt.split('"text": "')[1:]
+                 for part in [part.split('"')[0]]),
+                default=0,
+            )
+            self.assertLessEqual(run, 128, "a request carried more text than the cap")
+            sent += run
+        self.assertEqual(sent, 2_000, "every character of the page was sent")
+
+    def test_import_uses_shared_groq_model_and_reports_sanitized_provider_category(self):
         with patch.dict(
             "os.environ",
             {
-                "GEMINI_MODEL": "gemini-3-flash-preview",
-                "SCHOLARSHIP_DISCOVERY_MODEL": "legacy-model",
+                "GROQ_MODEL": "llama-3.3-70b-versatile",
             },
             clear=True,
         ):
             settings = scholarship_discovery_settings()
         client = Mock()
-        client.models.generate_content.side_effect = type(
+        client.chat.completions.create.side_effect = type(
             "FakeProviderError",
             (Exception,),
-            {"code": 403},
+            {"status_code": 403},
         )("credential=private")
-        extractor = GeminiScholarshipImportExtractor(settings, client=client)
+        extractor = GroqScholarshipImportExtractor(settings, client=client)
 
         with self.assertRaises(ScholarshipImportError) as raised:
             extractor.extract(_page("The Horizon Award is available."))
 
         self.assertEqual(
-            client.models.generate_content.call_args.kwargs["model"],
-            "gemini-3-flash-preview",
+            client.chat.completions.create.call_args.kwargs["model"],
+            "llama-3.3-70b-versatile",
         )
         self.assertEqual(raised.exception.error_category, "permission_error")
         self.assertEqual(raised.exception.http_status, 403)

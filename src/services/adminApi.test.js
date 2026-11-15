@@ -62,6 +62,24 @@ test('Admin JSON operations use the configured fallback base URL, paths, methods
     [() => adminApi.duplicates('api-token'), '/admin/scholarships/duplicates'],
     [() => adminApi.compare('api-token', id, 18), `/admin/scholarships/duplicates/compare?first=${id}&second=18`],
     [() => adminApi.markDuplicate('api-token', id, duplicate), `/admin/scholarships/${id}/duplicate`, 'POST', duplicate],
+    [
+      () => adminApi.dismissDuplicatePair('api-token', { first_id: id, second_id: 18, note: 'Different awards' }),
+      '/admin/scholarships/duplicates/dismiss',
+      'POST',
+      { first_id: id, second_id: 18, note: 'Different awards' },
+    ],
+    [
+      () => adminApi.extractScholarshipText('api-token', { text: 'Page text', url: 'https://a.example/x' }),
+      '/admin/scholarships/import/extract-text',
+      'POST',
+      { text: 'Page text', url: 'https://a.example/x' },
+    ],
+    [
+      () => adminApi.extractScholarshipText('api-token', { text: 'Page text' }),
+      '/admin/scholarships/import/extract-text',
+      'POST',
+      { text: 'Page text' },
+    ],
     [() => adminApi.reviewDiscovery('api-token', id, review), `/admin/scholarships/discovery-reviews/${id}/review`, 'POST', review],
     [
       () => adminApi.reviewDiscovery('api-token', id, {

@@ -704,7 +704,7 @@ class DiscoveryMonitoringRouteTests(unittest.TestCase):
     def test_manual_trigger_is_admin_only_and_works_when_scheduler_is_disabled(self):
         started = []
 
-        def execute(run_id, on_run_started, on_stage):
+        def execute(run_id, on_run_started, on_stage, _on_failure):
             started.append(run_id)
             on_stage("waiting_for_advisory_lock")
             on_run_started(run_id)
@@ -748,7 +748,7 @@ class DiscoveryMonitoringRouteTests(unittest.TestCase):
         release_worker = threading.Event()
         worker_finished = threading.Event()
 
-        def execute(run_id, on_run_started, _on_stage):
+        def execute(run_id, on_run_started, _on_stage, _on_failure):
             on_run_started(run_id)
             release_worker.wait(timeout=5)
             worker_finished.set()
@@ -790,10 +790,44 @@ class DiscoveryMonitoringRouteTests(unittest.TestCase):
                 response = client.post("/admin/scholarships/discovery-runs/manual")
 
         self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            {
+                "code": "DISCOVERY_START_FAILED",
+                "message": "Discovery could not start (RuntimeError).",
+            },
+        )
         self.assertEqual(admin_scholarships._manual_discovery_state_snapshot()["status"], "failed")
-        self.assertEqual(admin_scholarships._manual_discovery_state_snapshot()["error"], "RuntimeError")
+        self.assertEqual(
+            admin_scholarships._manual_discovery_state_snapshot()["error"],
+            "Discovery could not start (RuntimeError).",
+        )
         self.assertTrue(admin_scholarships._manual_discovery_submission_lock.acquire(timeout=2))
         admin_scholarships._manual_discovery_submission_lock.release()
+
+    def test_worker_start_failure_returns_safe_diagnostic(self):
+        message = "Discovery run-history migration is missing or incomplete."
+
+        def execute(_run_id, _on_run_started, _on_stage, on_failure):
+            on_failure(message)
+            return 1
+
+        with patch.object(admin_scholarships, "_execute_manual_discovery", side_effect=execute):
+            with self._client(self.admin) as client:
+                response = client.post("/admin/scholarships/discovery-runs/manual")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json()["detail"],
+            {
+                "code": "DISCOVERY_START_FAILED",
+                "message": message,
+            },
+        )
+        self.assertEqual(
+            admin_scholarships._manual_discovery_state_snapshot()["error"],
+            message,
+        )
 
     def test_monitoring_reports_submission_before_a_run_record_exists(self):
         with admin_scholarships._manual_discovery_state_lock:

@@ -26,8 +26,9 @@ class _FakeCursor:
 
 
 class _FakeConnection:
-    def __init__(self):
-        self.dialect = SimpleNamespace(name="postgresql", driver="psycopg")
+    def __init__(self, driver="psycopg"):
+        self.dialect = SimpleNamespace(name="postgresql", driver=driver)
+        self.engine = SimpleNamespace(dialect=self.dialect)
         self.connection = SimpleNamespace(
             driver_connection=SimpleNamespace(
                 cancel=Mock(),
@@ -73,6 +74,31 @@ class DiscoveryDatabaseDeadlineTests(unittest.TestCase):
             )
             self.assertEqual(kwargs["poolclass"].__name__, "NullPool")
             self.assertTrue(kwargs["hide_parameters"])
+        finally:
+            budget.close()
+
+    def test_manual_engine_accepts_psycopg2(self):
+        base_engine = SimpleNamespace(
+            dialect=SimpleNamespace(name="postgresql", driver="psycopg2"),
+            url=object(),
+        )
+        budget = DiscoveryRunBudget(
+            duration_seconds=60,
+            start_deadline_timer=False,
+        )
+        budget.start()
+        created_engine = object()
+
+        try:
+            with patch(
+                "app.services.scholarship_discovery_database.create_engine",
+                return_value=created_engine,
+            ) as create_engine:
+                result, owned = create_manual_discovery_engine(base_engine, budget)
+
+            self.assertIs(result, created_engine)
+            self.assertTrue(owned)
+            self.assertEqual(create_engine.call_args.kwargs["connect_args"]["connect_timeout"], 15)
         finally:
             budget.close()
 
@@ -126,6 +152,93 @@ class DiscoveryDatabaseDeadlineTests(unittest.TestCase):
                 budget.snapshot()["http_attempts"],
                 0,
             )
+        finally:
+            deadline.close()
+            budget.close()
+
+    def test_psycopg2_connection_receives_database_deadline_timeouts(self):
+        budget = DiscoveryRunBudget(
+            duration_seconds=10,
+            start_deadline_timer=False,
+        )
+        budget.start()
+        connection = _FakeConnection(driver="psycopg2")
+        cursor = _FakeCursor()
+        listeners = []
+
+        with patch(
+            "app.services.scholarship_discovery_database.event.listen",
+            side_effect=lambda target, name, callback: listeners.append(
+                (target, name, callback),
+            ),
+        ):
+            deadline = ManualDiscoveryDatabaseDeadline(connection, budget)
+
+        try:
+            before_cursor_execute = next(
+                callback
+                for _target, name, callback in listeners
+                if name == "before_cursor_execute"
+            )
+            before_cursor_execute(
+                connection,
+                cursor,
+                "SELECT 1",
+                (),
+                SimpleNamespace(),
+                False,
+            )
+            self.assertEqual(
+                cursor.statements,
+                [
+                    "SET LOCAL statement_timeout = 10000",
+                    "SET LOCAL lock_timeout = 5000",
+                ],
+            )
+        finally:
+            deadline.close()
+            budget.close()
+
+    def test_handle_error_listener_is_engine_scoped_and_connection_filtered(self):
+        budget = DiscoveryRunBudget(
+            duration_seconds=10,
+            start_deadline_timer=False,
+        )
+        budget.start()
+        connection = _FakeConnection()
+        listeners = []
+        context = SimpleNamespace()
+
+        with patch(
+            "app.services.scholarship_discovery_database.event.listen",
+            side_effect=lambda target, name, callback: listeners.append(
+                (target, name, callback),
+            ),
+        ):
+            deadline = ManualDiscoveryDatabaseDeadline(connection, budget)
+
+        try:
+            handle_error_target, _name, handle_error = next(
+                listener
+                for listener in listeners
+                if listener[1] == "handle_error"
+            )
+            self.assertIs(handle_error_target, connection.engine)
+
+            deadline._track_operation(context)
+            unrelated_connection = _FakeConnection()
+            handle_error(SimpleNamespace(
+                connection=unrelated_connection,
+                execution_context=context,
+            ))
+            self.assertIn(context._manual_discovery_cancel_token, deadline._active_tokens)
+
+            handle_error(SimpleNamespace(
+                connection=connection,
+                execution_context=context,
+            ))
+            self.assertEqual(deadline._active_tokens, set())
+            self.assertFalse(hasattr(context, "_manual_discovery_cancel_token"))
         finally:
             deadline.close()
             budget.close()

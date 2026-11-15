@@ -137,21 +137,104 @@ def _fold_name(name):
     return {word for word in words if word not in {"the", "of", "for", "scholarship", "scholarships", "master", "masters", "s", "programme", "program"}}
 
 
-def duplicate_pairs(rows) -> list:
-    """Flagged pairs, plus suspected ones: same host country and nearly the same name. Never merged here."""
+def dismissal_key(first_id, second_id) -> tuple:
+    """A pair identity that does not depend on which record came first."""
+    return (first_id, second_id) if first_id <= second_id else (second_id, first_id)
+
+
+def name_similarity(first_name, second_name) -> float:
+    """How much two names overlap, 0-1, on the same word folding used to pair them.
+
+    This is the number the pairing threshold already applies, so the page can
+    show the score behind its own suggestion instead of "Not scored".
+    """
+    one, two = _fold_name(first_name), _fold_name(second_name)
+    if not one or not two:
+        return 0.0
+    return round(len(one & two) / len(one | two), 4)
+
+
+def _pair_record(row) -> dict:
+    """The fields the duplicates list shows for one side of a pair."""
+    return {
+        "id": row.id,
+        "name": row.name,
+        "provider": row.provider,
+        "country": row.country,
+        "degree_level": row.degree_level,
+        "source_url": row.official_info_url or row.official_url,
+        "verification_status": row.verification_status,
+        "archived": row.archived,
+        "duplicate_of_id": row.duplicate_of_id,
+    }
+
+
+def _same_text(first, second) -> bool:
+    left = " ".join((first or "").split()).casefold()
+    right = " ".join((second or "").split()).casefold()
+    return bool(left) and left == right
+
+
+def duplicate_pairs(rows, dismissed=()) -> list:
+    """Flagged pairs, plus suspected ones: same host country and nearly the same name. Never merged here.
+
+    `dismissed` holds pairs an administrator ruled out. A dismissed pair is
+    never suggested again, and is returned with status "dismissed" so the page
+    can still show it under its own filter. A pair that was dismissed and has
+    since been flagged by hand keeps the flag: an explicit decision wins over
+    an earlier dismissal.
+
+    Status is derived, not stored:
+      needs_review  a suspected pair nobody has decided on
+      flagged       one record points at the other, both still listed
+      resolved      the duplicate has also been archived, so students cannot see it
+      dismissed     ruled out by an administrator
+    """
+    dismissed_keys = {dismissal_key(*pair) for pair in dismissed}
     by_id = {row.id: row for row in rows}
-    pairs = [{"first_id": row.duplicate_of_id, "second_id": row.id, "kind": "flagged",
-              "first_name": by_id[row.duplicate_of_id].name, "second_name": row.name}
-             for row in rows if row.duplicate_of_id in by_id]
-    known = {(pair["first_id"], pair["second_id"]) for pair in pairs}
+    pairs = []
+    for row in rows:
+        if row.duplicate_of_id not in by_id:
+            continue
+        main = by_id[row.duplicate_of_id]
+        pairs.append({
+            "first_id": main.id,
+            "second_id": row.id,
+            "kind": "flagged",
+            "status": "resolved" if row.archived else "flagged",
+            "first_name": main.name,
+            "second_name": row.name,
+            "duplicate_id": row.id,
+            "first": _pair_record(main),
+            "second": _pair_record(row),
+            "similarity": name_similarity(main.name, row.name),
+            "same_country": _same_text(main.country, row.country),
+            "same_provider": _same_text(main.provider, row.provider),
+        })
+    known = {dismissal_key(pair["first_id"], pair["second_id"]) for pair in pairs}
     for index, first in enumerate(rows):
         for second in rows[index + 1:]:
-            if (first.id, second.id) in known or first.country != second.country:
+            key = dismissal_key(first.id, second.id)
+            if key in known or first.country != second.country:
                 continue
-            one, two = _fold_name(first.name), _fold_name(second.name)
-            if one and two and len(one & two) / len(one | two) >= DUPLICATE_NAME_OVERLAP:
-                pairs.append({"first_id": first.id, "second_id": second.id, "kind": "suspected",
-                              "first_name": first.name, "second_name": second.name})
+            similarity = name_similarity(first.name, second.name)
+            if similarity < DUPLICATE_NAME_OVERLAP:
+                continue
+            known.add(key)
+            pairs.append({
+                "first_id": first.id,
+                "second_id": second.id,
+                "kind": "suspected",
+                "status": "dismissed" if key in dismissed_keys else "needs_review",
+                "first_name": first.name,
+                "second_name": second.name,
+                "duplicate_id": None,
+                "first": _pair_record(first),
+                "second": _pair_record(second),
+                "similarity": similarity,
+                "same_country": _same_text(first.country, second.country),
+                "same_provider": _same_text(first.provider, second.provider),
+            })
     return pairs
 
 

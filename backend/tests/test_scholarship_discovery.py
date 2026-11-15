@@ -41,14 +41,18 @@ from app.models.user import User
 from app.schemas.admin import AdminDiscoveryReviewItem
 from app.routers.admin_scholarships import _discovery_run_history
 from app.services import rag_service
-from app.services.gemini_provider import gemini_request_payload_size_bytes
 from app.services.groq_provider import (
     GroqProviderError,
     _groq_request_body,
     generate_json_completion,
     groq_request_payload_size_bytes,
 )
-from app.services.scholarship_discovery import _register_evidence, run_discovery
+from app.services.scholarship_discovery import (
+    _prepin_discovery_source_hostnames,
+    _register_evidence,
+    _sanitize_discovery_error,
+    run_discovery,
+)
 from app.services.scholarship_discovery_budget import (
     ControlledManualSourceConfigurationError,
     DiscoveryRunBudget,
@@ -57,8 +61,9 @@ from app.services.scholarship_discovery_budget import (
 )
 from app.services.scholarship_discovery_extraction import (
     EXTRACTION_SYSTEM_INSTRUCTION,
+    PROTECTED_FIELDS,
     ExtractedScholarship,
-    GeminiScholarshipExtractor,
+    GroqScholarshipExtractor,
     InvalidEvidenceURL,
     OutOfScopeScholarship,
     ScholarshipExtractionError,
@@ -103,9 +108,24 @@ def _settings(**changes):
         "request_delay_seconds": 0,
         "user_agent": "FitScholarTest/1.0",
         "model": "test-model",
+        "groq_model": "test-model",
+        "groq_rate_limit_retries": 0,
     }
     values.update(changes)
     return ScholarshipDiscoverySettings(**values)
+
+
+def _groq_response(content):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+    )
+
+
+def _mock_groq_client(content=None):
+    client = MagicMock()
+    if content is not None:
+        client.chat.completions.create.return_value = _groq_response(content)
+    return client
 
 
 def _address_info(ip_address, port=443):
@@ -326,6 +346,34 @@ class DiscoverySourceRegistryTests(unittest.TestCase):
         "great-scholarships-pakistan",
         "british-council-women-in-stem",
     }
+
+    def test_prepin_uses_only_current_run_sources_with_reviewed_crawl_trust(self):
+        reviewed = _source()
+        disabled = replace(reviewed, crawl_enabled=False)
+        unreviewed = replace(reviewed, trust_reviewed=False)
+        no_basis = replace(reviewed, trust_basis=" ")
+        discovery_only = replace(reviewed, discovery_only=True)
+        fetcher = Mock()
+
+        _prepin_discovery_source_hostnames(
+            fetcher,
+            [reviewed, disabled, unreviewed, no_basis, discovery_only],
+        )
+
+        fetcher.prepin_hostnames.assert_called_once_with(["official.example"])
+
+    def test_discovery_exception_diagnostics_redact_urls_and_secrets(self):
+        message = _sanitize_discovery_error(
+            RuntimeError(
+                "navigation failed token=SECRET https://user:password@example.test/path?key=HIDDEN"
+            )
+        )
+
+        self.assertIn("navigation failed", message)
+        self.assertNotIn("SECRET", message)
+        self.assertNotIn("user", message)
+        self.assertNotIn("example.test", message)
+        self.assertNotIn("HIDDEN", message)
     NEW_SOURCE_URLS = {
         "daad-helmut-schmidt": "https://www2.daad.de/deutschland/stipendium/datenbank/en/21148-scholarship-database/?detail=50026397",
         "daad-epos": "https://www.daad.de/en/information-services-for-higher-education-institutions/further-information-on-daad-programmes/epos/",
@@ -433,6 +481,13 @@ class DiscoverySourceRegistryTests(unittest.TestCase):
 
 
 class GeographyAndExtractionTests(unittest.TestCase):
+    def setUp(self):
+        self._credential_state_patch = patch(
+            "app.services.groq_provider._UNAVAILABLE_KEY_SLOTS",
+            set(),
+        )
+        self._credential_state_patch.start()
+        self.addCleanup(self._credential_state_patch.stop)
     def _validate_geographic_candidate(
         self,
         country,
@@ -519,30 +574,105 @@ class GeographyAndExtractionTests(unittest.TestCase):
         invalid_candidates = []
         missing_name = _raw_extraction_candidate()
         missing_name["values"]["name"] = "   "
-        invalid_candidates.append(missing_name)
-        malformed_field = _raw_extraction_candidate(funding_level="full-scholarship")
-        invalid_candidates.append(malformed_field)
+        invalid_candidates.append((missing_name, "missing_name"))
 
-        for raw in invalid_candidates:
-            with self.subTest(candidate=raw["values"]):
-                client = MagicMock()
-                client.models.generate_content.return_value = SimpleNamespace(
-                    text=json.dumps({"scholarships": [raw]}),
-                )
-                extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        for raw, expected_rule in invalid_candidates:
+            with self.subTest(rule=expected_rule):
+                client = _mock_groq_client(json.dumps({"scholarships": [raw]}))
+                extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
 
                 self.assertEqual(extractor.extract(page, _source()), [])
                 self.assertEqual(extractor.last_rejected_count, 1)
                 self.assertEqual(extractor.last_rejection_reasons, ["invalid_candidate"])
+                self.assertEqual(
+                    extractor.last_rejection_rule_counts,
+                    {expected_rule: 1},
+                )
+
+        with self.subTest(rule="invalid_values_dropped"):
+            # funding_level is OPTIONAL (Optional[Literal[...]]), so an
+            # unusable value no longer rejects the whole candidate: the field
+            # is dropped and the candidate goes to review. A malformed
+            # REQUIRED field still rejects (see SchemaErrorCodeTests).
+            malformed_field = _raw_extraction_candidate(
+                funding_level="full-scholarship",
+            )
+            client = _mock_groq_client(
+                json.dumps({"scholarships": [malformed_field]}),
+            )
+            extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
+
+            accepted = extractor.extract(page, _source())
+
+            self.assertEqual(len(accepted), 1)
+            self.assertNotIn("funding_level", accepted[0].values)
+            self.assertIn("invalid_values_dropped", accepted[0].review_reasons)
+            self.assertEqual(extractor.last_rejected_count, 0)
+            self.assertEqual(extractor.last_rejection_rule_counts, {})
+            self.assertEqual(
+                extractor.last_dropped_evidence_counts,
+                {"invalid_dropped:funding_level": 1},
+            )
+
+    def test_rejection_rule_counts_cover_non_object_and_mixed_candidates(self):
+        page = _page(
+            "The Finland Master's Award scholarship is available to Master's applicants. "
+            "Study in Finland. "
+            "The Finland Research Grant scholarship is available to Master's applicants."
+        )
+        missing_name = _raw_extraction_candidate()
+        missing_name["values"]["name"] = " "
+        # An unusable value in an OPTIONAL enum field is now dropped and sent
+        # to review rather than rejected, so this candidate survives. Given a
+        # distinct name so it is not deduplicated against the valid one.
+        malformed_field = _raw_extraction_candidate(
+            name="Finland Research Grant",
+            funding_level="full-scholarship",
+        )
+        malformed_field["evidence"]["name"] = "Finland Research Grant"
+        malformed_field["scholarship_offer_evidence"] = (
+            "The Finland Research Grant scholarship is available"
+        )
+        client = _mock_groq_client(json.dumps({
+            "scholarships": [
+                _raw_extraction_candidate(),
+                None,
+                missing_name,
+                malformed_field,
+            ],
+        }))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
+
+        accepted = extractor.extract(page, _source())
+
+        self.assertEqual(len(accepted), 2)
+        repaired = [
+            item for item in accepted
+            if item.values["name"] == "Finland Research Grant"
+        ][0]
+        self.assertNotIn("funding_level", repaired.values)
+        self.assertIn("invalid_values_dropped", repaired.review_reasons)
+
+        self.assertEqual(extractor.last_rejected_count, 2)
+        self.assertEqual(
+            extractor.last_rejection_reasons,
+            ["invalid_candidate", "invalid_candidate"],
+        )
+        # schema_validation_failed now needs a required or protected field at
+        # fault; that path is covered in SchemaErrorCodeTests.
+        self.assertEqual(
+            extractor.last_rejection_rule_counts,
+            {
+                "non_object": 1,
+                "missing_name": 1,
+            },
+        )
 
     def test_irrelevant_page_evidence_cannot_produce_a_candidate(self):
         page = _page("University admissions, campus news, and student services.")
         raw = _raw_extraction_candidate()
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps({"scholarships": [raw]}),
-        )
-        extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        client = _mock_groq_client(json.dumps({"scholarships": [raw]}))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
 
         self.assertEqual(extractor.extract(page, _source()), [])
         self.assertEqual(extractor.last_rejected_count, 1)
@@ -591,29 +721,47 @@ class GeographyAndExtractionTests(unittest.TestCase):
     def test_invalid_country_values_reject_only_the_candidate(self):
         page = _page(
             "Finland Master's Award scholarship is available to Master's applicants. "
-            "Study in Finland."
+            "Study in Finland. "
+            "Finland Research Grant scholarship is available to Master's applicants."
         )
-        missing_country = _raw_extraction_candidate()
+        # A distinct scholarship whose country the page never states. This
+        # source's registry country is Finland, so the country is filled from
+        # the registry and flagged for review (a page-stated country wins).
+        missing_country = _raw_extraction_candidate(
+            name="Finland Research Grant",
+            host_location="",
+        )
         del missing_country["values"]["country"]
+        missing_country["evidence"]["name"] = "Finland Research Grant"
+        del missing_country["evidence"]["country"]
+        del missing_country["evidence"]["host_location"]
+        missing_country["scholarship_offer_evidence"] = (
+            "Finland Research Grant scholarship is available"
+        )
         non_string_country = _raw_extraction_candidate()
         non_string_country["values"]["country"] = 17
         valid_candidate = _raw_extraction_candidate()
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=__import__("json").dumps({
-                "scholarships": [missing_country, non_string_country, valid_candidate],
-            }),
-        )
-        extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        client = _mock_groq_client(json.dumps({
+            "scholarships": [missing_country, non_string_country, valid_candidate],
+        }))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
 
         candidates = extractor.extract(page, _source())
 
         self.assertEqual(len(candidates), 2)
-        self.assertEqual(candidates[0].missing_required_fields, ("country",))
+        self.assertEqual(candidates[0].missing_required_fields, ())
         self.assertTrue(candidates[0].requires_review)
-        self.assertNotIn("country", candidates[0].values)
+        self.assertEqual(candidates[0].values["country"], "Finland")
+        self.assertIn(
+            "host_country_from_source_registry",
+            candidates[0].review_reasons,
+        )
         self.assertEqual(candidates[0].values["official_info_url"], page.url)
         self.assertEqual(candidates[1].values["country"], "Finland")
+        self.assertNotIn(
+            "host_country_from_source_registry",
+            candidates[1].review_reasons,
+        )
         self.assertEqual(extractor.last_rejected_count, 1)
         self.assertEqual(
             extractor.last_rejection_reasons,
@@ -737,7 +885,7 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 ("https://user:pass@apply.example.org/apply", "Official application"),
             ),
         )
-        extractor = GeminiScholarshipExtractor(_settings(), client=MagicMock())
+        extractor = GroqScholarshipExtractor(_settings())
         payload = json.loads(
             extractor._prompt(page, source).split("Source page data (JSON):\n", 1)[1]
         )
@@ -794,7 +942,10 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 trusted_external_domain_trust_basis="Synthetic test-only review",
             )
 
-    def test_extraction_rejects_external_and_deceptive_evidence_urls_with_safe_reason(self):
+    def test_extraction_never_stores_external_or_deceptive_evidence_urls(self):
+        # An unapproved application link no longer discards the scholarship,
+        # but it must never be stored, never be logged, and the candidate must
+        # be held for review.
         source = _source()
         invalid_urls = (
             "https://attacker.com/scholarships/apply",
@@ -810,26 +961,54 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 url_value = invalid_url if field == "official_application_url" else [invalid_url]
                 raw = _raw_extraction_candidate(**{field: url_value})
                 with self.subTest(field=field, url=invalid_url):
-                    with self.assertRaises(InvalidEvidenceURL):
-                        _validate_candidate(raw, page, source)
+                    candidate = _validate_candidate(raw, page, source)
+                    self.assertNotIn(field, candidate.values)
+                    self.assertEqual(candidate.dropped_url_fields, (field,))
+                    self.assertIn(
+                        "unapproved_urls_dropped",
+                        candidate.review_reasons,
+                    )
+                    self.assertTrue(candidate.requires_review)
+                    # Nothing deceptive survives into what is kept.
+                    kept = json.dumps(candidate.values) + json.dumps(candidate.evidence)
+                    self.assertNotIn("attacker", kept)
+                    self.assertNotIn("user:pass", kept)
 
         invalid_url = invalid_urls[0]
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=__import__("json").dumps({"scholarships": [_raw_extraction_candidate(official_application_url=invalid_url)]}),
-        )
-        extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        client = _mock_groq_client(json.dumps({
+            "scholarships": [_raw_extraction_candidate(official_application_url=invalid_url)],
+        }))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
         page = _page(
             "The Finland Master's Award scholarship is available to Master's applicants to study in Finland.",
             links=((invalid_url, "Apply"),),
         )
         with self.assertLogs("app.services.scholarship_discovery_extraction", level="WARNING") as logs:
-            self.assertEqual(extractor.extract(page, source), [])
-        self.assertEqual(extractor.last_rejection_reasons, ["invalid_evidence_url"])
-        self.assertIn("invalid_evidence_url", logs.output[0])
-        self.assertNotIn(invalid_url, logs.output[0])
+            extracted = extractor.extract(page, source)
+        self.assertEqual(len(extracted), 1)
+        self.assertNotIn("official_application_url", extracted[0].values)
+        self.assertEqual(extractor.last_rejected_count, 0)
+        self.assertEqual(
+            extractor.last_dropped_evidence_counts,
+            {"url_dropped:official_application_url": 1},
+        )
+        # A safe reason is logged; the URL itself is not.
+        logged = "\n".join(logs.output)
+        self.assertTrue(any("invalid_evidence_url" in line for line in logs.output))
+        self.assertNotIn(invalid_url, logged)
+        self.assertNotIn("attacker", logged)
 
-    def test_gemini_extraction_output_is_validated(self):
+    def test_an_invalid_source_url_still_rejects_the_candidate(self):
+        # The source_url check is unchanged: it still rejects outright.
+        source = _source()
+        page = _page(
+            "The Finland Master's Award scholarship is available to Master's applicants to study in Finland.",
+            url="https://attacker.com/scholarships",
+        )
+        with self.assertRaises(InvalidEvidenceURL):
+            _validate_candidate(_raw_extraction_candidate(), page, source)
+
+    def test_groq_extraction_output_is_validated(self):
         page = _page(
             "The Finland Master's Award scholarship is available to Master's applicants to study in Finland.",
             content_hash="c" * 64,
@@ -854,35 +1033,29 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 "scholarship_offer_evidence": "scholarship is available",
             }],
         }
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=__import__("json").dumps(raw),
-        )
-        extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        client = _mock_groq_client(json.dumps(raw))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
         candidates = extractor.extract(page, _source())
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].values["name"], "Finland Master's Award")
-        self.assertEqual(client.models.generate_content.call_args.kwargs["model"], "test-model")
+        self.assertEqual(client.chat.completions.create.call_args.kwargs["model"], "test-model")
 
-    def test_gemini_success_does_not_call_groq(self):
+    def test_groq_success_uses_only_groq(self):
         page = _page(
             "The Finland Master's Award scholarship is available to Master's applicants. Study in Finland.",
         )
-        gemini = MagicMock()
-        gemini.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps({"scholarships": [_raw_extraction_candidate()]}),
-        )
-        groq = MagicMock()
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True),
-            client=gemini,
+        groq = _mock_groq_client(json.dumps({
+            "scholarships": [_raw_extraction_candidate()],
+        }))
+        extractor = GroqScholarshipExtractor(
+            _settings(),
             groq_client=groq,
         )
 
         candidates = extractor.extract(page, _source())
 
         self.assertEqual(len(candidates), 1)
-        groq.chat.completions.create.assert_not_called()
+        groq.chat.completions.create.assert_called_once()
 
     def test_extraction_prompt_bounds_and_prioritizes_deduplicated_official_links(self):
         long_url = "/scholarship/" + ("x" * 150)
@@ -900,13 +1073,12 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 ("https://user:password@official.example/scholarships/apply", "Apply"),
             ),
         )
-        extractor = GeminiScholarshipExtractor(
+        extractor = GroqScholarshipExtractor(
             _settings(
                 max_linked_urls=2,
                 max_linked_url_chars=100,
                 max_linked_urls_bytes=512,
             ),
-            client=MagicMock(),
         )
 
         prompt = extractor._prompt(page, _source())
@@ -934,13 +1106,12 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 ("/scholarships/award-two", "Scholarship award two"),
             ),
         )
-        extractor = GeminiScholarshipExtractor(
+        extractor = GroqScholarshipExtractor(
             _settings(
                 max_linked_urls=10,
                 max_linked_url_chars=100,
                 max_linked_urls_bytes=50,
             ),
-            client=MagicMock(),
         )
 
         payload = json.loads(
@@ -971,7 +1142,25 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 ("/scholarships/apply", "Official scholarship application"),
             ),
         )
-        prompt_builder = GeminiScholarshipExtractor(_settings())
+        prompt_builder = GroqScholarshipExtractor(_settings())
+        initial_urls, initial_urls_limited, _ = prompt_builder._bounded_linked_urls(
+            page,
+            source,
+        )
+        initial_prompt = prompt_builder._prompt(
+            page,
+            source,
+            linked_urls=initial_urls,
+            linked_urls_limited=initial_urls_limited,
+            page_text=evidence,
+        )
+        initial_payload_bytes = groq_request_payload_size_bytes(
+            "test-model",
+            EXTRACTION_SYSTEM_INSTRUCTION,
+            initial_prompt,
+            {"type": "json_object"},
+            max_completion_tokens=2_048,
+        )
         deduplicated_evidence = prompt_builder._remove_redundant_text_lines(evidence)
         application_url = "https://official.example/scholarships/apply"
         reduced_prompt = prompt_builder._prompt(
@@ -982,26 +1171,26 @@ class GeographyAndExtractionTests(unittest.TestCase):
             page_text=deduplicated_evidence,
             repeated_text_lines_removed=True,
         )
-        limit = gemini_request_payload_size_bytes(
+        limit = groq_request_payload_size_bytes(
+            "test-model",
+            EXTRACTION_SYSTEM_INSTRUCTION,
             reduced_prompt,
-            {
-                "system_instruction": EXTRACTION_SYSTEM_INSTRUCTION,
-                "temperature": 0.1,
-                "response_mime_type": "application/json",
-            },
+            {"type": "json_object"},
+            max_completion_tokens=2_048,
         )
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps({"scholarships": []}),
-        )
-        extractor = GeminiScholarshipExtractor(
+        client = _mock_groq_client(json.dumps({"scholarships": []}))
+        extractor = GroqScholarshipExtractor(
             _settings(max_provider_request_bytes=limit),
-            client=client,
+            groq_client=client,
         )
 
-        self.assertEqual(extractor.extract(page, source), [])
+        with self.assertLogs(
+            "app.services.scholarship_discovery_extraction",
+            level="INFO",
+        ) as captured:
+            self.assertEqual(extractor.extract(page, source), [])
 
-        submitted_prompt = client.models.generate_content.call_args.kwargs["contents"]
+        submitted_prompt = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         payload = json.loads(submitted_prompt.split("Source page data (JSON):\n", 1)[1])
         self.assertEqual(payload["linked_urls"], [application_url])
         self.assertTrue(payload["linked_urls_limited"])
@@ -1010,8 +1199,313 @@ class GeographyAndExtractionTests(unittest.TestCase):
         self.assertEqual(payload["official_page_text"].count("General notice: apply early."), 1)
         for detail in ("3.5 GPA", "€24,000", "30 June 2027", "Finland"):
             self.assertIn(detail, payload["official_page_text"])
+        request = extractor.last_provider_diagnostics["chunk_diagnostics"][0][
+            "requests"
+        ][0]
+        size_diagnostics = request["size_diagnostics"]
+        self.assertEqual(len(initial_urls), 3)
+        self.assertEqual(
+            size_diagnostics["serialized_request_bytes_before_pruning"],
+            initial_payload_bytes,
+        )
+        self.assertEqual(
+            size_diagnostics["serialized_request_bytes_after_pruning"],
+            request["payload_size_bytes"],
+        )
+        self.assertGreater(
+            size_diagnostics["serialized_request_bytes_before_pruning"],
+            size_diagnostics["serialized_request_bytes_after_pruning"],
+        )
+        self.assertEqual(size_diagnostics["linked_url_count_before_pruning"], 3)
+        self.assertEqual(size_diagnostics["linked_url_count_after_pruning"], 1)
+        self.assertEqual(size_diagnostics["duplicate_lines_removed"], 1)
+        self.assertEqual(request["limiter_decision"], "admitted")
+        self.assertEqual(request["limiter_rejection_reason"], "none")
+        diagnostic_text = "\n".join(captured.output) + repr(size_diagnostics)
+        for sensitive_value in (
+            evidence,
+            application_url,
+            "/news/latest",
+            "General notice: apply early.",
+        ):
+            self.assertNotIn(sensitive_value, diagnostic_text)
 
-    def test_gemini_request_budget_preserves_complete_unicode_scholarship_evidence(self):
+    def test_payload_budget_prunes_low_priority_links_without_truncating_page_evidence(self):
+        source = _source()
+        evidence = (
+            "Eligibility: Master's applicants must submit official transcripts. "
+            "The scholarship provides full tuition support for study in Finland."
+        )
+        low_priority_href = "/news/" + ("n" * 500)
+        page = _page(
+            evidence,
+            links=(
+                (low_priority_href, "News"),
+                ("/scholarships/apply", "Official scholarship application"),
+            ),
+        )
+        model = "payload-link-pruning-test"
+        prompt_builder = GroqScholarshipExtractor(
+            _settings(groq_model=model, groq_fallback_enabled=False),
+        )
+        linked_urls, _links_limited, high_priority_count = (
+            prompt_builder._bounded_linked_urls(page, source)
+        )
+        self.assertEqual(high_priority_count, 1)
+        self.assertEqual(len(linked_urls), 2)
+
+        high_priority_urls = linked_urls[:high_priority_count]
+        high_priority_prompt = prompt_builder._prompt(
+            page,
+            source,
+            linked_urls=high_priority_urls,
+            linked_urls_limited=True,
+            page_text=evidence,
+        )
+        byte_budget = groq_request_payload_size_bytes(
+            model,
+            EXTRACTION_SYSTEM_INSTRUCTION,
+            high_priority_prompt,
+            {"type": "json_object"},
+            max_completion_tokens=2_048,
+        )
+        full_prompt = prompt_builder._prompt(
+            page,
+            source,
+            linked_urls=linked_urls,
+            linked_urls_limited=False,
+            page_text=evidence,
+        )
+        self.assertGreater(
+            groq_request_payload_size_bytes(
+                model,
+                EXTRACTION_SYSTEM_INSTRUCTION,
+                full_prompt,
+                {"type": "json_object"},
+                max_completion_tokens=2_048,
+            ),
+            byte_budget,
+        )
+
+        client = _mock_groq_client(json.dumps({"scholarships": []}))
+        extractor = GroqScholarshipExtractor(
+            _settings(
+                groq_model=model,
+                groq_fallback_enabled=False,
+                groq_organization_id="payload-low-priority-pruning-test-org",
+                max_provider_request_bytes=byte_budget,
+            ),
+            groq_client=client,
+        )
+
+        self.assertEqual(extractor.extract(page, source), [])
+
+        submitted_prompt = client.chat.completions.create.call_args.kwargs[
+            "messages"
+        ][1]["content"]
+        payload = json.loads(submitted_prompt.split("Source page data (JSON):\n", 1)[1])
+        request = extractor.last_provider_diagnostics["chunk_diagnostics"][0][
+            "requests"
+        ][0]
+        size_diagnostics = request["size_diagnostics"]
+        self.assertEqual(payload["linked_urls"], high_priority_urls)
+        self.assertTrue(payload["linked_urls_limited"])
+        self.assertEqual(payload["official_page_text"], evidence)
+        self.assertNotIn(low_priority_href, submitted_prompt)
+        self.assertLessEqual(request["payload_size_bytes"], byte_budget)
+        self.assertEqual(size_diagnostics["linked_url_count_after_pruning"], 1)
+
+    def test_payload_budget_prunes_high_priority_links_to_zero_without_truncating_evidence(self):
+        source = _source()
+        evidence = (
+            "Eligibility: Master's applicants must submit official transcripts. "
+            "The award provides full tuition support for study in Finland."
+        )
+        page = _page(
+            evidence,
+            links=(
+                ("/scholarships/apply", "Official scholarship application"),
+                ("/funding/award-details", "Scholarship award details"),
+            ),
+        )
+        model = "payload-high-priority-pruning-test"
+        prompt_builder = GroqScholarshipExtractor(
+            _settings(groq_model=model, groq_fallback_enabled=False),
+        )
+        linked_urls, _links_limited, high_priority_count = (
+            prompt_builder._bounded_linked_urls(page, source)
+        )
+        self.assertEqual(high_priority_count, 2)
+
+        zero_link_prompt = prompt_builder._prompt(
+            page,
+            source,
+            linked_urls=[],
+            linked_urls_limited=True,
+            page_text=evidence,
+        )
+        byte_budget = groq_request_payload_size_bytes(
+            model,
+            EXTRACTION_SYSTEM_INSTRUCTION,
+            zero_link_prompt,
+            {"type": "json_object"},
+            max_completion_tokens=2_048,
+        )
+        full_prompt = prompt_builder._prompt(
+            page,
+            source,
+            linked_urls=linked_urls,
+            linked_urls_limited=False,
+            page_text=evidence,
+        )
+        self.assertGreater(
+            groq_request_payload_size_bytes(
+                model,
+                EXTRACTION_SYSTEM_INSTRUCTION,
+                full_prompt,
+                {"type": "json_object"},
+                max_completion_tokens=2_048,
+            ),
+            byte_budget,
+        )
+
+        client = _mock_groq_client(json.dumps({"scholarships": []}))
+        extractor = GroqScholarshipExtractor(
+            _settings(
+                groq_model=model,
+                groq_fallback_enabled=False,
+                groq_organization_id="payload-high-priority-pruning-test-org",
+                max_provider_request_bytes=byte_budget,
+            ),
+            groq_client=client,
+        )
+
+        self.assertEqual(extractor.extract(page, source), [])
+
+        submitted_prompt = client.chat.completions.create.call_args.kwargs[
+            "messages"
+        ][1]["content"]
+        payload = json.loads(submitted_prompt.split("Source page data (JSON):\n", 1)[1])
+        request = extractor.last_provider_diagnostics["chunk_diagnostics"][0][
+            "requests"
+        ][0]
+        self.assertEqual(payload["linked_urls"], [])
+        self.assertTrue(payload["linked_urls_limited"])
+        self.assertEqual(payload["official_page_text"], evidence)
+        self.assertLessEqual(request["payload_size_bytes"], byte_budget)
+
+    def test_payload_overage_triggers_duplicate_line_cleanup(self):
+        source = _source()
+        repeated_notice = (
+            "General notice: Applicants should review the official eligibility "
+            "requirements and submit complete supporting documents before the deadline."
+        )
+        evidence = "\n".join((
+            "Eligibility: Master's students with a 3.5 GPA.",
+            "Funding: ?24,000 stipend for eligible applicants.",
+            "Deadline: 30 June 2027.",
+            repeated_notice,
+            repeated_notice,
+            repeated_notice,
+        ))
+        page = _page(evidence)
+        model = "payload-dedup-test"
+        prompt_builder = GroqScholarshipExtractor(
+            _settings(groq_model=model, groq_fallback_enabled=False),
+        )
+        deduplicated_evidence = prompt_builder._remove_redundant_text_lines(evidence)
+        deduplicated_prompt = prompt_builder._prompt(
+            page,
+            source,
+            linked_urls=[],
+            linked_urls_limited=False,
+            page_text=deduplicated_evidence,
+            repeated_text_lines_removed=True,
+        )
+        byte_budget = groq_request_payload_size_bytes(
+            model,
+            EXTRACTION_SYSTEM_INSTRUCTION,
+            deduplicated_prompt,
+            {"type": "json_object"},
+            max_completion_tokens=2_048,
+        )
+        full_prompt = prompt_builder._prompt(page, source)
+        self.assertGreater(
+            groq_request_payload_size_bytes(
+                model,
+                EXTRACTION_SYSTEM_INSTRUCTION,
+                full_prompt,
+                {"type": "json_object"},
+                max_completion_tokens=2_048,
+            ),
+            byte_budget,
+        )
+
+        client = _mock_groq_client(json.dumps({"scholarships": []}))
+        extractor = GroqScholarshipExtractor(
+            _settings(
+                groq_model=model,
+                groq_fallback_enabled=False,
+                groq_organization_id="payload-dedup-test-org",
+                max_provider_request_bytes=byte_budget,
+            ),
+            groq_client=client,
+        )
+
+        self.assertEqual(extractor.extract(page, source), [])
+
+        submitted_prompt = client.chat.completions.create.call_args.kwargs[
+            "messages"
+        ][1]["content"]
+        payload = json.loads(submitted_prompt.split("Source page data (JSON):\n", 1)[1])
+        request = extractor.last_provider_diagnostics["chunk_diagnostics"][0][
+            "requests"
+        ][0]
+        self.assertTrue(payload["repeated_text_lines_removed"])
+        self.assertEqual(payload["official_page_text"], deduplicated_evidence)
+        self.assertEqual(payload["official_page_text"].count(repeated_notice), 1)
+        self.assertLessEqual(request["payload_size_bytes"], byte_budget)
+        for detail in ("3.5 GPA", "?24,000", "30 June 2027"):
+            self.assertIn(detail, payload["official_page_text"])
+        client.chat.completions.create.assert_called_once()
+
+    def test_large_prompt_is_not_rejected_by_local_token_estimates(self):
+        evidence = "Eligibility details. " + ("additional official text " * 3_000)
+        page = _page(evidence)
+        client = _mock_groq_client(json.dumps({"scholarships": []}))
+        settings = _settings(
+            groq_model="large-prompt-without-token-limit-test",
+            groq_fallback_enabled=False,
+            max_provider_chunk_chars=100_000,
+            max_provider_request_bytes=512_000,
+            # The configured preflight is switched off (None disables it).
+            # The organization TPM limit still governs, because a request
+            # over it cannot succeed however many times it is sent.
+            groq_max_request_tokens=None,
+        )
+        extractor = GroqScholarshipExtractor(settings, groq_client=client)
+
+        self.assertEqual(extractor.extract(page, _source()), [])
+
+        # The page is split locally until every request fits the organization
+        # TPM cap, and extraction succeeds. It is not sent unsplit (that could
+        # only ever come back 413) and it is not abandoned.
+        prompts = [
+            call.kwargs["messages"][1]["content"]
+            for call in client.chat.completions.create.call_args_list
+        ]
+        self.assertGreater(len(prompts), 1)
+        token_cap = int(settings.groq_tpm_limit * 0.9)
+        for index, prompt in enumerate(prompts, start=1):
+            with self.subTest(request=index):
+                self.assertLessEqual(
+                    extractor._estimated_request_tokens(prompt),
+                    token_cap,
+                )
+        # No page text was discarded to satisfy a local token estimate.
+        self.assertGreater(sum(len(prompt) for prompt in prompts), 50_000)
+
+    def test_groq_request_budget_preserves_complete_unicode_scholarship_evidence(self):
         evidence = (
             "Eligibility: Master's students with a 3.5 GPA. "
             "Funding: €24,000 stipend. Deadline: 30 June. "
@@ -1019,31 +1513,28 @@ class GeographyAndExtractionTests(unittest.TestCase):
         )
         page = _page(evidence)
         settings = _settings(max_provider_request_bytes=512_000)
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps({"scholarships": []}),
-        )
-        extractor = GeminiScholarshipExtractor(settings, client=client)
+        client = _mock_groq_client(json.dumps({"scholarships": []}))
+        extractor = GroqScholarshipExtractor(settings, groq_client=client)
         prompt = extractor._prompt(page, _source())
-        config = {
-            "system_instruction": EXTRACTION_SYSTEM_INSTRUCTION,
-            "temperature": 0.1,
-            "response_mime_type": "application/json",
-        }
-        request_size = gemini_request_payload_size_bytes(prompt, config)
+        request_size = groq_request_payload_size_bytes(
+            settings.groq_model,
+            EXTRACTION_SYSTEM_INSTRUCTION,
+            prompt,
+            {"type": "json_object"},
+        )
 
         self.assertLessEqual(request_size, settings.max_provider_request_bytes)
         self.assertEqual(extractor.extract(page, _source()), [])
-        submitted_prompt = client.models.generate_content.call_args.kwargs["contents"]
+        submitted_prompt = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         payload = json.loads(submitted_prompt.split("Source page data (JSON):\n", 1)[1])
         self.assertEqual(payload["official_page_text"], evidence)
         for detail in ("3.5 GPA", "€24,000", "30 June", "official transcripts"):
             self.assertIn(detail, payload["official_page_text"])
 
-        too_small_client = MagicMock()
-        too_small = GeminiScholarshipExtractor(
+        too_small_client = _mock_groq_client()
+        too_small = GroqScholarshipExtractor(
             _settings(max_provider_request_bytes=request_size - 1),
-            client=too_small_client,
+            groq_client=too_small_client,
         )
         with self.assertLogs(
             "app.services.scholarship_discovery_extraction",
@@ -1053,30 +1544,21 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 too_small.extract(page, _source())
         self.assertEqual(raised.exception.category, "payload_too_large")
         self.assertEqual(too_small.last_outcome_status, "request_rejected")
-        too_small_client.models.generate_content.assert_not_called()
+        too_small_client.chat.completions.create.assert_not_called()
         self.assertTrue(any("request rejected" in line for line in logs.output))
-        self.assertFalse(any("provider=gemini" in line for line in logs.output))
+        self.assertTrue(any("provider=groq category=payload_too_large" in line for line in logs.output))
 
     def test_groq_final_payload_budget_includes_json_and_strict_schema_modes(self):
         request_sizes = {}
         for model in ("test-groq-model", "openai/gpt-oss-20b"):
             with self.subTest(model=model):
-                gemini = MagicMock()
-                gemini.models.generate_content.side_effect = _ProviderFailure(429)
-                groq = MagicMock()
-                groq.chat.completions.create.return_value = SimpleNamespace(
-                    choices=[SimpleNamespace(message=SimpleNamespace(
-                        content=json.dumps({"scholarships": []}),
-                    ))],
-                )
+                groq = _mock_groq_client(json.dumps({"scholarships": []}))
                 settings = _settings(
-                    groq_fallback_enabled=True,
                     groq_model=model,
                     max_provider_request_bytes=512_000,
                 )
-                extractor = GeminiScholarshipExtractor(
+                extractor = GroqScholarshipExtractor(
                     settings,
-                    client=gemini,
                     groq_client=groq,
                 )
 
@@ -1172,7 +1654,7 @@ class GeographyAndExtractionTests(unittest.TestCase):
         page = _page()
         source = _source()
         strict_model = "openai/gpt-oss-20b"
-        prompt_builder = GeminiScholarshipExtractor(_settings())
+        prompt_builder = GroqScholarshipExtractor(_settings())
         prompt = prompt_builder._prompt(page, source, strict_output=True)
         schema = _strict_extraction_schema()
         response_format = {
@@ -1189,49 +1671,42 @@ class GeographyAndExtractionTests(unittest.TestCase):
             prompt,
             response_format,
         )
-        gemini_size = gemini_request_payload_size_bytes(
-            prompt_builder._prompt(page, source),
-            {
-                "system_instruction": EXTRACTION_SYSTEM_INSTRUCTION,
-                "temperature": 0.1,
-                "response_mime_type": "application/json",
-            },
+        plain_prompt = prompt_builder._prompt(page, source)
+        plain_groq_size = groq_request_payload_size_bytes(
+            strict_model,
+            EXTRACTION_SYSTEM_INSTRUCTION,
+            plain_prompt,
+            {"type": "json_object"},
         )
-        self.assertGreater(groq_size, gemini_size)
+        self.assertGreater(groq_size, plain_groq_size)
 
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
         groq = MagicMock()
-        extractor = GeminiScholarshipExtractor(
+        fallback_groq = MagicMock()
+        extractor = GroqScholarshipExtractor(
             _settings(
                 groq_model=strict_model,
                 groq_fallback_enabled=True,
-                max_provider_request_bytes=gemini_size,
+                max_provider_request_bytes=plain_groq_size,
             ),
-            client=gemini,
             groq_client=groq,
+            fallback_groq_client=fallback_groq,
         )
 
         with self.assertRaises(ScholarshipExtractionError) as raised:
             extractor.extract(page, source)
-
         self.assertEqual(raised.exception.category, "payload_too_large")
-        self.assertIsNone(raised.exception.http_status)
-        gemini.models.generate_content.assert_called_once()
         groq.chat.completions.create.assert_not_called()
+        fallback_groq.chat.completions.create.assert_not_called()
 
     def test_groq_413_is_classified_and_not_retried(self):
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
         groq = MagicMock()
         groq.chat.completions.create.side_effect = _ProviderFailure(413)
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True),
-            client=gemini,
+        extractor = GroqScholarshipExtractor(
+            _settings(groq_fallback_enabled=False),
             groq_client=groq,
         )
 
-        with self.assertLogs("app.services.scholarship_discovery_extraction", level="WARNING") as logs:
+        with self.assertLogs(level="WARNING") as logs:
             with self.assertRaises(ScholarshipExtractionError) as raised:
                 extractor.extract(_page(), _source())
 
@@ -1242,82 +1717,54 @@ class GeographyAndExtractionTests(unittest.TestCase):
         self.assertTrue(any("provider=groq category=payload_too_large" in line for line in logs.output))
         self.assertTrue(any("http_status=413" in line for line in logs.output))
 
-    def test_gemini_quota_error_falls_back_to_groq_and_uses_shared_validation(self):
-        page = _page(
-            "The Finland Master's Award scholarship is available to Master's applicants. Study in Finland.",
-        )
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
+    def test_groq_quota_failure_does_not_fallback_without_separate_organization(self):
         groq = MagicMock()
-        groq.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(
-                content=json.dumps({"scholarships": [_raw_extraction_candidate()]}),
-            ))],
-        )
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True, groq_model="test-groq-model"),
-            client=gemini,
+        groq.chat.completions.create.side_effect = _ProviderFailure(429)
+        extractor = GroqScholarshipExtractor(
+            _settings(groq_model="test-groq-model", groq_fallback_enabled=True),
             groq_client=groq,
         )
 
-        with self.assertLogs("app.services.scholarship_discovery_extraction", level="INFO") as logs:
-            candidates = extractor.extract(page, _source())
-
-        self.assertEqual(len(candidates), 1)
-        self.assertEqual(groq.chat.completions.create.call_args.kwargs["model"], "test-groq-model")
-        self.assertEqual(
-            gemini.models.generate_content.call_args.kwargs["contents"],
-            groq.chat.completions.create.call_args.kwargs["messages"][1]["content"],
-        )
-        self.assertEqual(
-            groq.chat.completions.create.call_args.kwargs["response_format"],
-            {"type": "json_object"},
-        )
-        self.assertTrue(any("provider=gemini category=quota_error" in line for line in logs.output))
-        self.assertTrue(any("provider=groq category=fallback_selected" in line for line in logs.output))
-        self.assertTrue(any("provider=groq category=request_started" in line for line in logs.output))
-        self.assertTrue(any("provider=groq category=fallback_success" in line for line in logs.output))
-        self.assertEqual(extractor.last_outcome_status, "candidates_accepted")
-        self.assertTrue(any("source_id=test-finland" in line for line in logs.output))
-        self.assertNotIn(page.text, "\n".join(logs.output))
-        self.assertNotIn("test-api-key", "\n".join(logs.output))
+        with self.assertLogs(level="WARNING") as logs:
+            with self.assertRaises(ScholarshipExtractionError) as raised:
+                extractor.extract(_page(), _source())
+        self.assertEqual(raised.exception.category, "quota_error")
+        self.assertEqual(raised.exception.http_status, 429)
+        self.assertEqual(groq.chat.completions.create.call_count, 1)
+        self.assertNotIn("key_slot=fallback", "\n".join(logs.output))
 
     def test_valid_empty_response_has_a_distinct_outcome(self):
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=json.dumps({"scholarships": []}),
-        )
-        extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        client = _mock_groq_client(json.dumps({"scholarships": []}))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
 
         self.assertEqual(extractor.extract(_page(), _source()), [])
         self.assertEqual(extractor.last_outcome_status, "valid_empty")
         self.assertEqual(extractor.last_rejected_count, 0)
-        client.models.generate_content.assert_called_once()
+        client.chat.completions.create.assert_called_once()
 
     def test_insufficient_page_content_is_reported_before_provider_call(self):
-        client = MagicMock()
+        client = _mock_groq_client()
         page = replace(_page(""), insufficient_content=True)
-        extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
 
         with self.assertRaises(ScholarshipExtractionError) as raised:
             extractor.extract(page, _source())
 
         self.assertEqual(raised.exception.category, "insufficient_page_content")
         self.assertEqual(extractor.last_outcome_status, "insufficient_page_content")
-        client.models.generate_content.assert_not_called()
+        client.chat.completions.create.assert_not_called()
 
-    def test_supported_groq_model_uses_strict_schema_with_protected_fields_excluded(self):
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
-        groq = MagicMock()
-        groq.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(
-                content=json.dumps({"scholarships": [_raw_extraction_candidate()]}),
-            ))],
-        )
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True, groq_model="openai/gpt-oss-20b"),
-            client=gemini,
+    def test_supported_primary_groq_model_uses_json_object_for_extraction(self):
+        # Extraction deliberately uses json_object rather than the strict
+        # schema, even for a model that supports strict structured output:
+        # the parser, candidate validation and evidence checks own the
+        # response shape. The strict schema remains available for callers
+        # that ask for it (see the schema assertions below).
+        groq = _mock_groq_client(json.dumps({
+            "scholarships": [_raw_extraction_candidate()],
+        }))
+        extractor = GroqScholarshipExtractor(
+            _settings(groq_model="openai/gpt-oss-20b"),
             groq_client=groq,
         )
 
@@ -1327,113 +1774,149 @@ class GeographyAndExtractionTests(unittest.TestCase):
         self.assertEqual(len(extractor.extract(page, _source())), 1)
 
         response_format = groq.chat.completions.create.call_args.kwargs["response_format"]
-        self.assertEqual(response_format["type"], "json_schema")
-        self.assertTrue(response_format["json_schema"]["strict"])
-        schema = response_format["json_schema"]["schema"]
+        self.assertEqual(response_format, {"type": "json_object"})
+        self.assertNotIn("json_schema", response_format)
+
+        # No strict schema is sent, so the prompt must still keep the model
+        # away from the protected verification fields.
+        prompt = groq.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+        for protected in PROTECTED_FIELDS - {"official_info_url", "source_name"}:
+            self.assertNotIn(protected, prompt)
+
+    def test_strict_extraction_schema_still_excludes_protected_fields(self):
+        # _strict_extraction_schema() is still built when a caller requests
+        # strict output, so it must keep excluding the protected fields.
+        schema = _strict_extraction_schema()
         self.assertEqual(schema["required"], ["scholarships"])
         self.assertFalse(schema["additionalProperties"])
-        values_schema = schema["properties"]["scholarships"]["items"]["properties"]["values"]
+        item_properties = schema["properties"]["scholarships"]["items"]["properties"]
+        values_schema = item_properties["values"]
         self.assertFalse(values_schema["additionalProperties"])
         self.assertEqual(set(values_schema["required"]), set(values_schema["properties"]))
         self.assertNotIn("verification_status", values_schema["properties"])
+        for protected in PROTECTED_FIELDS:
+            self.assertNotIn(protected, values_schema["properties"])
+        self.assertEqual(
+            set(item_properties["evidence"]["required"]),
+            set(item_properties["evidence"]["properties"]),
+        )
 
-    def test_groq_quota_error_is_classified_and_returned(self):
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
+    def test_strict_extraction_schema_normalizes_every_object_and_nullable_field(self):
+        schema = _strict_extraction_schema()
+
+        def walk(node):
+            if isinstance(node, dict):
+                self.assertNotIn("default", node)
+                self.assertNotIn("$ref", node)
+                self.assertNotIn("$defs", node)
+                if "properties" in node:
+                    self.assertEqual(node["required"], list(node["properties"]))
+                    self.assertIs(node["additionalProperties"], False)
+                for child in node.values():
+                    walk(child)
+            elif isinstance(node, list):
+                for child in node:
+                    walk(child)
+
+        def accepts_null(node):
+            schema_type = node.get("type")
+            return (
+                schema_type == "null"
+                or isinstance(schema_type, list) and "null" in schema_type
+                or any(
+                    isinstance(branch, dict) and accepts_null(branch)
+                    for composition in ("anyOf", "oneOf")
+                    for branch in node.get(composition, [])
+                )
+            )
+
+        walk(schema)
+        item_properties = schema["properties"]["scholarships"]["items"]["properties"]
+        for object_name in ("values", "evidence"):
+            object_schema = item_properties[object_name]
+            for property_name, property_schema in object_schema["properties"].items():
+                with self.subTest(object=object_name, property=property_name):
+                    self.assertTrue(accepts_null(property_schema))
+
+    def test_null_values_and_evidence_are_treated_as_not_found(self):
+        page = _page(
+            "The Finland Master's Award scholarship is available to Master's applicants. "
+            "Study in Finland."
+        )
+        raw = _raw_extraction_candidate()
+        raw["values"]["eligible_degree_levels"] = None
+        raw["evidence"]["country"] = None
+        raw["host_city"] = None
+        raw["masters_evidence"] = None
+        raw["scholarship_offer_evidence"] = None
+
+        result = _validate_candidate(raw, page, _source())
+
+        self.assertTrue(result.requires_review)
+        self.assertIn("missing_evidence:country", result.review_reasons)
+
+    def test_groq_quota_error_is_preserved_without_provider_fallback(self):
         groq = MagicMock()
         groq.chat.completions.create.side_effect = _ProviderFailure(429)
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True),
-            client=gemini,
+        extractor = GroqScholarshipExtractor(
+            _settings(groq_fallback_enabled=False),
             groq_client=groq,
         )
 
-        with self.assertLogs("app.services.scholarship_discovery_extraction", level="WARNING") as logs:
-            with self.assertRaises(ScholarshipExtractionError) as raised:
-                extractor.extract(_page(), _source())
+        with self.assertRaises(ScholarshipExtractionError) as raised:
+            extractor.extract(_page(), _source())
 
+        self.assertEqual(groq.chat.completions.create.call_count, 1)
         self.assertEqual(raised.exception.category, "quota_error")
         self.assertEqual(raised.exception.http_status, 429)
-        self.assertEqual(extractor.last_outcome_status, "provider_error")
-        self.assertTrue(any("category=fallback_failed" in line for line in logs.output))
-        self.assertTrue(any("category=all_providers_exhausted" in line for line in logs.output))
 
-    def test_groq_authentication_error_is_not_retried_or_disclosed(self):
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
+    def test_groq_authentication_error_is_not_retried(self):
         groq = MagicMock()
         groq.chat.completions.create.side_effect = _ProviderFailure(401)
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True),
-            client=gemini,
+        extractor = GroqScholarshipExtractor(
+            _settings(groq_fallback_enabled=False),
             groq_client=groq,
         )
 
-        with self.assertLogs("app.services.scholarship_discovery_extraction", level="WARNING") as logs:
+        with self.assertLogs(level="INFO") as logs:
             with self.assertRaises(ScholarshipExtractionError) as raised:
                 extractor.extract(_page(), _source())
 
-        self.assertEqual(raised.exception.category, "authentication_error")
-        self.assertEqual(raised.exception.http_status, 401)
         self.assertEqual(groq.chat.completions.create.call_count, 1)
+        self.assertEqual(raised.exception.category, "authentication_error")
         self.assertNotIn("sanitized provider failure", "\n".join(logs.output))
-        self.assertTrue(any("category=fallback_failed" in line for line in logs.output))
-        self.assertTrue(any("category=all_providers_exhausted" in line for line in logs.output))
+        self.assertNotIn("key_slot=fallback", "\n".join(logs.output))
 
-    def test_gemini_authentication_and_malformed_request_do_not_fall_back(self):
+    def test_groq_provider_errors_are_categorized_without_fallback(self):
         for status, category in (
-            (400, "provider_error"),
+            (400, "malformed_request"),
             (401, "authentication_error"),
             (403, "permission_error"),
         ):
-            with self.subTest(status=status):
-                gemini = MagicMock()
-                gemini.models.generate_content.side_effect = _ProviderFailure(status)
+            with self.subTest(status=status), patch(
+                "app.services.groq_provider._UNAVAILABLE_KEY_SLOTS",
+                set(),
+            ):
                 groq = MagicMock()
-                extractor = GeminiScholarshipExtractor(
-                    _settings(groq_fallback_enabled=True),
-                    client=gemini,
+                groq.chat.completions.create.side_effect = _ProviderFailure(status)
+                extractor = GroqScholarshipExtractor(
+                    _settings(groq_fallback_enabled=False),
                     groq_client=groq,
                 )
 
-                with self.assertLogs("app.services.scholarship_discovery_extraction", level="WARNING") as logs:
+                with self.assertLogs(level="WARNING") as logs:
                     with self.assertRaises(ScholarshipExtractionError) as raised:
                         extractor.extract(_page(), _source())
 
+                self.assertEqual(groq.chat.completions.create.call_count, 1)
                 self.assertEqual(raised.exception.category, category)
-                self.assertEqual(extractor.last_outcome_status, "provider_error")
-                groq.chat.completions.create.assert_not_called()
-                self.assertTrue(any("reason=not_eligible" in line for line in logs.output))
+                self.assertTrue(any(f"key_slot=primary category={category}" in line for line in logs.output))
 
-    def test_fallback_disabled_preserves_gemini_quota_error(self):
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
+    def test_groq_malformed_json_is_rejected_without_fallback(self):
         groq = MagicMock()
-        extractor = GeminiScholarshipExtractor(
+        groq.chat.completions.create.return_value = _groq_response("not-json")
+        extractor = GroqScholarshipExtractor(
             _settings(groq_fallback_enabled=False),
-            client=gemini,
-            groq_client=groq,
-        )
-
-        with self.assertLogs("app.services.scholarship_discovery_extraction", level="WARNING") as logs:
-            with self.assertRaises(ScholarshipExtractionError) as raised:
-                extractor.extract(_page(), _source())
-
-        self.assertEqual(raised.exception.category, "quota_error")
-        self.assertEqual(raised.exception.http_status, 429)
-        self.assertTrue(any("reason=disabled" in line for line in logs.output))
-        groq.chat.completions.create.assert_not_called()
-
-    def test_groq_malformed_json_is_rejected_without_relaxing_validation(self):
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
-        groq = MagicMock()
-        groq.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="not-json"))],
-        )
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True),
-            client=gemini,
             groq_client=groq,
         )
 
@@ -1443,44 +1926,62 @@ class GeographyAndExtractionTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.category, "malformed_response")
         self.assertEqual(extractor.last_outcome_status, "malformed_response")
-        self.assertTrue(any("category=fallback_failed" in line for line in logs.output))
-        self.assertTrue(any("category=all_providers_exhausted" in line for line in logs.output))
+        self.assertEqual(groq.chat.completions.create.call_count, 1)
+        self.assertEqual(extractor.last_provider_diagnostics["providers_attempted"], ["groq"])
 
-        groq.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(
-                content=json.dumps({
-                    "scholarships": [
-                        _raw_extraction_candidate(verification_status="verified"),
-                    ],
-                }),
-            ))],
-        )
+    def test_groq_malformed_candidate_is_rejected_without_relaxing_validation(self):
+        groq = _mock_groq_client(json.dumps({
+            "scholarships": [
+                _raw_extraction_candidate(verification_status="verified"),
+            ],
+        }))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=groq)
+
         self.assertEqual(extractor.extract(_page(), _source()), [])
         self.assertEqual(extractor.last_rejected_count, 1)
         self.assertEqual(extractor.last_rejection_reasons, ["ScholarshipExtractionError"])
         self.assertEqual(extractor.last_outcome_status, "candidates_rejected")
 
-    def test_both_providers_failing_returns_only_sanitized_groq_error(self):
-        gemini = MagicMock()
-        gemini.models.generate_content.side_effect = _ProviderFailure(429)
+    def test_provider_error_logs_omit_untrusted_text_and_page_content(self):
+        page = _page()
+
+        class UntrustedProviderFailure(Exception):
+            status_code = 400
+
+            def __init__(self):
+                self.body = {
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "invalid_json_schema",
+                        "param": "response_format",
+                        "message": f"provider text {page.text} gsk_test_secret",
+                    },
+                    "failed_generation": page.text,
+                }
+                super().__init__(self.body["error"]["message"])
+
         groq = MagicMock()
-        groq.chat.completions.create.side_effect = _ProviderFailure(500)
-        extractor = GeminiScholarshipExtractor(
-            _settings(groq_fallback_enabled=True),
-            client=gemini,
+        groq.chat.completions.create.side_effect = UntrustedProviderFailure()
+        extractor = GroqScholarshipExtractor(
+            _settings(groq_fallback_enabled=False),
             groq_client=groq,
         )
 
-        with self.assertLogs("app.services.scholarship_discovery_extraction", level="WARNING") as logs:
+        with self.assertLogs("app.services.groq_provider", level="WARNING") as logs:
             with self.assertRaises(ScholarshipExtractionError) as raised:
-                extractor.extract(_page(), _source())
+                extractor.extract(page, _source())
 
-        self.assertEqual(raised.exception.category, "provider_error")
-        self.assertEqual(raised.exception.http_status, 500)
-        self.assertNotIn("official_page_text", "\n".join(logs.output))
-        self.assertTrue(any("provider=groq category=provider_error" in line for line in logs.output))
+        serialized_logs = "\n".join(logs.output)
+        self.assertEqual(raised.exception.category, "malformed_request")
+        self.assertNotIn(page.text, serialized_logs)
+        self.assertNotIn("gsk_test_secret", serialized_logs)
+        self.assertNotIn("failed_generation", serialized_logs)
 
     def test_groq_configuration_and_api_key_are_loaded_without_exposing_them(self):
+        with patch.dict(os.environ, {}, clear=True):
+            default_settings = scholarship_discovery_settings()
+        self.assertTrue(default_settings.groq_fallback_enabled)
+
         with patch.dict(
             os.environ,
             {
@@ -1521,16 +2022,13 @@ class GeographyAndExtractionTests(unittest.TestCase):
                 "scholarship_offer_evidence": "scholarship award",
             }],
         }
-        client = MagicMock()
-        client.models.generate_content.return_value = SimpleNamespace(
-            text=__import__("json").dumps(protected),
-        )
-        extractor = GeminiScholarshipExtractor(_settings(), client=client)
+        client = _mock_groq_client(json.dumps(protected))
+        extractor = GroqScholarshipExtractor(_settings(), groq_client=client)
         candidates = extractor.extract(page, source)
         self.assertEqual(candidates, [])
         self.assertEqual(extractor.last_rejected_count, 1)
 
-        client.models.generate_content.return_value = SimpleNamespace(text="not-json")
+        client.chat.completions.create.return_value = _groq_response("not-json")
         with self.assertRaises(ScholarshipExtractionError):
             extractor.extract(page, source)
 
@@ -1741,6 +2239,10 @@ class SafeFetchingTests(unittest.TestCase):
         headers = Message()
         headers["Location"] = "http://official.example/import"
         fetcher = OfficialSourceFetcher(_settings())
+        # Import now checks robots.txt like discovery does. Prime it as
+        # allowed so this test still exercises the redirect rule rather than
+        # robots I/O.
+        fetcher._robots["official.example"] = None
         with patch.object(
             fetcher,
             "_request",
@@ -2193,7 +2695,11 @@ class SafeFetchingTests(unittest.TestCase):
 
         self.assertEqual(len(pages), 2)
         self.assertEqual(request_urls, [root_url, harmless_url])
-        self.assertEqual(fetcher.last_crawl_stats["linked_urls_discovered"], 4)
+        # linked_urls_discovered now counts unique, safety-approved URLs; the
+        # raw href count is linked_url_references. Four hrefs here are two
+        # sensitive URLs (rejected) plus two fragment variants of one page.
+        self.assertEqual(fetcher.last_crawl_stats["linked_url_references"], 4)
+        self.assertEqual(fetcher.last_crawl_stats["linked_urls_discovered"], 1)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_attempted"], 1)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_fetched"], 1)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_failed"], 0)
@@ -2242,7 +2748,10 @@ class SafeFetchingTests(unittest.TestCase):
         self.assertEqual(len(pages), 2)
         self.assertEqual(request_urls, [root_url, first_url, failed_url])
         self.assertNotIn(unattempted_url, request_urls)
-        self.assertEqual(fetcher.last_crawl_stats["linked_urls_discovered"], 4)
+        # Two of the four hrefs are fragment variants of one page, so three
+        # unique URLs are discovered from four references.
+        self.assertEqual(fetcher.last_crawl_stats["linked_url_references"], 4)
+        self.assertEqual(fetcher.last_crawl_stats["linked_urls_discovered"], 3)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_attempted"], 2)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_fetched"], 1)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_failed"], 1)
@@ -2411,7 +2920,10 @@ class SafeFetchingTests(unittest.TestCase):
             pages = fetcher.crawl(source)
 
         self.assertEqual(len(pages), 1 + len(linked_urls))
-        self.assertEqual(fetcher.last_crawl_stats["linked_urls_discovered"], 9)
+        # Nine hrefs; the external portal URL is rejected before counting, so
+        # eight unique URLs are discovered.
+        self.assertEqual(fetcher.last_crawl_stats["linked_url_references"], 9)
+        self.assertEqual(fetcher.last_crawl_stats["linked_urls_discovered"], 8)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_fetched"], 7)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_failed"], 0)
         self.assertEqual(fetcher.last_crawl_stats["linked_pages_skipped_safety"], 1)
@@ -3048,7 +3560,7 @@ class DiscoveryPersistenceTests(unittest.TestCase):
             **run_options,
         )
 
-    def test_sanitized_gemini_error_category_is_persisted_for_admin_history(self):
+    def test_sanitized_groq_error_category_is_persisted_for_admin_history(self):
         self.extractor.extract.side_effect = ScholarshipExtractionError(
             "private provider detail",
             category="quota_error",
@@ -4424,7 +4936,7 @@ class DiscoveryPersistenceTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             settings = scholarship_discovery_settings()
         self.assertFalse(settings.enabled)
-        self.assertEqual(settings.model, "gemini-3-flash-preview")
+        self.assertEqual(settings.model, "llama-3.3-70b-versatile")
         self.assertEqual(settings.interval_hours, 24)
         self.assertEqual(settings.stale_run_timeout_hours, 12)
         with patch.dict("os.environ", {"SCHOLARSHIP_DISCOVERY_MAX_PAGES_PER_SOURCE": "0"}):

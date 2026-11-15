@@ -1,19 +1,42 @@
 """Per-run resource limits for controlled manual scholarship discovery."""
 
 import logging
+import os
 import threading
 import time
 from dataclasses import replace
-from typing import Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 
-from app.core.config import ScholarshipDiscoverySettings
 from app.services.scholarship_discovery_sources import DiscoverySource, SOURCES
+
+if TYPE_CHECKING:
+    from app.core.config import ScholarshipDiscoverySettings
+else:
+    ScholarshipDiscoverySettings = Any
 
 logger = logging.getLogger(__name__)
 
 MAX_MANUAL_SOURCES = 15
-MAX_MANUAL_PAGES = 45
-MAX_MANUAL_PAGES_PER_SOURCE = 3
+
+
+def _manual_pages_per_source() -> int:
+    """Pages a manual run may fetch per source.
+
+    Was a hard 3. diag_run16 showed 11 of 15 discovered links losing the page
+    budget, including the country list and the Master's-courses document that
+    carry the eligibility and programme fields. 5 fits the announcement plus
+    the two or three detail documents the priority ordering now puts first.
+    """
+    raw = os.getenv("SCHOLARSHIP_DISCOVERY_MANUAL_PAGES_PER_SOURCE", "").strip()
+    if raw.isdigit() and 1 <= int(raw) <= 20:
+        return int(raw)
+    return 5
+
+
+MAX_MANUAL_PAGES_PER_SOURCE = _manual_pages_per_source()
+# Must leave room for every source to use its per-source budget, or the total
+# binds first and later sources get fewer pages than the earlier ones.
+MAX_MANUAL_PAGES = MAX_MANUAL_SOURCES * MAX_MANUAL_PAGES_PER_SOURCE
 MAX_MANUAL_HTTP_ATTEMPTS = 300
 MAX_MANUAL_CANDIDATES = 100
 MAX_MANUAL_PROVIDER_ATTEMPTS = 100
@@ -21,7 +44,7 @@ MAX_MANUAL_DURATION_SECONDS = 30 * 60
 MAX_MANUAL_HTTP_TIMEOUT_SECONDS = 15
 MAX_MANUAL_RESPONSE_BYTES = 10_000_000
 MAX_MANUAL_HTTP_RETRIES = 2
-MAX_MANUAL_PROVIDER_TIMEOUT_SECONDS = 60
+MAX_MANUAL_PROVIDER_TIMEOUT_SECONDS = 45
 MAX_MANUAL_LINKED_URLS = 100
 MAX_MANUAL_LINKED_URL_CHARS = 2048
 MAX_MANUAL_LINKED_URL_BYTES = 16_384
@@ -63,6 +86,10 @@ class DiscoveryRunLimitExceeded(RuntimeError):
 
 class ControlledManualSourceConfigurationError(ValueError):
     pass
+
+
+class ManualSourceSelectionError(RuntimeError):
+    """The configured manual-run source subset does not name controlled sources."""
 
 
 class _DiscoveryOperationGate:
@@ -112,6 +139,27 @@ class _DiscoveryOperationGate:
             return operation(remaining)
 
 
+def configured_manual_source_ids() -> Optional[tuple[str, ...]]:
+    """The configured manual-run source subset, or None when the setting is unset.
+
+    Every id must be one of CONTROLLED_MANUAL_SOURCE_IDS; that tuple stays the
+    full controlled set regardless of this setting.
+    """
+    from app.core.config import MANUAL_SOURCE_IDS_ENV, manual_discovery_source_ids
+
+    requested = manual_discovery_source_ids()
+    if requested is None:
+        return None
+    if any(
+        source_id not in CONTROLLED_MANUAL_SOURCE_IDS for source_id in requested
+    ):
+        raise ManualSourceSelectionError(
+            f"{MANUAL_SOURCE_IDS_ENV} must only list controlled manual "
+            "discovery source ids"
+        )
+    return requested
+
+
 def controlled_manual_sources(
     registry_sources: Iterable[DiscoverySource] = SOURCES,
 ) -> tuple[DiscoverySource, ...]:
@@ -138,6 +186,10 @@ def controlled_manual_sources(
         for source in selected
     ):
         raise ControlledManualSourceConfigurationError
+    requested = configured_manual_source_ids()
+    if requested is not None:
+        by_id = {source.source_id: source for source in selected}
+        selected = tuple(by_id[source_id] for source_id in requested)
     return selected
 
 
@@ -161,6 +213,50 @@ def validate_controlled_manual_budget(budget: "DiscoveryRunBudget") -> None:
         "duration_seconds": MAX_MANUAL_DURATION_SECONDS,
     }
     if any(getattr(budget, name) > maximum for name, maximum in limits.items()):
+        raise ControlledManualSourceConfigurationError
+
+
+def diagnostic_single_source_budget() -> "DiscoveryRunBudget":
+    return DiscoveryRunBudget(
+        max_sources=1,
+        max_pages=MAX_MANUAL_PAGES_PER_SOURCE,
+        max_pages_per_source=MAX_MANUAL_PAGES_PER_SOURCE,
+        max_http_attempts=MAX_MANUAL_HTTP_ATTEMPTS,
+        max_candidates=MAX_MANUAL_CANDIDATES,
+        max_provider_attempts=MAX_MANUAL_PROVIDER_ATTEMPTS,
+        duration_seconds=MAX_MANUAL_DURATION_SECONDS,
+    )
+
+
+def validate_diagnostic_single_source_budget(
+    budget: "DiscoveryRunBudget",
+) -> None:
+    limits = {
+        "max_pages": MAX_MANUAL_PAGES_PER_SOURCE,
+        "max_pages_per_source": MAX_MANUAL_PAGES_PER_SOURCE,
+        "max_http_attempts": MAX_MANUAL_HTTP_ATTEMPTS,
+        "max_candidates": MAX_MANUAL_CANDIDATES,
+        "max_provider_attempts": MAX_MANUAL_PROVIDER_ATTEMPTS,
+        "duration_seconds": MAX_MANUAL_DURATION_SECONDS,
+    }
+    if (
+        not isinstance(budget, DiscoveryRunBudget)
+        or not isinstance(budget.max_sources, int)
+        or isinstance(budget.max_sources, bool)
+        or budget.max_sources != 1
+    ):
+        raise ControlledManualSourceConfigurationError
+    for name, maximum in limits.items():
+        value = getattr(budget, name, None)
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or value < 0
+            or value > maximum
+            or (name == "duration_seconds" and value == 0)
+        ):
+            raise ControlledManualSourceConfigurationError
+    if budget.max_pages_per_source > budget.max_pages:
         raise ControlledManualSourceConfigurationError
 
 

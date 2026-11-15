@@ -2,7 +2,9 @@
 import json
 import logging
 import sys
+import traceback
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Callable, Optional
 
 from sqlalchemy import inspect, text
@@ -40,8 +42,25 @@ def main(
     run_id: Optional[str] = None,
     on_run_started: Optional[Callable[[str], None]] = None,
     on_stage: Optional[Callable[[str], None]] = None,
+    on_failure: Optional[Callable[[str], None]] = None,
 ) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+    def safe_exception_location(exc: Exception) -> str:
+        frames = traceback.extract_tb(exc.__traceback__)
+        for frame in reversed(frames):
+            normalized_path = frame.filename.replace("\\", "/").lower()
+            if "/backend/" in normalized_path and "/site-packages/" not in normalized_path:
+                return f"{Path(frame.filename).name}:{frame.lineno} in {frame.name}"
+        return "application frame unavailable"
+
+    def report_failure(message: str) -> None:
+        if on_failure is None:
+            return
+        try:
+            on_failure(message)
+        except Exception as exc:
+            logging.error("Discovery failure notification failed: %s", type(exc).__name__)
 
     def report_stage(stage: str) -> None:
         if on_stage is not None:
@@ -53,15 +72,18 @@ def main(
     try:
         settings = scholarship_discovery_settings()
     except RuntimeError as exc:
-        logging.error("Scholarship discovery configuration failed: %s", exc)
+        logging.error("Scholarship discovery configuration failed: %s", type(exc).__name__)
+        report_failure(f"Discovery configuration failed ({type(exc).__name__}).")
         print(json.dumps({"status": "failed", "error": type(exc).__name__}), file=sys.stderr)
         return 1
     if recovery_only:
         if trigger_type not in {"manual", "recovery"} or scheduled_for is not None:
+            report_failure("Invalid recovery execution options.")
             print(json.dumps({"status": "failed", "error": "invalid recovery execution"}), file=sys.stderr)
             return 1
         trigger_type = "recovery"
     elif trigger_type not in {"scheduled", "catch_up", "manual"}:
+        report_failure("Invalid discovery trigger type.")
         print(json.dumps({"status": "failed", "error": "invalid trigger type"}), file=sys.stderr)
         return 1
     if (
@@ -69,6 +91,7 @@ def main(
     ) or (
         trigger_type in {"scheduled", "catch_up"} and scheduled_for is None
     ):
+        report_failure("Invalid scheduled discovery time.")
         print(json.dumps({"status": "failed", "error": "invalid scheduled execution time"}), file=sys.stderr)
         return 1
     manual_sources = None
@@ -78,6 +101,7 @@ def main(
             manual_sources = controlled_manual_sources(SOURCES)
             run_settings = controlled_manual_settings(settings)
         except ControlledManualSourceConfigurationError:
+            report_failure("Controlled manual discovery sources are not configured correctly.")
             print(
                 json.dumps({
                     "status": "failed",
@@ -124,6 +148,9 @@ def main(
                 } if "scholarship_discovery_runs" in existing_tables else set()
                 missing_columns = {"trigger_type", "scheduled_for"} - columns
                 if missing or missing_columns:
+                    report_failure(
+                        "Discovery run-history migration is missing or incomplete.",
+                    )
                     print(
                         json.dumps({
                             "status": "failed",
@@ -152,7 +179,21 @@ def main(
                         lock_connection.execute(text("SELECT pg_backend_pid()")).scalar_one(),
                     )
                     report_stage("recovering_interrupted_runs")
-                    with SessionLocal(bind=lock_connection) as db:
+                    # That pg_backend_pid() SELECT opened a transaction on the
+                    # shared lock connection. A Session bound to a connection
+                    # that is already in a transaction JOINS it: every
+                    # db.commit() then only releases a savepoint, so nothing is
+                    # durable until the connection itself commits -- and when
+                    # the lock release failed and invalidated the connection,
+                    # the entire run (run row and review items alike) was
+                    # rolled back. Close that transaction, and tell the Session
+                    # to take full control of the one it opens, so each commit
+                    # is a real COMMIT.
+                    lock_connection.commit()
+                    with SessionLocal(
+                        bind=lock_connection,
+                        join_transaction_mode="control_fully",
+                    ) as db:
                         if database_deadline is not None:
                             database_deadline.attach_session(db)
                         lock_guard.check(db)
@@ -216,18 +257,33 @@ def main(
                     response = {"status": "disabled", "reason": str(exc)}
                     exit_code = 2
                 except Exception as exc:
-                    logging.error("Scholarship discovery failed: %s", type(exc).__name__)
+                    logging.error(
+                        "Scholarship discovery failed: %s at %s",
+                        type(exc).__name__,
+                        safe_exception_location(exc),
+                    )
+                    report_failure(f"Discovery startup failed ({type(exc).__name__}).")
                     response = {"status": "failed", "error": type(exc).__name__}
                     response_stream = sys.stderr
                     exit_code = 1
             finally:
                 if acquisition_state == "acquired":
                     try:
-                        finalization = (
-                            database_deadline.finalization()
-                            if database_deadline is not None
-                            else nullcontext()
-                        )
+                        try:
+                            finalization = (
+                                database_deadline.finalization()
+                                if database_deadline is not None
+                                else nullcontext()
+                            )
+                        except Exception as finalization_exc:
+                            # Releasing the lock matters more than the
+                            # finalization window. Without this the unlock was
+                            # skipped whenever the budget was already closed.
+                            logging.error(
+                                "Discovery lock release finalization unavailable: %s",
+                                type(finalization_exc).__name__,
+                            )
+                            finalization = nullcontext()
                         with finalization:
                             released = lock_connection.execute(
                                 text("SELECT pg_advisory_unlock(:lock_id)"),
@@ -238,11 +294,42 @@ def main(
                             lock_connection.commit()
                         acquisition_state = "released"
                     except Exception as exc:
-                        lock_connection.invalidate()
-                        logging.error("Scholarship discovery lock release failed: %s", type(exc).__name__)
-                        response = {"status": "failed", "error": type(exc).__name__}
-                        response_stream = sys.stderr
-                        exit_code = 1
+                        # One plain attempt without the finalization window:
+                        # the lock has to come off, or the next Run Discovery
+                        # is blocked until this connection dies.
+                        retried = False
+                        try:
+                            retried = bool(
+                                lock_connection.execute(
+                                    text("SELECT pg_advisory_unlock(:lock_id)"),
+                                    {"lock_id": DISCOVERY_LOCK_ID},
+                                ).scalar_one()
+                            )
+                            if retried:
+                                lock_connection.commit()
+                        except Exception:
+                            retried = False
+                        if retried:
+                            acquisition_state = "released"
+                            logging.error(
+                                "Scholarship discovery lock released after a "
+                                "failed first attempt: %s at %s",
+                                type(exc).__name__,
+                                safe_exception_location(exc),
+                            )
+                        else:
+                            lock_connection.invalidate()
+                            logging.error(
+                                "Scholarship discovery lock release failed: %s at %s",
+                                type(exc).__name__,
+                                safe_exception_location(exc),
+                            )
+                            report_failure(
+                                f"Discovery database lock release failed ({type(exc).__name__}).",
+                            )
+                            response = {"status": "failed", "error": type(exc).__name__}
+                            response_stream = sys.stderr
+                            exit_code = 1
                 elif acquisition_state == "uncertain":
                     lock_connection.invalidate()
 
@@ -250,7 +337,18 @@ def main(
                 print(json.dumps(response), file=response_stream)
                 return exit_code
             print(json.dumps(result, ensure_ascii=False))
-            return 0 if result["status"] == "completed" else 1
+            exit_code = 0 if result["status"] == "completed" else 1
+            if exit_code:
+                report_failure("Discovery failed before a run could be started.")
+            return exit_code
+    except Exception as exc:
+        logging.error(
+            "Scholarship discovery could not start: %s at %s",
+            type(exc).__name__,
+            safe_exception_location(exc),
+        )
+        report_failure(f"Discovery could not start ({type(exc).__name__}).")
+        raise
     finally:
         if database_deadline is not None:
             database_deadline.close()

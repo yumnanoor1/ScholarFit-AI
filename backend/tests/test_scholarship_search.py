@@ -275,7 +275,7 @@ class SearchTests(unittest.TestCase):
         with mock.patch("app.services.scholarship_discovery.run_discovery") as run_discovery:
             with mock.patch("app.services.scholarship_discovery_fetch.OfficialSourceFetcher.crawl") as crawl:
                 with mock.patch(
-                    "app.services.scholarship_discovery_extraction.GeminiScholarshipExtractor.extract"
+                    "app.services.scholarship_discovery_extraction.GroqScholarshipExtractor.extract"
                 ) as extract:
                     result = self.route(q="alpha")
 

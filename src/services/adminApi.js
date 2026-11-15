@@ -20,6 +20,11 @@ function createRequestError(data, status) {
   const error = new Error(getErrorMessage(data, status));
   error.status = status;
   if (typeof data?.detail?.code === 'string') error.code = data.detail.code;
+  // Structured failures (e.g. an official site refusing us) carry a category
+  // and the status the site returned, so a page can offer what to do next
+  // instead of only printing a message.
+  if (typeof data?.detail?.category === 'string') error.category = data.detail.category;
+  if (Number.isInteger(data?.detail?.http_status)) error.httpStatus = data.detail.http_status;
   return error;
 }
 
@@ -66,6 +71,7 @@ export const adminApi = {
   duplicates: (token) => request(token, `${RECORDS}/duplicates`),
   compare: (token, first, second) => request(token, `${RECORDS}/duplicates/compare?first=${first}&second=${second}`),
   markDuplicate: (token, id, body) => request(token, `${RECORDS}/${id}/duplicate`, 'POST', body),
+  dismissDuplicatePair: (token, body) => request(token, `${RECORDS}/duplicates/dismiss`, 'POST', body),
   discoveryReviews: (token, status, skip = 0, limit = 25, search = '') => {
     const query = new URLSearchParams({ skip: String(skip), limit: String(limit) });
     if (status) query.set('status', status);
@@ -106,6 +112,12 @@ export const adminApi = {
     return request(token, `${RECORDS}/discovery-history?${query.toString()}`);
   },
   discoverySources: (token) => request(token, `${RECORDS}/discovery-sources`),
+  extractScholarshipText: (token, { text, url }) => request(
+    token,
+    `${RECORDS}/import/extract-text`,
+    'POST',
+    { text, ...(url ? { url } : {}) },
+  ),
   extractScholarshipSource: (token, { sourceType, url, file }) => {
     const body = new FormData();
     body.set('source_type', sourceType);

@@ -28,7 +28,10 @@ GENERAL_COVERAGE_QUESTION = "What do scholarships generally cover?"
 DEADLINE_QUESTION = "What is the application deadline?"
 TEST_REVISION = "0123456789abcdef0123456789abcdef01234567"
 OTHER_REVISION = "fedcba9876543210fedcba9876543210fedcba98"
-REVISION_ENV = {"MINILM_MODEL_REVISION": TEST_REVISION}
+REVISION_ENV = {
+    "MINILM_MODEL_REVISION": TEST_REVISION,
+    "GROQ_RATE_LIMIT_RETRIES": "0",
+}
 
 
 def _vector(first=1.0, second=0.0):
@@ -319,8 +322,11 @@ class RetrievalTests(RagFixture):
                 )
 
                 client = MagicMock()
-                client.models.generate_content.return_value.text = "Scholarship-scoped answer."
-                with patch.object(rag, "_gemini_client", return_value=client), \
+                client.chat.completions.create.return_value.choices[0].message.content = (
+                    "Scholarship-scoped answer."
+                )
+                with patch.object(rag, "_groq_client", return_value=client), \
+                        patch.object(rag, "_groq_fallback_client", return_value=None), \
                         patch.object(rag, "embed_query", return_value=query_vector):
                     answer = rag.answer_question(
                         self.db, GENERAL_COVERAGE_QUESTION, scholarship_id=requested.id
@@ -328,7 +334,7 @@ class RetrievalTests(RagFixture):
                 self.assertEqual(answer.status, rag.STATUS_OK)
                 self.assertEqual([chunk.scholarship_id for chunk in answer.chunks], [requested.id])
                 self.assertEqual([chunk.text for chunk in answer.chunks], [own_text])
-                contents = client.models.generate_content.call_args.kwargs["contents"]
+                contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
                 self.assertIn(own_text, contents)
                 self.assertNotIn(other_text, contents)
                 self.assertIn(source_urls[requested.id], contents)
@@ -349,7 +355,7 @@ class RetrievalTests(RagFixture):
             chunk_hash="f" * 64,
         )
 
-        with patch.object(rag, "_generate", side_effect=AssertionError("conflicting values must not reach Gemini")):
+        with patch.object(rag, "_generate", side_effect=AssertionError("conflicting values must not reach Groq")):
             answer = rag.answer_question(self.db, DEADLINE_QUESTION)
 
         self.assertEqual(answer.status, rag.STATUS_CONFLICT)
@@ -419,7 +425,7 @@ class RetrievalTests(RagFixture):
             {first.document.id, outside_top_k.document.id},
         )
 
-        with patch.object(rag, "_generate", side_effect=AssertionError("conflict must not reach Gemini")):
+        with patch.object(rag, "_generate", side_effect=AssertionError("conflict must not reach Groq")):
             answer = rag.answer_question(self.db, DEADLINE_QUESTION)
 
         self.assertEqual(answer.status, rag.STATUS_CONFLICT)
@@ -1110,32 +1116,40 @@ class AnswerTests(RagFixture):
         super().setUp()
         self.item = self.indexed()
         self.source_url = self.item.document.source_url
-        rag._client = None
+        rag._groq_primary_client = None
+        rag._groq_secondary_client = None
 
     def tearDown(self):
-        rag._client = None
+        rag._groq_primary_client = None
+        rag._groq_secondary_client = None
         super().tearDown()
 
     def fake_client(self, text="Alpha Grant covers tuition. https://alpha.example", error=None):
         client = MagicMock()
         if error:
-            client.models.generate_content.side_effect = error
+            client.chat.completions.create.side_effect = error
         else:
-            client.models.generate_content.return_value = SimpleNamespace(text=text)
+            client.chat.completions.create.return_value = SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            )
         return client
 
-    def test_missing_api_key_gives_extractive_answer_without_calling_gemini(self):
+    def test_missing_api_key_gives_extractive_answer_without_calling_groq(self):
         with patch.dict("os.environ", {}, clear=False) as env:
-            env.pop("GEMINI_API_KEY", None)
+            env.pop("GROQ_API_KEY", None)
+            env.pop("GROQ_API_KEY_2", None)
             answer = rag.answer_question(self.db, QUESTION)
         self.assertEqual(answer.status, rag.STATUS_OK)
         self.assertFalse(answer.generated)
         self.assertIn("full tuition", answer.text)
         self.assertIn(self.source_url, answer.text)
 
-    def test_gemini_failure_falls_back_without_leaking_the_error(self):
+    def test_groq_failure_falls_back_without_leaking_the_error(self):
         client = self.fake_client(error=RuntimeError("key=SECRET123 stack trace"))
-        with patch.dict("os.environ", {"GEMINI_API_KEY": "SECRET123"}), patch.object(rag, "_gemini_client", return_value=client):
+        fallback_client = self.fake_client(error=RuntimeError("key=SECONDARY456 stack trace"))
+        with patch.object(rag, "_groq_client", return_value=client), patch.object(
+            rag, "_groq_fallback_client", return_value=fallback_client
+        ):
             with self.assertLogs(rag.logger, level=logging.WARNING) as logs:
                 answer = rag.answer_question(self.db, QUESTION)
         self.assertFalse(answer.generated)
@@ -1143,28 +1157,29 @@ class AnswerTests(RagFixture):
         self.assertIn("category=provider_error", "".join(logs.output))
         self.assertIn(self.source_url, answer.text)
 
-    def test_gemini_answer_is_grounded_by_instruction_and_sources(self):
+    def test_groq_answer_is_grounded_by_instruction_and_sources(self):
         client = self.fake_client(text="The grant covers full tuition and a living stipend.")
         with (
-            patch.dict("os.environ", {"GEMINI_MODEL": "gemini-3-flash-preview"}, clear=True),
-            patch.object(rag, "_gemini_client", return_value=client),
+            patch.dict("os.environ", {"GROQ_MODEL": "llama-3.3-70b-versatile"}, clear=False),
+            patch.object(rag, "_groq_client", return_value=client),
+            patch.object(rag, "_groq_fallback_client", return_value=None),
         ):
             answer = rag.answer_question(self.db, QUESTION)
         self.assertTrue(answer.generated)
         self.assertEqual(answer.chunks[0].citation_url, self.source_url)
         self.assertNotEqual(answer.chunks[0].citation_url, self.scholarship.official_url)
-        kwargs = client.models.generate_content.call_args.kwargs
-        instruction = kwargs["config"]["system_instruction"]
+        kwargs = client.chat.completions.create.call_args.kwargs
+        instruction = kwargs["messages"][0]["content"]
         for phrase in ("ONLY from the approved scholarship sources", "Never invent",
                        "not stated in the sources", "complete sentences copied verbatim",
                        "Do not paraphrase, combine passages", "application displays citations",
                        "untrusted reference data", "Never say a scholarship is open", "no approved source"):
             self.assertIn(phrase, instruction)
-        self.assertIn("<source id=\"1\">", kwargs["contents"])
-        self.assertIn(self.source_url, kwargs["contents"])
-        self.assertNotIn(self.scholarship.official_url, kwargs["contents"])
-        self.assertIn("page: pp. 3-4", kwargs["contents"])
-        self.assertEqual(kwargs["model"], "gemini-3-flash-preview")
+        self.assertIn("<source id=\"1\">", kwargs["messages"][1]["content"])
+        self.assertIn(self.source_url, kwargs["messages"][1]["content"])
+        self.assertNotIn(self.scholarship.official_url, kwargs["messages"][1]["content"])
+        self.assertIn("page: pp. 3-4", kwargs["messages"][1]["content"])
+        self.assertEqual(kwargs["model"], "llama-3.3-70b-versatile")
 
     def test_generated_sentence_can_match_sanitized_model_visible_evidence(self):
         original = "The grant covers tuition. See example.com/path?token=example-token."
@@ -1175,10 +1190,11 @@ class AnswerTests(RagFixture):
         )
         client = self.fake_client(text="See [redacted URL].")
         with patch.object(rag, "retrieve", return_value=rag.RagResult(rag.STATUS_OK, [chunk])), \
-                patch.object(rag, "_gemini_client", return_value=client):
+                patch.object(rag, "_groq_client", return_value=client), \
+                patch.object(rag, "_groq_fallback_client", return_value=None):
             answer = rag.answer_question(self.db, QUESTION)
 
-        contents = client.models.generate_content.call_args.kwargs["contents"]
+        contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("See [redacted URL].", contents)
         self.assertNotIn("example-token", contents)
         self.assertTrue(answer.generated)
@@ -1198,10 +1214,11 @@ class AnswerTests(RagFixture):
         )
         client = self.fake_client(text=raw_url)
         with patch.object(rag, "retrieve", return_value=rag.RagResult(rag.STATUS_OK, [chunk])), \
-                patch.object(rag, "_gemini_client", return_value=client):
+                patch.object(rag, "_groq_client", return_value=client), \
+                patch.object(rag, "_groq_fallback_client", return_value=None):
             answer = rag.answer_question(self.db, QUESTION)
 
-        contents = client.models.generate_content.call_args.kwargs["contents"]
+        contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("[redacted URL].", contents)
         self.assertNotIn("example-token", contents)
         self.assertFalse(answer.generated)
@@ -1221,10 +1238,11 @@ class AnswerTests(RagFixture):
         )
         client = self.fake_client(text="The scholarship offers full tuition.")
         with patch.object(rag, "retrieve", return_value=rag.RagResult(rag.STATUS_OK, [chunk])), \
-                patch.object(rag, "_gemini_client", return_value=client):
+                patch.object(rag, "_groq_client", return_value=client), \
+                patch.object(rag, "_groq_fallback_client", return_value=None):
             answer = rag.answer_question(self.db, QUESTION)
 
-        contents = client.models.generate_content.call_args.kwargs["contents"]
+        contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("The scholarship offers full tuition.", contents)
         self.assertTrue(answer.generated)
         self.assertEqual(answer.chunks, [chunk])
@@ -1343,7 +1361,7 @@ class AnswerTests(RagFixture):
         self.assertNotIn(self.scholarship.official_url, block)
         self.assertNotIn(self.scholarship.official_url, answer)
 
-    def test_unsafe_source_url_never_reaches_gemini(self):
+    def test_unsafe_source_url_never_reaches_groq(self):
         unsafe_url = "https://student:password@official.example/document?api_key=secret&lang=en#token=fragment"
         chunk = rag.RetrievedChunk(
             self.scholarship.id, self.scholarship.name, self.scholarship.official_url,
@@ -1351,15 +1369,16 @@ class AnswerTests(RagFixture):
         )
         client = self.fake_client()
 
-        with patch.object(rag, "_gemini_client", return_value=client):
+        with patch.object(rag, "_groq_client", return_value=client), \
+                patch.object(rag, "_groq_fallback_client", return_value=None):
             rag._generate(QUESTION, [chunk])
 
-        contents = client.models.generate_content.call_args.kwargs["contents"]
+        contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("source_url: unavailable", contents)
         for secret in ("student", "password", "api_key", "secret", "fragment"):
             self.assertNotIn(secret, contents)
 
-    def test_gemini_context_redacts_urls_embedded_in_document_text(self):
+    def test_groq_context_redacts_urls_embedded_in_document_text(self):
         text = (
             "The grant covers tuition. Contact awards@example.org. "
             "Private link https://student:secret@official.example/?token=hidden. "
@@ -1371,10 +1390,11 @@ class AnswerTests(RagFixture):
         )
         client = self.fake_client()
 
-        with patch.object(rag, "_gemini_client", return_value=client):
+        with patch.object(rag, "_groq_client", return_value=client), \
+                patch.object(rag, "_groq_fallback_client", return_value=None):
             rag._generate(QUESTION, [chunk])
 
-        contents = client.models.generate_content.call_args.kwargs["contents"]
+        contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("The grant covers tuition.", contents)
         self.assertIn("awards@example.org", contents)
         self.assertIn("https://official.example/benefits?language=en", contents)
@@ -1401,7 +1421,7 @@ class AnswerTests(RagFixture):
             self.assertNotIn(secret, answer)
         self.assertIn("[redacted invalid source URL]", answer)
 
-    def test_safe_citation_url_is_preserved_in_gemini_source_context(self):
+    def test_safe_citation_url_is_preserved_in_groq_source_context(self):
         url = "https://official.example/document?language=en&page=2#benefits"
         chunk = rag.RetrievedChunk(
             self.scholarship.id, self.scholarship.name, self.scholarship.official_url,
@@ -1409,10 +1429,11 @@ class AnswerTests(RagFixture):
         )
         client = self.fake_client()
 
-        with patch.object(rag, "_gemini_client", return_value=client):
+        with patch.object(rag, "_groq_client", return_value=client), \
+                patch.object(rag, "_groq_fallback_client", return_value=None):
             rag._generate(QUESTION, [chunk])
 
-        contents = client.models.generate_content.call_args.kwargs["contents"]
+        contents = client.chat.completions.create.call_args.kwargs["messages"][1]["content"]
         self.assertIn("source_url: https://official.example/document?language=en&page=2", contents)
         self.assertNotIn("#benefits", contents)
 
@@ -1422,14 +1443,15 @@ class AnswerTests(RagFixture):
         block = rag._source_block([chunk])
         self.assertEqual(block.count("</source>"), 1)
 
-    def test_empty_gemini_response_falls_back(self):
-        with patch.object(rag, "_gemini_client", return_value=self.fake_client(text="  ")):
+    def test_empty_groq_response_falls_back(self):
+        with patch.object(rag, "_groq_client", return_value=self.fake_client(text="  ")), \
+                patch.object(rag, "_groq_fallback_client", return_value=None):
             self.assertFalse(rag.answer_question(self.db, QUESTION).generated)
 
     def test_client_is_not_created_without_a_key(self):
         with patch.dict("os.environ", {}, clear=False) as env:
-            env.pop("GEMINI_API_KEY", None)
-            self.assertIsNone(rag._gemini_client())
+            env.pop("GROQ_API_KEY", None)
+            self.assertIsNone(rag._groq_client())
 
 
 if __name__ == "__main__":

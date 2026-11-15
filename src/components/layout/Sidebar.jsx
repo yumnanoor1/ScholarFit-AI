@@ -136,7 +136,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-bottom">
-        {unlocked && <SidebarLink to="/settings" label="Settings" icon={Settings} />}
+        {unlocked && !isAdmin && <SidebarLink to="/settings" label="Settings" icon={Settings} />}
         <button type="button" className="sidebar-link sidebar-logout" onClick={handleLogout}>
           <LogOut size={18} aria-hidden="true" />
           <span>Log out</span>

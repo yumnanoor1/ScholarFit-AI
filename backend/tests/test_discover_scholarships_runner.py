@@ -232,7 +232,14 @@ class DiscoveryRunnerTests(unittest.TestCase):
 
         self.assertEqual(self._run(discovery), 0)
         self.engine.connect.assert_called_once_with()
-        self.session_factory.assert_called_once_with(bind=self.connection)
+        # The run shares the lock connection, but must take full control of
+        # its transaction: a Session that joins an open transaction only
+        # releases savepoints, so nothing it commits survives the connection
+        # being invalidated.
+        self.session_factory.assert_called_once_with(
+            bind=self.connection,
+            join_transaction_mode="control_fully",
+        )
         self.assertIs(observed["session"], self.session)
         self.assertIsNot(observed["session"], self.connection)
         self.assertIs(observed["lock_guard"], self.lock_guard)
@@ -511,6 +518,7 @@ class DiscoveryRunnerTests(unittest.TestCase):
         )
 
     def test_missing_migration_does_not_start_discovery(self):
+        failures = []
         with patch.object(
             discover_scholarships,
             "inspect",
@@ -518,10 +526,14 @@ class DiscoveryRunnerTests(unittest.TestCase):
         ):
             with patch.object(discover_scholarships, "run_discovery") as discovery:
                 with redirect_stdout(self.stdout), redirect_stderr(self.stderr):
-                    code = discover_scholarships.main()
+                    code = discover_scholarships.main(on_failure=failures.append)
 
         self.assertEqual(code, 1)
         discovery.assert_not_called()
+        self.assertEqual(
+            failures,
+            ["Discovery run-history migration is missing or incomplete."],
+        )
         self.assertEqual(
             self._json_output(self.stderr),
             {"status": "failed", "error": "discovery run-history migration is required"},

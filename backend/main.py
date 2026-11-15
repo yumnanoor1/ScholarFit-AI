@@ -27,6 +27,24 @@ app = FastAPI(
 with engine.connect() as connection:
     app.state.scholarship_knowledge_schema_ready = schema_is_ready(connection)
 
+
+@app.on_event("shutdown")
+def _release_outbound_clients() -> None:
+    """Close pooled sockets on the way out: provider clients, then the pool."""
+    import logging
+
+    from app.services.scholarship_discovery_extraction import (
+        close_cached_groq_clients,
+    )
+
+    logger = logging.getLogger(__name__)
+    for failure in close_cached_groq_clients():
+        logger.error("Groq client close failed: %s", failure)
+    try:
+        engine.dispose()
+    except Exception as exc:
+        logger.error("Database pool dispose failed: %s", type(exc).__name__)
+
 # Added first so it runs inside CORS, and error replies stay readable by the frontend
 install_http_security(app)
 

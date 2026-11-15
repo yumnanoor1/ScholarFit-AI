@@ -253,3 +253,26 @@ class ScholarshipProgramLink(Base):
 
     scholarship = relationship("Scholarship", back_populates="program_links")
     program = relationship("Program", back_populates="scholarship_links")
+
+class ScholarshipDuplicateDismissal(Base):
+    """A pair an administrator decided is NOT a duplicate.
+
+    The Duplicates page re-derives suspected pairs from the records every time
+    it loads, so without this a dismissed pair would come back on the next
+    request. The pair is stored with the lower id first, so it is found
+    whichever way round the page asks for it. Nothing about either scholarship
+    changes: this only stops the suggestion.
+    """
+    __tablename__ = "scholarship_duplicate_dismissals"
+    __table_args__ = (
+        UniqueConstraint("first_id", "second_id", name="uq_duplicate_dismissal_pair"),
+        CheckConstraint("first_id < second_id", name="ck_duplicate_dismissal_order"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    first_id = Column(Integer, ForeignKey("scholarships.id", ondelete="CASCADE"), nullable=False, index=True)
+    second_id = Column(Integer, ForeignKey("scholarships.id", ondelete="CASCADE"), nullable=False, index=True)
+    reason = Column(Text)
+    actor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))
+    actor_email = Column(String)          # the administrator, kept if the account goes
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

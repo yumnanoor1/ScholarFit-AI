@@ -1,5 +1,10 @@
 from app.models.user import User, StudentProfile, StudentFinancialPlan, PasswordResetToken, SavedScholarship
-from app.models.opportunity import University, Program, ProgramCost
+from app.models.opportunity import (
+    University,
+    Program,
+    ProgramCost,
+    ScholarshipDuplicateDismissal,
+)
 from app.models.scholarship_knowledge import (
     ScholarshipSourceDocument,
     ScholarshipDocumentVersion,
@@ -24,6 +29,7 @@ __all__ = [
     "University",
     "Program",
     "ProgramCost",
+    "ScholarshipDuplicateDismissal",
     "ScholarshipSourceDocument",
     "ScholarshipDocumentVersion",
     "ScholarshipDocumentVersionApproval",

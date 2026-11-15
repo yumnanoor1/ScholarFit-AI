@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 MAX_MANUAL_DB_CONNECT_TIMEOUT_SECONDS = 15
 MAX_MANUAL_DB_LOCK_TIMEOUT_MS = 5_000
 MANUAL_DB_FINALIZATION_TIMEOUT_MS = 5_000
+_SUPPORTED_POSTGRES_DRIVERS = frozenset({"psycopg", "psycopg2"})
 
 
 def create_manual_discovery_engine(base_engine, budget: DiscoveryRunBudget):
@@ -26,8 +27,10 @@ def create_manual_discovery_engine(base_engine, budget: DiscoveryRunBudget):
     dialect = base_engine.dialect
     if dialect.name != "postgresql":
         return base_engine, False
-    if dialect.driver != "psycopg":
-        raise RuntimeError("Controlled manual discovery requires the psycopg driver")
+    if dialect.driver not in _SUPPORTED_POSTGRES_DRIVERS:
+        raise RuntimeError(
+            "Controlled manual discovery requires the psycopg or psycopg2 driver"
+        )
 
     timeout = max(
         1,
@@ -66,7 +69,7 @@ class ManualDiscoveryDatabaseDeadline:
         self.supported = (
             dialect is not None
             and dialect.name == "postgresql"
-            and dialect.driver == "psycopg"
+            and dialect.driver in _SUPPORTED_POSTGRES_DRIVERS
         )
         if not self.supported:
             logger.warning(
@@ -85,14 +88,14 @@ class ManualDiscoveryDatabaseDeadline:
         )
         event.listen(connection, "before_cursor_execute", self._before_cursor_execute)
         event.listen(connection, "after_cursor_execute", self._after_cursor_execute)
-        event.listen(connection, "handle_error", self._handle_error)
+        event.listen(connection.engine, "handle_error", self._handle_error)
 
     @classmethod
     def for_session(cls, session, budget: DiscoveryRunBudget):
         bind = session.get_bind()
         if (
             bind.dialect.name != "postgresql"
-            or bind.dialect.driver != "psycopg"
+            or bind.dialect.driver not in _SUPPORTED_POSTGRES_DRIVERS
         ):
             return cls(bind, budget)
         return cls(session.connection(), budget)
@@ -182,6 +185,8 @@ class ManualDiscoveryDatabaseDeadline:
         self._release_operation(context)
 
     def _handle_error(self, exception_context) -> None:
+        if exception_context.connection is not self.connection:
+            return
         self._release_operation(exception_context.execution_context)
 
     def _before_commit(self, _session) -> None:
@@ -214,6 +219,14 @@ class ManualDiscoveryDatabaseDeadline:
                     time.monotonic()
                     + MANUAL_DB_FINALIZATION_TIMEOUT_MS / 1000
                 )
+            except RuntimeError:
+                # The budget is already closed, which happens when the run has
+                # ended. Finalization still gets its bounded window: this must
+                # never stop the caller from releasing the advisory lock.
+                self._finalization_deadline = (
+                    time.monotonic()
+                    + MANUAL_DB_FINALIZATION_TIMEOUT_MS / 1000
+                )
         try:
             yield
         finally:
@@ -225,7 +238,7 @@ class ManualDiscoveryDatabaseDeadline:
         self._after_transaction_end(self._session)
         event.remove(self.connection, "before_cursor_execute", self._before_cursor_execute)
         event.remove(self.connection, "after_cursor_execute", self._after_cursor_execute)
-        event.remove(self.connection, "handle_error", self._handle_error)
+        event.remove(self.connection.engine, "handle_error", self._handle_error)
         if self._session is not None:
             event.remove(self._session, "before_commit", self._before_commit)
             event.remove(self._session, "after_commit", self._after_transaction_end)

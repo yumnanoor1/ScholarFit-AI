@@ -311,12 +311,49 @@ class DuplicateWrite(BaseModel):
     note: str = Field(..., min_length=5, max_length=1000)
 
 
+class DuplicatePairRecord(BaseModel):
+    """One side of a possible duplicate pair, as the list shows it."""
+    id: int
+    name: str
+    provider: Optional[str] = None
+    country: Optional[str] = None
+    degree_level: Optional[str] = None
+    source_url: Optional[str] = None
+    verification_status: Optional[str] = None
+    archived: bool = False
+    duplicate_of_id: Optional[int] = None
+
+    @field_serializer("source_url")
+    def sanitize_source_url(self, source_url):
+        return safe_source_url(source_url) if source_url else None
+
+
 class DuplicatePair(BaseModel):
     first_id: int
     second_id: int
     first_name: str
     second_name: str
     kind: Literal["flagged", "suspected"]
+    # Derived on every request from the records themselves; see
+    # services/scholarship_quality.duplicate_pairs.
+    status: Literal["needs_review", "flagged", "resolved", "dismissed"] = "needs_review"
+    # The record that points at the other one, when a decision has been made.
+    duplicate_id: Optional[int] = None
+    first: Optional[DuplicatePairRecord] = None
+    second: Optional[DuplicatePairRecord] = None
+    # Word overlap between the two names, 0-1, on the folding that paired them.
+    similarity: float = 0
+    same_country: bool = False
+    same_provider: bool = False
+
+
+class DuplicateDismissWrite(BaseModel):
+    """Recording that a suspected pair is not a duplicate."""
+    model_config = {"extra": "forbid"}
+
+    first_id: int = Field(..., gt=0)
+    second_id: int = Field(..., gt=0)
+    note: Optional[str] = Field(None, max_length=1000)
 
 
 class FieldDifference(BaseModel):
@@ -485,6 +522,11 @@ class AdminDiscoveryMonitoring(BaseModel):
     recent_runs: List[AdminDiscoveryRunHistory]
     candidates_total: int
     review_queue_pending: int
+    # Which database this page is reading. Name, host and port only, so an
+    # admin can see at a glance whether the worker wrote somewhere else.
+    database_name: str = "unknown"
+    database_host: str = "unknown"
+    database_port: int = 0
 
 
 class AdminDiscoverySource(BaseModel):

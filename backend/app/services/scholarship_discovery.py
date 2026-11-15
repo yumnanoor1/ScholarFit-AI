@@ -15,7 +15,7 @@ from app.models.scholarship_knowledge import ScholarshipDocumentVersion, Scholar
 from app.models.opportunity import Scholarship
 from app.services.scholarship_discovery_extraction import (
     EXTRACTOR_VERSION,
-    GeminiScholarshipExtractor,
+    GroqScholarshipExtractor,
     ScholarshipExtractionError,
 )
 from app.services.scholarship_discovery_budget import (
@@ -24,8 +24,10 @@ from app.services.scholarship_discovery_budget import (
     DiscoveryRunLimitExceeded,
     controlled_manual_settings,
     controlled_manual_sources,
+    diagnostic_single_source_budget,
     validate_controlled_manual_budget,
     validate_controlled_manual_run_sources,
+    validate_diagnostic_single_source_budget,
 )
 from app.services.scholarship_discovery_database import (
     ManualDiscoveryDatabaseDeadline,
@@ -54,6 +56,11 @@ from app.services.source_verification import is_currently_verified
 from app.services.source_url_safety import safe_source_urls_in_text, validate_source_url
 
 logger = logging.getLogger(__name__)
+_DIAGNOSTIC_URL = re.compile(r"(?i)\b(?:https?|wss?)://[^\s<>\"']+")
+_DIAGNOSTIC_SECRET = re.compile(
+    r"(?i)\b(authorization|token|access[_-]?key|api[_-]?key|secret|password|"
+    r"credential|signature|sig)\b\s*[:=]\s*(?:bearer\s+)?[^\s&,;]+"
+)
 SUMMARY_KEYS = (
     "sources_attempted",
     "sources_successfully_fetched",
@@ -72,6 +79,7 @@ SUMMARY_KEYS = (
     "documents_rejected",
     "sources_waiting_for_scholarship_verification",
     "linked_urls_discovered",
+    "linked_url_references",
     "linked_pages_attempted",
     "linked_pages_fetched",
     "linked_pages_failed",
@@ -91,6 +99,7 @@ SUMMARY_KEYS = (
 )
 CRAWL_DIAGNOSTIC_KEYS = (
     "linked_urls_discovered",
+    "linked_url_references",
     "linked_pages_attempted",
     "linked_pages_fetched",
     "linked_pages_failed",
@@ -111,6 +120,13 @@ EXTRACTION_DIAGNOSTIC_KEYS = (
 
 class DiscoveryDisabled(RuntimeError):
     pass
+
+
+class DiagnosticSingleSourceError(ValueError):
+    pass
+
+
+_DIAGNOSTIC_TRIGGER_TYPE = "diagnostic_single_source"
 
 
 def _initial_summary() -> dict:
@@ -164,12 +180,17 @@ def _persist_candidate(
         run_budget.finish_candidate_persistence(persisted)
 
 
-def _close_run_resources(run_budget, extractor, database_deadline=None) -> None:
+def _close_run_resources(
+    run_budget,
+    extractor,
+    database_deadline=None,
+    fetcher=None,
+) -> None:
     if database_deadline is not None:
         database_deadline.close()
     if run_budget is not None:
         run_budget.close()
-    if isinstance(extractor, GeminiScholarshipExtractor):
+    if isinstance(extractor, GroqScholarshipExtractor):
         try:
             extractor.close()
         except Exception as exc:
@@ -177,6 +198,20 @@ def _close_run_resources(run_budget, extractor, database_deadline=None) -> None:
                 "Discovery provider client cleanup failed: %s",
                 type(exc).__name__,
             )
+    # The fetcher owns a Playwright process, a Chromium browser and its
+    # context. Without this they outlive the run: on a long-lived API process
+    # every run left a browser behind, and on Windows the accumulated sockets
+    # and handles eventually fail with WinError 10055.
+    if fetcher is not None:
+        close_fetcher = getattr(fetcher, "close", None)
+        if callable(close_fetcher):
+            try:
+                close_fetcher()
+            except Exception as exc:
+                logger.error(
+                    "Discovery fetcher cleanup failed: %s",
+                    type(exc).__name__,
+                )
 
 
 def _now() -> datetime:
@@ -528,6 +563,44 @@ def _record_candidate_rejection_reasons(result: dict, extractor) -> None:
             counts[reason] = counts.get(reason, 0) + 1
 
 
+def _record_candidate_rejection_details(result: dict, extractor) -> None:
+    details = getattr(extractor, "last_rejection_detail_counts", None)
+    if not isinstance(details, dict):
+        return
+    counts = result.setdefault("candidate_rejection_details", {})
+    for code, count in details.items():
+        if (
+            isinstance(code, str)
+            and re.fullmatch(r"[a-z_]{1,40}(?::[a-z_]{1,40})?", code)
+            and isinstance(count, int)
+            and not isinstance(count, bool)
+            and count > 0
+        ):
+            counts[code] = counts.get(code, 0) + count
+
+
+# An extraction failure in one of these categories will repeat on every later
+# page of the source, so the source stops; any other page failure moves on.
+_STOP_SOURCE_EXTRACTION_CATEGORIES = frozenset({
+    "authentication_error",
+    "invalid_source_url",
+    "missing_api_key",
+    "model_unavailable",
+    "permission_error",
+    "quota_error",
+    "quota_exhausted",
+})
+
+
+def _record_provider_attempt_diagnostics(result: dict, extractor) -> None:
+    diagnostics = getattr(extractor, "last_provider_diagnostics", None)
+    if not isinstance(diagnostics, dict):
+        return
+    result["provider_attempt_diagnostics"] = diagnostics
+    if diagnostics.get("processing_stopped_after_failed_page") is True:
+        result["processing_stopped_after_failed_page"] = True
+
+
 def _save_run(
     db: Session,
     run: ScholarshipDiscoveryRun,
@@ -545,13 +618,162 @@ def _save_run(
     db.commit()
 
 
+def _sanitize_discovery_error(exc: Exception) -> str:
+    message = _DIAGNOSTIC_URL.sub("<redacted URL>", str(exc))
+    return _DIAGNOSTIC_SECRET.sub(r"\1=<redacted>", message)
+
+
+def _safe_log_label(value) -> str:
+    if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value):
+        return value
+    return "unavailable"
+
+
+def _safe_log_status(value):
+    if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+        return value
+    return None
+
+
+def _prepin_discovery_source_hostnames(fetcher, sources) -> None:
+    prepin = getattr(fetcher, "prepin_hostnames", None)
+    if not callable(prepin) or getattr(fetcher, "chromium_enabled", True) is False:
+        return
+    hostnames = set()
+    for source in sources:
+        trust_basis = getattr(source, "trust_basis", None)
+        if (
+            getattr(source, "crawl_enabled", False) is not True
+            or getattr(source, "trust_reviewed", False) is not True
+            or not isinstance(trust_basis, str)
+            or not trust_basis.strip()
+            or getattr(source, "discovery_only", False) is not False
+        ):
+            continue
+        source_url = getattr(source, "source_url", None)
+        if not isinstance(source_url, str) or not source_url.strip():
+            continue
+        try:
+            hostname = urlsplit(source_url).hostname
+        except (TypeError, ValueError, UnicodeError):
+            continue
+        if hostname:
+            hostnames.add(hostname)
+    if hostnames:
+        prepin(sorted(hostnames))
+
+
+# A source needs time to fetch its pages and run extraction. Starting one with
+# less than this left guarantees being cut off mid-source, which is how a run
+# ends as a crash instead of a partial success.
+MIN_SECONDS_TO_START_A_SOURCE = 60.0
+
+
+def _time_for_another_source(run_budget, sources_started: int) -> bool:
+    """Is there time to start another source, or should the run stop cleanly?
+
+    The first source always runs. A budget shorter than the threshold would
+    otherwise finish without attempting anything, which is worse than being
+    cut off: the run would do no work at all.
+    """
+    if sources_started == 0:
+        return True
+    remaining = getattr(run_budget, "remaining_seconds", None)
+    if not callable(remaining):
+        return True
+    try:
+        seconds = remaining()
+    except Exception:
+        return False
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+        return True
+    return seconds >= MIN_SECONDS_TO_START_A_SOURCE
+
+
+def _connection_pool_counts(db) -> dict:
+    """Checked-out and idle pool connections, if the pool reports them.
+
+    Cheap: both are counters the pool already keeps. A NullPool (the manual
+    run's own engine) reports nothing, hence the empty dict. To check from
+    outside the process on Windows:
+
+        netstat -ano | findstr :5432
+        netstat -ano | find /c "ESTABLISHED"
+    """
+    try:
+        pool = db.get_bind().engine.pool
+        return {
+            "checked_out": int(pool.checkedout()),
+            "idle": int(pool.checkedin()),
+        }
+    except Exception:
+        return {}
+
+
+def _database_identity(db) -> dict:
+    """Host, port and database name of the session's own connection.
+
+    Logged at run start so a run writing to an unexpected database is obvious
+    instead of looking like lost data. Never the user or password.
+    """
+    from app.core.config import database_identity
+
+    try:
+        return database_identity(db.get_bind().url)
+    except Exception:
+        return {"database": "unknown", "host": "unknown", "port": 0}
+
+
+def _save_failure_status(db, run_id, summary, source_results, status) -> bool:
+    """Write the run's final status through a session of its own.
+
+    The run's session has just been rolled back, so its ORM objects are
+    expired and some refer to rows the rollback discarded. Touching them
+    raises ObjectDeletedError and the status is lost, which is how a run ends
+    with no record of why. A fresh session reloads the row by id instead.
+    """
+    try:
+        bind = db.get_bind()
+    except Exception:
+        return False
+    if bind is None:
+        return False
+    session = Session(bind=bind)
+    try:
+        row = session.get(ScholarshipDiscoveryRun, run_id)
+        if row is None:
+            return False
+        row.summary = dict(summary)
+        row.source_results = list(source_results)
+        row.status = status
+        row.finished_at = _now()
+        session.commit()
+        return True
+    except Exception as exc:
+        logger.error(
+            "Scholarship discovery failure status could not be saved in a "
+            "fresh session: %s",
+            type(exc).__name__,
+        )
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
 def run_discovery(
     db: Session,
     *,
     settings: Optional[ScholarshipDiscoverySettings] = None,
     sources: Optional[Iterable[DiscoverySource]] = None,
     fetcher: Optional[OfficialSourceFetcher] = None,
-    extractor: Optional[GeminiScholarshipExtractor] = None,
+    extractor: Optional[GroqScholarshipExtractor] = None,
     trigger_type: str = "manual",
     scheduled_for: Optional[datetime] = None,
     lock_guard=None,
@@ -560,10 +782,67 @@ def run_discovery(
     on_stage: Optional[Callable[[str], None]] = None,
     run_budget: Optional[DiscoveryRunBudget] = None,
     database_deadline: Optional[ManualDiscoveryDatabaseDeadline] = None,
+    diagnostic_only: bool = False,
 ) -> dict:
     settings = settings or scholarship_discovery_settings()
     owns_database_deadline = False
-    if trigger_type == "manual":
+    if diagnostic_only:
+        if trigger_type != _DIAGNOSTIC_TRIGGER_TYPE:
+            raise DiagnosticSingleSourceError(
+                "Diagnostic-only runs require the diagnostic trigger type"
+            )
+        selected_sources = tuple(sources) if sources is not None else ()
+        if (
+            len(selected_sources) != 1
+            or selected_sources[0] not in SOURCES
+            or selected_sources[0].crawl_enabled is not True
+            or selected_sources[0].trust_reviewed is not True
+            or not isinstance(selected_sources[0].trust_basis, str)
+            or not selected_sources[0].trust_basis.strip()
+            or selected_sources[0].discovery_only is not False
+        ):
+            raise DiagnosticSingleSourceError(
+                "Diagnostic-only runs require exactly one registered, trusted crawl source"
+            )
+        sources = selected_sources
+        if not isinstance(settings, ScholarshipDiscoverySettings):
+            raise DiagnosticSingleSourceError(
+                "Diagnostic discovery settings are invalid"
+            )
+        try:
+            settings = controlled_manual_settings(settings)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise DiagnosticSingleSourceError(
+                "Diagnostic discovery settings are invalid"
+            ) from exc
+        if run_budget is None:
+            run_budget = diagnostic_single_source_budget()
+        try:
+            validate_diagnostic_single_source_budget(run_budget)
+        except ControlledManualSourceConfigurationError as exc:
+            if isinstance(run_budget, DiscoveryRunBudget):
+                _close_run_resources(run_budget, None)
+            raise DiagnosticSingleSourceError(
+                "Diagnostic run budget is invalid"
+            ) from exc
+        try:
+            run_budget.start()
+        except RuntimeError as exc:
+            _close_run_resources(run_budget, None)
+            raise DiagnosticSingleSourceError(
+                "Diagnostic run budget is invalid"
+            ) from exc
+        if database_deadline is not None:
+            try:
+                database_deadline.attach_session(db)
+            except Exception:
+                _close_run_resources(run_budget, None)
+                raise
+    elif trigger_type == _DIAGNOSTIC_TRIGGER_TYPE:
+        raise DiagnosticSingleSourceError(
+            "The diagnostic trigger requires diagnostic_only=True"
+        )
+    elif trigger_type == "manual":
         sources = validate_controlled_manual_run_sources(
             controlled_manual_sources() if sources is None else sources,
         )
@@ -592,7 +871,8 @@ def run_discovery(
             raise ControlledManualSourceConfigurationError
         if sources is None:
             sources = SOURCES
-    if not settings.enabled and trigger_type != "manual":
+    sources = tuple(sources)
+    if not settings.enabled and trigger_type != "manual" and not diagnostic_only:
         raise DiscoveryDisabled("Set SCHOLARSHIP_DISCOVERY_ENABLED=true to run discovery")
     lock_check = None
     if lock_guard is not None:
@@ -609,18 +889,20 @@ def run_discovery(
                 raise DiscoveryLockLost("Discovery advisory-lock ownership was lost")
 
         lock_check = verify_lock_ownership
+    owns_fetcher = fetcher is None
     fetcher = fetcher or OfficialSourceFetcher(
         settings,
         lock_check=lock_check,
         run_budget=run_budget,
+        max_crawl_depth=getattr(settings, "max_crawl_depth", None),
     )
     if lock_check is not None and isinstance(fetcher, OfficialSourceFetcher):
         fetcher.lock_check = lock_check
     if isinstance(fetcher, OfficialSourceFetcher):
         fetcher.run_budget = run_budget
     if extractor is None:
-        extractor = GeminiScholarshipExtractor(settings, run_budget=run_budget)
-    elif isinstance(extractor, GeminiScholarshipExtractor):
+        extractor = GroqScholarshipExtractor(settings, run_budget=run_budget)
+    elif isinstance(extractor, GroqScholarshipExtractor):
         extractor.run_budget = run_budget
     if lock_check is not None:
         lock_check()
@@ -628,11 +910,20 @@ def run_discovery(
     run = ScholarshipDiscoveryRun(
         id=run_id or str(uuid.uuid4()),
         started_at=_now(),
-        trigger_type=trigger_type,
+        trigger_type="manual" if diagnostic_only else trigger_type,
         scheduled_for=scheduled_for,
         status="running",
         summary={
             **_initial_summary(),
+            **(
+                {
+                    "diagnostic_only": True,
+                    "diagnostic_trigger_type": trigger_type,
+                    "diagnostic_source_id": sources[0].source_id,
+                }
+                if diagnostic_only
+                else {}
+            ),
             **(
                 {"resource_budget": run_budget.snapshot()}
                 if run_budget is not None
@@ -651,6 +942,7 @@ def run_discovery(
             run_budget,
             extractor,
             database_deadline if owns_database_deadline else None,
+            fetcher if owns_fetcher else None,
         )
         raise
     if on_run_started is not None:
@@ -659,12 +951,51 @@ def run_discovery(
         except Exception as exc:
             logger.error("Discovery run-start notification failed: %s", type(exc).__name__)
     summary = _initial_summary()
+    if diagnostic_only:
+        summary.update(
+            diagnostic_only=True,
+            diagnostic_trigger_type=trigger_type,
+            diagnostic_source_id=sources[0].source_id,
+        )
     source_results = []
     current_source_result = None
+    diagnostic_candidates_seen = 0
 
+    stopped_early_reason = None
+    sources_not_reached = []
     try:
-        for source in sources:
+        identity = _database_identity(db)
+        logger.info(
+            "Scholarship discovery writing to: database=%s host=%s port=%s",
+            identity["database"],
+            identity["host"],
+            identity["port"],
+        )
+        logger.info(
+            "Scholarship discovery sources selected: trigger_type=%s count=%d "
+            "source_ids=%s",
+            _safe_log_label(trigger_type),
+            len(sources),
+            ",".join(_safe_log_label(item.source_id) for item in sources),
+        )
+        _prepin_discovery_source_hostnames(fetcher, sources)
+        for source_index, source in enumerate(sources):
             current_source_result = None
+            if run_budget is not None and not _time_for_another_source(
+                run_budget, source_index,
+            ):
+                # Stop between sources instead of being cut off inside one.
+                # Everything already committed stays; the rest is reported.
+                stopped_early_reason = "duration_seconds"
+                sources_not_reached = [
+                    item.source_id for item in sources[source_index:]
+                ]
+                logger.info(
+                    "Scholarship discovery stopping before a new source: "
+                    "reason=time_limit sources_not_reached=%d",
+                    len(sources_not_reached),
+                )
+                break
             if run_budget is not None:
                 run_budget.start_source(source.source_id)
             if on_stage is not None:
@@ -708,7 +1039,8 @@ def run_discovery(
                     exc.stage = "root_fetch"
                 if exc.page_stage is None:
                     exc.page_stage = "root_fetch"
-                record_publication_source_failure(db, source.source_id)
+                if not diagnostic_only:
+                    record_publication_source_failure(db, source.source_id)
                 summary["sources_failed"] += 1
                 result.update(
                     status="failed",
@@ -753,6 +1085,9 @@ def run_discovery(
                 result["last_success_at"] = _now().isoformat()
             summary["sources_successfully_fetched"] += 1
             source_waiting_for_scholarship_verification = False
+            source_extraction_failed = False
+            pages_extracted = 0
+            pages_failed = 0
             for page_index, page in enumerate(pages, start=1):
                 if lock_check is not None:
                     lock_check()
@@ -769,13 +1104,16 @@ def run_discovery(
                         "Scholarship source URL is invalid.",
                         category="invalid_source_url",
                     )
-                record_publication_source_success(
-                    db,
-                    source.source_id,
-                    safe_page_url,
-                    page.content_hash,
-                )
                 if getattr(page, "insufficient_content", False) or not page.text.strip():
+                    # Nothing was sent to the provider, so the fetch itself is
+                    # the success being recorded, as before.
+                    if not diagnostic_only:
+                        record_publication_source_success(
+                            db,
+                            source.source_id,
+                            safe_page_url,
+                            page.content_hash,
+                        )
                     _record_extraction_outcome(
                         result,
                         summary,
@@ -791,10 +1129,13 @@ def run_discovery(
                     continue
                 try:
                     candidates = extractor.extract(page, source)
+                    _record_provider_attempt_diagnostics(result, extractor)
                     if lock_check is not None:
                         lock_check()
                     _record_candidate_rejection_reasons(result, extractor)
+                    _record_candidate_rejection_details(result, extractor)
                 except ScholarshipExtractionError as exc:
+                    _record_provider_attempt_diagnostics(result, extractor)
                     outcome = (
                         "request_rejected"
                         if exc.is_request_preflight_rejection
@@ -805,18 +1146,43 @@ def run_discovery(
                         else "provider_error"
                     )
                     _record_extraction_outcome(result, summary, outcome)
-                    summary["sources_failed"] += 1
+                    _record_candidate_rejection_details(result, extractor)
+                    pages_failed += 1
+                    if not source_extraction_failed:
+                        # Count the source once, however many of its pages fail.
+                        summary["sources_failed"] += 1
+                        source_extraction_failed = True
+                        result["error"] = exc.category
+                        if exc.http_status is not None:
+                            result["http_status"] = exc.http_status
                     result["status"] = "partial_failure"
-                    result["error"] = exc.category
-                    if exc.http_status is not None:
-                        result["http_status"] = exc.http_status
+                    result.setdefault("page_failures", []).append({
+                        "page_index": page_index,
+                        "category": exc.category,
+                        "http_status": exc.http_status,
+                    })
                     logger.warning(
-                        "Scholarship page extraction failed for %s: category=%s http_status=%s",
+                        "Scholarship page extraction failed for %s: page_index=%s "
+                        "category=%s http_status=%s",
                         source.source_id,
+                        page_index,
                         exc.category,
                         exc.http_status,
                     )
-                    break
+                    if exc.category in _STOP_SOURCE_EXTRACTION_CATEGORIES:
+                        result["processing_stopped_after_failed_page"] = True
+                        break
+                    continue
+                pages_extracted += 1
+                # Recorded only once the page was actually extracted, so a
+                # failed extraction is never reported as a fresh success.
+                if not diagnostic_only:
+                    record_publication_source_success(
+                        db,
+                        source.source_id,
+                        safe_page_url,
+                        page.content_hash,
+                    )
                 rejected_count = getattr(extractor, "last_rejected_count", 0)
                 if not isinstance(rejected_count, int) or isinstance(rejected_count, bool) or rejected_count < 0:
                     rejected_count = 0
@@ -835,6 +1201,15 @@ def run_discovery(
                     rejected=rejected_count,
                 )
                 summary["invalid_or_out_of_scope_rejected"] += rejected_count
+                if diagnostic_only:
+                    diagnostic_candidates_seen += accepted_count
+                    if diagnostic_candidates_seen > run_budget.max_candidates:
+                        raise DiscoveryRunLimitExceeded(
+                            "candidates",
+                            run_budget.max_candidates,
+                        )
+                    summary["scholarships_discovered"] += accepted_count
+                    continue
                 for candidate in candidates:
                     if run_budget is not None:
                         run_budget.ensure_candidate_capacity()
@@ -941,16 +1316,33 @@ def run_discovery(
                     except Exception:
                         db.rollback()
                         raise
+            result["pages_extracted"] = pages_extracted
+            result["pages_failed"] = pages_failed
+            if pages_failed:
+                result["extraction_status"] = (
+                    "all_pages_failed" if not pages_extracted else "some_pages_failed"
+                )
             summary["sources_waiting_for_scholarship_verification"] += int(
                 source_waiting_for_scholarship_verification,
             )
             source_results.append(result)
+            pool_counts = _connection_pool_counts(db)
+            logger.info(
+                "Scholarship discovery source finished: source_id=%s status=%s "
+                "pages_extracted=%s db_connections_checked_out=%s "
+                "db_connections_idle=%s",
+                _safe_log_label(source.source_id),
+                _safe_log_label(result.get("status")),
+                result.get("pages_extracted", 0),
+                pool_counts.get("checked_out", "unavailable"),
+                pool_counts.get("idle", "unavailable"),
+            )
             if run_budget is not None:
                 run_budget.ensure_active()
             _save_run(db, run, summary, source_results, "running", lock_check)
             current_source_result = None
 
-        if run_budget is not None:
+        if run_budget is not None and stopped_early_reason is None:
             run_budget.ensure_active()
 
     except Exception as exc:
@@ -971,6 +1363,7 @@ def run_discovery(
                     run_budget,
                     extractor,
                     database_deadline if owns_database_deadline else None,
+                    fetcher if owns_fetcher else None,
                 )
                 raise DiscoveryLockLost(
                     "Discovery stopped because advisory-lock ownership was lost"
@@ -985,47 +1378,87 @@ def run_discovery(
             except Exception as rollback_exc:
                 logger.error("Scholarship discovery rollback failed: %s", type(rollback_exc).__name__)
             try:
-                failed_run = db.get(ScholarshipDiscoveryRun, run.id)
-                if failed_run is not None:
-                    if isinstance(exc, DiscoveryRunLimitExceeded):
-                        summary["stop_reason"] = exc.as_dict()
-                        if current_source_result is not None and current_source_result not in source_results:
-                            current_source_result.update(
-                                status="stopped",
-                                stop_reason=exc.as_dict(),
-                            )
-                            source_results.append(current_source_result)
-                    else:
-                        summary["sources_failed"] += 1
-                    if run_budget is not None:
-                        summary["resource_budget"] = run_budget.snapshot()
-                    failed_run.summary = dict(summary)
-                    failed_run.source_results = list(source_results)
-                    failed_run.status = "failed"
-                    failed_run.finished_at = _now()
-                    summary["error_summary"] = (
-                        "run_budget_exhausted"
-                        if isinstance(exc, DiscoveryRunLimitExceeded)
-                        else type(exc).__name__
-                    )
-                    failed_run.summary = dict(summary)
-                    db.commit()
+                budget_exhausted = isinstance(exc, DiscoveryRunLimitExceeded)
+                if budget_exhausted:
+                    summary["stop_reason"] = exc.as_dict()
+                    if current_source_result is not None and current_source_result not in source_results:
+                        current_source_result.update(
+                            status="stopped",
+                            stop_reason=exc.as_dict(),
+                        )
+                        source_results.append(current_source_result)
+                    reached = {item.get("source_id") for item in source_results}
+                    summary["sources_not_reached"] = [
+                        item.source_id
+                        for item in sources
+                        if item.source_id not in reached
+                    ]
+                else:
+                    summary["sources_failed"] += 1
+                if run_budget is not None:
+                    summary["resource_budget"] = run_budget.snapshot()
+                summary["error_summary"] = (
+                    "run_budget_exhausted"
+                    if budget_exhausted
+                    else type(exc).__name__
+                )
+                # A run cut off mid-source is partial, not broken. The status
+                # column only allows running/completed/failed, so the outcome
+                # is recorded in the summary and everything already committed
+                # stays committed.
+                if (
+                    budget_exhausted
+                    and getattr(exc, "resource", None) == "duration_seconds"
+                ):
+                    summary["run_outcome"] = "stopped_time_limit"
+                failure_status = "failed"
+                if not _save_failure_status(
+                    db, run.id, summary, source_results, failure_status,
+                ):
+                    failed_run = db.get(ScholarshipDiscoveryRun, run.id)
+                    if failed_run is not None:
+                        failed_run.summary = dict(summary)
+                        failed_run.source_results = list(source_results)
+                        failed_run.status = failure_status
+                        failed_run.finished_at = _now()
+                        db.commit()
             except Exception as history_exc:
                 try:
                     db.rollback()
                 except Exception as rollback_exc:
                     logger.error("Scholarship discovery history rollback failed: %s", type(rollback_exc).__name__)
                 logger.error("Scholarship discovery failure status could not be saved: %s", type(history_exc).__name__)
-        logger.error("Scholarship discovery run failed: %s", type(exc).__name__)
+        logger.error(
+            "Scholarship discovery run failed: type=%s category=%s cause_type=%s http_status=%s",
+            _safe_log_label(type(exc).__name__),
+            _safe_log_label(getattr(exc, "category", None)),
+            _safe_log_label(getattr(exc, "cause_type", None)),
+            _safe_log_status(getattr(exc, "status_code", None)),
+        )
         _close_run_resources(
             run_budget,
             extractor,
             database_deadline if owns_database_deadline else None,
+            fetcher if owns_fetcher else None,
         )
         raise
 
     if run_budget is not None:
         summary["resource_budget"] = run_budget.snapshot()
+    if stopped_early_reason is not None:
+        summary["stop_reason"] = {
+            "code": "DISCOVERY_RUN_STOPPED_EARLY",
+            "resource": stopped_early_reason,
+        }
+        summary["sources_not_reached"] = list(sources_not_reached)
+        # The run row's status column is constrained to running/completed/
+        # failed, so the partial outcome is reported in the summary. Nothing
+        # failed here: the sources that ran are finished and committed.
+        summary["run_outcome"] = (
+            "stopped_time_limit"
+            if stopped_early_reason == "duration_seconds"
+            else "completed_partial"
+        )
     status = "failed" if summary["sources_failed"] else "completed"
     try:
         _save_run(db, run, summary, source_results, status, lock_check)
@@ -1034,10 +1467,11 @@ def run_discovery(
             run_budget,
             extractor,
             database_deadline if owns_database_deadline else None,
+            fetcher if owns_fetcher else None,
         )
     return {
         "run_id": run.id,
-        "trigger_type": run.trigger_type,
+        "trigger_type": trigger_type,
         "scheduled_for": run.scheduled_for.isoformat() if run.scheduled_for else None,
         "started_at": run.started_at.isoformat(),
         "finished_at": run.finished_at.isoformat(),

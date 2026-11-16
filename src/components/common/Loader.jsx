@@ -1,7 +1,7 @@
 
 export default function Loader({ message = "Chargement des données d'éligibilité..." }) {
   return (
-    <div style={{
+    <div role="status" style={{
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',

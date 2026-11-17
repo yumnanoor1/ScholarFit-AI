@@ -1,3 +1,4 @@
+from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,6 +19,30 @@ from app.schemas.matching import MatchResult
 from app.services.scholarship_matching import scholarships_for_program
 
 router = APIRouter(prefix="/programs", tags=["Programs"])
+
+
+def _normalized_name(value):
+    return " ".join((value or "").casefold().split())
+
+
+def _reject_duplicate(db: Session, university_id: int, name: str, exclude_id: Optional[int] = None):
+    normalized_name = _normalized_name(name)
+    duplicate = next(
+        (
+            item for item in db.query(Program).filter(Program.university_id == university_id).all()
+            if item.id != exclude_id and _normalized_name(item.name) == normalized_name
+        ),
+        None,
+    )
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A program with this name already exists at this university")
+
+
+def _validate_program_source(source_url, last_verified):
+    if (source_url is None) != (last_verified is None):
+        raise HTTPException(status_code=422, detail="Source URL and its verification date must be supplied together")
+    if last_verified and last_verified > date.today():
+        raise HTTPException(status_code=422, detail="Verification date can't be in the future")
 
 
 @router.get("/", response_model=List[ProgramResponse])
@@ -74,6 +99,7 @@ def create_program(
     if not uni:
         raise HTTPException(status_code=404, detail="University not found")
 
+    _reject_duplicate(db, data.university_id, data.name)
     program = Program(**data.model_dump())
     db.add(program)
     db.commit()
@@ -93,7 +119,14 @@ def update_program(
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    _reject_duplicate(db, program.university_id, changes.get("name", program.name), program.id)
+    source_url = changes.get("source_url", program.source_url)
+    last_verified = changes.get("last_verified", program.last_verified)
+    _validate_program_source(source_url, last_verified)
+    if source_url != program.source_url and "last_verified" not in changes:
+        raise HTTPException(status_code=422, detail="Changing the source URL requires a new verification date")
+    for field, value in changes.items():
         setattr(program, field, value)
 
     db.commit()

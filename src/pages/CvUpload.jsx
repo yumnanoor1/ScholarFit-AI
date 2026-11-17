@@ -31,7 +31,7 @@ function wait(duration) {
 export default function CvUpload() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { saveCvUpload, saveExtractedProfile } = useProfile();
+  const { profile, saveCvUpload, saveExtractedProfile } = useProfile();
   const [file, setFile] = useState(null);
   const [dropzoneKey, setDropzoneKey] = useState(0);
   const [processing, setProcessing] = useState(false);
@@ -78,7 +78,10 @@ export default function CvUpload() {
         setProcessingStep(index);
         await wait(240);
       }
-      const extraction = await extractProfileFromCv(file, { user });
+      const extraction = await extractProfileFromCv(file, {
+        user,
+        existingProfile: profile.profileDraft || profile.verifiedProfile || profile,
+      });
       if (extraction.source === 'no-readable-text') {
         throw new Error('We couldn’t find any text in this file. Scanned PDFs and older .doc files can’t be read. Upload a text-based PDF or DOCX, or go back and build your profile manually.');
       }

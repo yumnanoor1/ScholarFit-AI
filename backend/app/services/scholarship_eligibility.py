@@ -45,6 +45,7 @@ from datetime import date
 from typing import Optional
 
 from app.services.eligibility_engine import _degree_rank
+from app.services.source_verification import STALE_AFTER_DAYS, scholarship_source_issue
 
 SATISFIED = "satisfied"
 NOT_SATISFIED = "not_satisfied"
@@ -54,6 +55,7 @@ NOT_EVALUATED = "not_evaluated"
 ELIGIBLE = "eligible"
 NOT_ELIGIBLE = "not_eligible"
 VERIFY_MANUALLY = "verify_manually"
+VERIFICATION_MAX_AGE_DAYS = STALE_AFTER_DAYS
 
 EU_EEA = {
     "austria", "belgium", "bulgaria", "croatia", "cyprus", "czech republic", "czechia", "denmark", "estonia",
@@ -117,8 +119,31 @@ DEFERS_TO_ADMISSION = re.compile(
 )
 HEDGED = re.compile(r"\b(typically|commonly|indicative|approx|approximately|secondary source|some institution|"
                     r"not verified|may|varies)\b", re.I)
-NOT_STATED = re.compile(r"^\s*(not specified|not stated|no age limit|none stated|n/a)", re.I)
-NO_REQUIREMENT = re.compile(r"^\s*(no\b|not required)", re.I)
+NOT_STATED = re.compile(
+    r"^\s*(?:not specified|not stated|none stated|n/?a|unknown|not provided|not available|"
+    r"no\b.*\b(?:specified|stated|provided|available|known|mentioned)\b)",
+    re.I,
+)
+NO_CONDITION_DECLARATION = re.compile(
+    r"^\s*(?:no\b.+\b(?:requirement|restriction|condition|criteria|limit)\b|"
+    r"(?:there (?:is|are)|has|have)\s+no\b.+\b(?:requirement|restriction|condition|criteria|limit)\b)"
+    r"[.!]?\s*$",
+    re.I,
+)
+NO_NATIONALITY_RESTRICTION = (
+    r"\bno\s+(?:nationality|citizenship)\s+(?:restriction|requirement)s?\b|"
+    r"\b(?:nationality|citizenship)\s+(?:is\s+)?not\s+(?:restricted|limited)\b"
+)
+NO_FIELD_RESTRICTION = (
+    r"\bno\s+(?:field|discipline|subject)\s+(?:of\s+study\s+)?"
+    r"(?:restriction|limit|requirement)s?\b|"
+    r"\b(?:field|discipline|subject)\s+(?:of\s+study\s+)?"
+    r"(?:is\s+)?not\s+(?:restricted|limited)\b"
+)
+NO_PREVIOUS_DEGREE = (
+    r"\bno\s+(?:(?:previous|prior|required)\s+)?degree\s+(?:is\s+)?"
+    r"(?:required|necessary|needed)\b"
+)
 
 # Words that limit an "all fields" / "any field" statement
 FIELD_LIMIT = re.compile(r"\b(exclu\w+|exceptions?|except|subject to|only|limited to|restricted to|participating|"
@@ -181,11 +206,12 @@ def _conflict(key, label, detail, text):
 
 
 def _reconcile(key, label, from_text, status, reason):
-    """Combines the original text's answer with the structured one. Opposite answers are a conflict;
-    a stated "not eligible" outlives an open structured answer; a structured answer settles unreadable text."""
+    """Keep unknown or missing text from being overwritten by a structured answer."""
     if from_text is None:
         return _req(key, label, status, reason)
     text = from_text["source_text"]
+    if from_text["status"] in (NOT_EVALUATED, MISSING):
+        return from_text
     firm = (SATISFIED, NOT_SATISFIED)
     if from_text["status"] in firm and status in firm and from_text["status"] != status:
         return _conflict(key, label, "the structured data and the original wording give different answers", text)
@@ -195,37 +221,137 @@ def _reconcile(key, label, from_text, status, reason):
 
 
 # ---------------------------------------------------------------------------
-# Individual checks. Each returns a requirement dict, or None when the record states no rule.
+# Individual checks. None means a rule is explicitly absent; missing record data is not a rule.
 # ---------------------------------------------------------------------------
+
+def _is_unspecified(text):
+    return not (text or "").strip() or bool(NOT_STATED.match(text))
+
+
+def _explicit_no_requirement(text, pattern):
+    text = (text or "").strip()
+    if _is_unspecified(text):
+        return False
+    return bool(
+        re.fullmatch(r"(?:no requirement|not required|not necessary|not applicable)[.!]?", text, re.I)
+        or re.search(pattern, text, re.I)
+    )
+
+
+def _has_no_additional_conditions(text):
+    return bool(re.search(
+        r"\bno\s+(?:(?:other|additional)\s+)?(?:applicant\s+)?"
+        r"(?:eligibility\s+)?(?:requirements|restrictions|conditions)\b",
+        text or "",
+        re.I,
+    ))
+
+
+def _nationality_is_non_applicable(scholarship):
+    return _explicit_no_requirement(
+        getattr(scholarship, "eligible_nationalities", None),
+        NO_NATIONALITY_RESTRICTION,
+    )
+
+
+def _previous_degree_is_non_applicable(scholarship):
+    return _explicit_no_requirement(
+        getattr(scholarship, "required_previous_degree", None),
+        NO_PREVIOUS_DEGREE,
+    )
+
 
 def _nationality_rule(scholarship, nationality: str, country: str):
     """What the structured nationality fields say: (status, reason)."""
     scope = scholarship.nationality_scope
-    excluded = {_norm_country(item) for item in getattr(scholarship, "excluded_countries", None) or []}
-    for region in getattr(scholarship, "excluded_regions", None) or []:
+    excluded_countries = set()
+    for item in getattr(scholarship, "excluded_countries", None) or []:
+        normalized = _norm_country(item)
+        if normalized:
+            excluded_countries.add(normalized)
+    excluded_regions = getattr(scholarship, "excluded_regions", None) or []
+    eligible_countries = set()
+    for item in getattr(scholarship, "eligible_countries", None) or []:
+        normalized = _norm_country(item)
+        if normalized:
+            eligible_countries.add(normalized)
+    eligible_regions = getattr(scholarship, "eligible_regions", None) or []
+    excluded = set(excluded_countries)
+    for region in excluded_regions:
         excluded |= REGIONS.get(region.upper(), set())
-    if country in excluded:
-        return NOT_SATISFIED, f"Citizens of {nationality} are excluded."
-    listed = {_norm_country(item) for item in getattr(scholarship, "eligible_countries", None) or []}
-    regions = getattr(scholarship, "eligible_regions", None) or []
-    for region in regions:
+    listed = set(eligible_countries)
+    for region in eligible_regions:
         listed |= REGIONS.get(region.upper(), set())
     if scope == "all":
+        if excluded_countries or excluded_regions:
+            return NOT_EVALUATED, "The record says all nationalities are eligible but also lists exclusions; verify the conflict."
         return SATISFIED, "Open to all nationalities."
     if scope == "all_except":
+        if not excluded and not excluded_regions:
+            return NOT_EVALUATED, "The record says exclusions apply but doesn't list any; check the official country rules."
+        if any(region.upper() not in REGIONS for region in excluded_regions):
+            return NOT_EVALUATED, "The record contains an unsupported excluded region; check the official country rules."
+        if country in excluded:
+            return NOT_SATISFIED, f"Citizens of {nationality} are excluded."
         return SATISFIED, f"Open to all nationalities except those listed; {nationality} is not excluded."
+    if scope == "listed" and not listed and not eligible_regions:
+        return NOT_EVALUATED, "The record says eligibility is limited to a list but doesn't include that list."
+    if any(region.upper() not in REGIONS for region in eligible_regions):
+        return NOT_EVALUATED, "The record contains an unsupported eligible region; check the official country rules."
+    if country in excluded:
+        return NOT_SATISFIED, f"Citizens of {nationality} are excluded."
     if country in listed:
         return SATISFIED, f"{nationality} is on the record's list of eligible countries."
-    if scope == "listed" and not any(region.upper() not in REGIONS for region in regions):
+    if scope == "listed":
         return NOT_SATISFIED, f"{nationality} is not on the record's list of eligible countries."
     return NOT_EVALUATED, "Eligibility depends on a published country list; check it on the official page."
 
 
 def check_nationality(scholarship, nationality: Optional[str]):
+    scope = getattr(scholarship, "nationality_scope", None)
+    text = getattr(scholarship, "eligible_nationalities", None) or ""
+    pakistan_text = (getattr(scholarship, "pakistan_eligible", None) or "").strip()
+    excluded_countries = getattr(scholarship, "excluded_countries", None) or []
+    excluded_regions = getattr(scholarship, "excluded_regions", None) or []
+    if _nationality_is_non_applicable(scholarship):
+        if scope not in (None, "all") or excluded_countries or excluded_regions:
+            return _conflict("nationality", "Nationality",
+                             "the structured nationality scope conflicts with the explicit no-restriction wording",
+                             text)
+        if re.match(r"\bno\b", pakistan_text, re.I):
+            return _conflict("nationality", "Nationality",
+                             "the Pakistan-specific wording conflicts with the explicit no-restriction wording",
+                             pakistan_text)
+        if RECHECK.search(pakistan_text):
+            return _req("nationality", "Nationality", NOT_EVALUATED,
+                        "The Pakistan-specific eligibility needs current confirmation.", pakistan_text)
+        return None
+
     from_text = _nationality_from_text(scholarship, nationality)
-    if not getattr(scholarship, "nationality_scope", None):
-        return from_text
+    if not scope:
+        return from_text or _req(
+            "nationality", "Nationality", NOT_EVALUATED,
+            "The record doesn't state which nationalities are eligible; check the official country rules.",
+        )
     label = "Nationality"
+    unrestricted_text = bool(re.search(
+        r"\b(?:all|any)\s+(?:nationalities|nationality|countries|country|international students)\b",
+        _strip_brackets(text),
+        re.I,
+    )) and not re.search(r"\b(except|excluding|only|limited to|restricted to)\b", text, re.I)
+    restrictive_scopes = {"all_except", "listed", "published_list", "not_specified"}
+    if scope in restrictive_scopes and unrestricted_text:
+        return _conflict("nationality", label,
+                         "the structured nationality scope is not unrestricted but the wording says all nationalities",
+                         text)
+    if scope == "not_specified" and from_text and from_text["status"] in (SATISFIED, NOT_SATISFIED):
+        return _conflict("nationality", label,
+                         "the structured nationality scope is unspecified but the wording states a specific rule",
+                         from_text["source_text"])
+    if scope == "all" and re.search(r"\b(except|excluding|only|limited to|restricted to)\b", text, re.I):
+        return _conflict("nationality", label,
+                         "the structured nationality scope is unrestricted but the wording states a restriction",
+                         text)
     country = _norm_country(nationality)
     if not country:
         return from_text or _req("nationality", label, MISSING, "Add your country of citizenship to your profile to check this.")
@@ -247,6 +373,14 @@ def _nationality_from_text(scholarship, nationality: Optional[str]):
     pakistan_text = (scholarship.pakistan_eligible or "").strip()
     if not text and not pakistan_text:
         return None
+    if _explicit_no_requirement(
+        text,
+        NO_NATIONALITY_RESTRICTION,
+    ):
+        return None
+    if text and _is_unspecified(text):
+        return _req("nationality", label, NOT_EVALUATED,
+                    "The record doesn't state which nationalities are eligible; check the official country rules.", text)
     country = _norm_country(nationality)
     if not country:
         return _req("nationality", label, MISSING, "Add your country of citizenship to your profile to check this.",
@@ -299,46 +433,91 @@ def _nationality_from_text(scholarship, nationality: Optional[str]):
 
 
 def check_degree_level(scholarship, profile):
-    """The scholarship must be for Master's study, and the student must hold (or be completing) a Bachelor's."""
+    """Check the offered study level against the student's current or completed degree."""
     label = "Degree level"
-    target = scholarship.degree_level or ""
+    target = (getattr(scholarship, "degree_level", None) or "").strip()
     levels = getattr(scholarship, "eligible_degree_levels", None) or []
+    target_ranks = {_degree_rank(level) for level in levels}
+    target_ranks.discard(None)
+    legacy_rank = _degree_rank(target)
     if levels:
-        for_masters = any(re.search(r"master", level, re.I) for level in levels)
-        if target and for_masters != bool(re.search(r"master", target, re.I)):
+        if legacy_rank is not None and target_ranks and legacy_rank not in target_ranks:
             return _conflict("degree_level", label, "the structured degree levels and the original wording differ", target)
         target = target or ", ".join(levels)
-        if not for_masters:
-            return _req("degree_level", label, NOT_SATISFIED, f"This scholarship is for {target} study, not a Master's.", target)
-    if not target:
+    elif legacy_rank is not None:
+        target_ranks.add(legacy_rank)
+    if not target and not levels:
+        return _req("degree_level", label, NOT_EVALUATED,
+                    "The record doesn't state the scholarship's study level; check the official page.")
+    if not target_ranks:
+        return _req("degree_level", label, NOT_EVALUATED,
+                    f"The scholarship's study level ({target}) can't be mapped to a supported degree level; check it manually.",
+                    target or None)
+
+    required_text = (getattr(scholarship, "required_previous_degree", None) or "").strip()
+    if not required_text:
+        return _req("degree_level", label, NOT_EVALUATED,
+                    "The record doesn't state the required previous degree; check the official eligibility rules.", target)
+    if _explicit_no_requirement(
+        required_text,
+        NO_PREVIOUS_DEGREE,
+    ):
         return None
-    needed = _degree_rank(getattr(scholarship, "required_previous_degree", None)) or 1
+    required_rank = _degree_rank(required_text)
+    if required_text and required_rank is None:
+        return _req("degree_level", label, NOT_EVALUATED,
+                    f"The required previous degree ({required_text}) can't be compared automatically; check it manually.", target)
     current = _degree_rank(profile.degree_level) if profile else None
-    if current is not None and current < needed:
-        return _req("degree_level", label, NOT_SATISFIED,
-                    f"A {scholarship.required_previous_degree} degree is needed to apply.", target)
-    if not re.search(r"master", target, re.I):
-        return _req("degree_level", label, NOT_SATISFIED, f"This scholarship is for {target} study, not a Master's.", target)
     if current is None:
         return _req("degree_level", label, MISSING, "Add your current or completed degree to your profile.", target)
-    if current >= 1:
+
+    if required_rank is not None:
+        if current < required_rank:
+            return _req("degree_level", label, NOT_SATISFIED,
+                        f"A {required_text} degree is needed to apply; your profile shows {profile.degree_level}.", target)
         return _req("degree_level", label, SATISFIED,
-                    f"For Master's study; your {profile.degree_level} is the right level to apply.", target)
-    return _req("degree_level", label, NOT_SATISFIED, "A Bachelor's degree is needed to apply for a Master's.", target)
+                    f"Your {profile.degree_level} meets the stated previous-degree requirement ({required_text}).", target)
+
+    # Where the record omits a previous-degree rule, compare only the usual
+    # adjacent levels supported by the profile; bachelor's-entry requirements
+    # can't be checked because the profile does not store secondary education.
+    required_ranks = [rank - 1 for rank in target_ranks if rank > 1]
+    if required_ranks and current >= min(required_ranks):
+        return _req("degree_level", label, SATISFIED,
+                    f"Your {profile.degree_level} meets the previous-degree level for at least one offered study level.", target)
+    if required_ranks and current < min(required_ranks) and 1 not in target_ranks:
+        required_name = {1: "Bachelor's", 2: "Master's"}.get(min(required_ranks))
+        return _req("degree_level", label, NOT_SATISFIED,
+                    f"A {required_name} degree is needed for the offered study level; your profile shows {profile.degree_level}.", target)
+    return _req("degree_level", label, NOT_EVALUATED,
+                "The previous-degree requirement for this study level isn't available to check; verify it with the provider.", target)
 
 
 def check_bachelors_conditions(scholarship):
     """Extra conditions on the Bachelor's degree (relevance, length, class, graduation date)."""
     text = (scholarship.bachelors_requirement or "").strip()
-    if not text or NO_REQUIREMENT.match(text) or NOT_STATED.match(text):
+    if _is_unspecified(text):
+        return _req("bachelors_conditions", "Bachelor's degree conditions", NOT_EVALUATED,
+                    "The record doesn't state whether there are additional Bachelor's degree conditions.")
+    if _explicit_no_requirement(
+        text,
+        r"\bno\s+(?:additional\s+)?(?:bachelor'?s|undergraduate)\s+"
+        r"(?:degree\s+)?(?:requirements?|conditions?)\b|\bno\s+additional\s+conditions\b",
+    ):
         return None
     detail = re.sub(r"^yes(,\s*implicitly)?\s*-?\s*", "", text, flags=re.I).strip()
     generic = re.fullmatch(
         r"(a |the )?(completed |completion of a )?(first university degree|bachelor'?s( degree| programme| or equivalent)?|"
         r"undergraduate degree)?\s*(is |are )?(required|a condition)?( for (admission to )?(the )?master'?s?( admission| study|-level (applicants|award|scholarship))?)?\.?",
         detail, re.I)
-    if not detail or generic or re.fullmatch(r"(required for master'?s admission|as above)", detail, re.I):
-        return None
+    if not detail:
+        return _req("bachelors_conditions", "Bachelor's degree conditions", NOT_EVALUATED,
+                    "The record indicates a Bachelor's condition but doesn't describe it.", text)
+    if generic or re.fullmatch(r"(required for master'?s admission|as above)", detail, re.I):
+        admission = bool(re.search(r"\b(admission|admitted|entry requirement)", text, re.I))
+        return _req("bachelors_conditions", "Bachelor's degree conditions", NOT_EVALUATED,
+                    "The record refers to a Bachelor's condition without enough detail to verify it.", text,
+                    scope="admission" if admission else "scholarship")
     # "relevant bachelor's ... required for admission" is a program admission rule; dates, class or
     # length limits ("completed no earlier than 2024", "2:1") belong to the scholarship itself
     admission = bool(re.search(r"\b(admission|admitted|entry requirement)", text, re.I)) and not re.search(
@@ -348,56 +527,97 @@ def check_bachelors_conditions(scholarship):
                 scope="admission" if admission else "scholarship")
 
 
-def check_field(scholarship, field_of_study: Optional[str]):
+def check_field(scholarship, profile):
     label = "Field of study"
     text = (scholarship.eligible_fields or "").strip()
     scope = getattr(scholarship, "discipline_scope", None)
+    preferred_fields = [
+        item.strip() for item in (getattr(profile, "preferred_fields", None) or [])
+        if isinstance(item, str) and item.strip()
+    ] if profile else []
     limited = bool(FIELD_LIMIT.search(text))
-    if scope == "all" and not limited:
-        return _req("field", label, SATISFIED, "Open to all fields of study.", text or None)
+    no_field_rule = _explicit_no_requirement(text, NO_FIELD_RESTRICTION)
+    if no_field_rule:
+        if scope in ("listed", "restricted", "varies", "not_specified") or getattr(
+            scholarship, "eligible_disciplines", None
+        ):
+            return _conflict("field", label,
+                             "the structured field scope conflicts with the explicit no-restriction wording", text)
+        return None
+    states_all_fields = bool(re.match(r"\s*(?:(?:all|any)\b|open to (?:all|any)\b)", text, re.I))
+    if scope == "all":
+        if not text:
+            return _req("field", label, SATISFIED, "The structured record states that all fields qualify.")
+        if _is_unspecified(text):
+            return _req("field", label, NOT_EVALUATED,
+                        "The free-text field requirement is unspecified; verify it against the official page.", text)
+        if states_all_fields and not limited:
+            return _req("field", label, SATISFIED, "Open to all fields of study.", text)
+        if limited or not states_all_fields:
+            return _conflict("field", label,
+                             "the structured scope says all fields but the wording is restricted or unclear", text)
+    if scope in ("listed", "restricted", "varies", "not_specified") and states_all_fields and not limited:
+        return _conflict("field", label,
+                         "the structured field scope is restricted or unspecified but the wording says all fields", text)
     if scope == "not_specified":
         return _req("field", label, NOT_EVALUATED, "The record doesn't say which fields qualify; check the official page.", text or None)
     if scope in ("listed", "restricted"):
         disciplines = getattr(scholarship, "eligible_disciplines", None) or []
         named = ", ".join(disciplines)
-        if not field_of_study:
-            return _req("field", label, MISSING, "Add your field of study to your profile to check this.", text or named or None)
+        if not preferred_fields:
+            return _req("field", label, MISSING, "Add your preferred study field to your profile to check this.", text or named or None)
         # Field names aren't a shared vocabulary, so a field that isn't listed word for word is never a "no"
-        match = any(item.strip().lower() == field_of_study.strip().lower() for item in disciplines)
+        match = any(
+            listed.strip().lower() == preferred.strip().lower()
+            for preferred in preferred_fields for listed in disciplines
+            if isinstance(listed, str)
+        )
         if scope == "listed" and match and not limited:
-            return _req("field", label, SATISFIED, f"{field_of_study} is one of the listed fields.", text or named)
+            return _req("field", label, SATISFIED,
+                        f"{', '.join(preferred_fields)} includes one of the listed fields.", text or named)
         listed = f" Listed: {named}." if named else ""
         return _req("field", label, NOT_EVALUATED,
-                    f"Only certain fields or programmes qualify; check the list. Your field is {field_of_study}.{listed}", text or None)
+                    f"Only certain fields or programmes qualify; check whether {', '.join(preferred_fields)} is accepted.{listed}",
+                    text or None)
     if not text:
-        return None
+        return _req("field", label, NOT_EVALUATED,
+                    "The record doesn't state which fields of study qualify; check the official page.")
     if re.match(r"(all|any)\b", text, re.I) and not limited:
         return _req("field", label, SATISFIED, "Open to all fields of study.", text)
-    hint =f" Your field is {field_of_study}." if field_of_study else ""
+    hint = f" Your preferred fields are {', '.join(preferred_fields)}." if preferred_fields else ""
     return _req("field", label, NOT_EVALUATED,
                 f"Only certain fields or programmes qualify; check the list.{hint}", text)
 
 
-def _student_ratio(profile):
-    if not profile or profile.cgpa is None or profile.cgpa <= 0:
-        return None
-    return profile.cgpa / (profile.cgpa_scale or 4.0)
-
-
 def _stated_minimum(main: str):
-    """The lowest grade stated in the text: (share of the scale maximum, as shown), or (None, None)."""
-    fraction = re.findall(r"(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)", main)
+    """Return a stated minimum and its explicit scale; never infer grade equivalence."""
+    fraction = [
+        (float(value), float(scale))
+        for value, scale in re.findall(r"(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)", main)
+        if float(scale) > 0
+    ]
     percent = re.search(r"(\d{2,3})\s*%", main)
     cgpa = re.search(r"\b(?:cgpa|gpa)\b[^\d]{0,15}(\d(?:\.\d+)?)", main, re.I)
     if fraction:
-        # Several tiers ("5.0/7.0 for 15%; 6.0/7.0 for 30%"): eligibility starts at the lowest
-        value, scale = min(((float(v), float(s)) for v, s in fraction if float(s) > 0), key=lambda vs: vs[0] / vs[1])
-        return value / scale, f"{value:g}/{scale:g}"
+        scales = {scale for _, scale in fraction}
+        if len(scales) != 1:
+            return None, None, None
+        scale = next(iter(scales))
+        value = min(value for value, _ in fraction)
+        return value, scale, f"{value:g}/{scale:g}"
     if percent and re.search(r"(achievement|average|grade|marks)", main, re.I):
-        return int(percent.group(1)) / 100, f"{percent.group(1)}%"
-    if cgpa and float(cgpa.group(1)) <= 4:
-        return float(cgpa.group(1)) / 4.0, f"{cgpa.group(1)}/4.0"
-    return None, None
+        value = float(percent.group(1))
+        if value <= 100:
+            return value, 100.0, f"{value:g}%"
+    if cgpa:
+        value = float(cgpa.group(1))
+        following = main[cgpa.end():cgpa.end() + 40]
+        scale_match = re.match(r"\s*(?:out of|on a (?:scale of )?)\s*(\d+(?:\.\d+)?)", following, re.I)
+        if scale_match and float(scale_match.group(1)) > 0:
+            scale = float(scale_match.group(1))
+            return value, scale, f"{value:g}/{scale:g}"
+        return value, None, f"{value:g} (scale not stated)"
+    return None, None, None
 
 
 def _numeric_academic(scholarship, profile, text):
@@ -407,7 +627,7 @@ def _numeric_academic(scholarship, profile, text):
     percentage = getattr(scholarship, "min_percentage", None)
     if value is not None:
         scale = getattr(scholarship, "min_gpa_scale", None)
-        if not scale:
+        if not scale or scale <= 0:
             return _req("academic", label, NOT_EVALUATED,
                         f"The minimum of {value:g} has no grading scale on record; check it manually.", text)
         minimum, shown = value, f"{value:g}/{scale:g}"
@@ -417,10 +637,12 @@ def _numeric_academic(scholarship, profile, text):
         return _req("academic", label, NOT_EVALUATED, "The record gives no minimum to compare; check it manually.", text)
 
     if text:
-        stated, _ = _stated_minimum(_strip_brackets(text))
-        if HEDGED.search(_strip_brackets(text)) or stated is None or abs(stated - minimum / scale) > 1e-6:
+        stated, stated_scale, _ = _stated_minimum(_strip_brackets(text))
+        if (HEDGED.search(_strip_brackets(text)) or stated is None or stated_scale is None
+                or abs(stated_scale - scale) > 1e-9 or abs(stated - minimum) > 1e-6):
             return _conflict("academic", label, f"the structured minimum is {shown}", text)
-    if not profile or profile.cgpa is None or profile.cgpa <= 0 or not getattr(profile, "cgpa_scale", None):
+    profile_scale = getattr(profile, "cgpa_scale", None) if profile else None
+    if not profile or profile.cgpa is None or profile_scale is None or profile_scale <= 0:
         return _req("academic", label, MISSING, f"Add your CGPA and grading scale to your profile (minimum stated: {shown}).", text)
     yours = f"{profile.cgpa:g}/{profile.cgpa_scale:g}"
     if abs(profile.cgpa_scale - scale) > 1e-9:
@@ -429,7 +651,10 @@ def _numeric_academic(scholarship, profile, text):
                     "Check how the scholarship converts grades.", text)
     if profile.cgpa + 1e-9 < minimum:
         return _req("academic", label, NOT_SATISFIED, f"Your CGPA {yours} is below the stated minimum of {shown}.", text)
-    if HEALTH_TIER.search(text or "") and HEALTH_FIELD.search(profile.field_of_study or ""):
+    target_fields = _preferred_profile_fields(profile)
+    if HEALTH_TIER.search(text or "") and (
+        not target_fields or any(HEALTH_FIELD.search(field) for field in target_fields)
+    ):
         return _req("academic", label, NOT_EVALUATED,
                     f"Your CGPA {yours} meets {shown}, but a higher minimum applies to Health Sciences; check which applies.", text)
     return _req("academic", label, SATISFIED, f"Your CGPA {yours} meets the stated minimum of {shown}.", text)
@@ -456,7 +681,17 @@ def check_academic(scholarship, profile):
 def _academic_from_text(scholarship, profile):
     label = "Academic record"
     text = (scholarship.min_academic_requirement or "").strip()
-    if not text or NOT_STATED.match(text):
+    if _is_unspecified(text):
+        return _req("academic", label, NOT_EVALUATED,
+                    "The record doesn't state an academic minimum; check the official page.", text or None)
+    if _explicit_no_requirement(
+        text,
+        r"\bno\s+(?:(?:minimum|fixed)\s+)?(?:academic|cgpa|gpa|grade|score)\s+"
+        r"(?:requirement|minimum|threshold)s?\b|"
+        r"\bno\s+minimum\s+(?:academic|cgpa|gpa|grade|score)\b|"
+        r"\bno\s+(?:minimum\s+)?(?:cgpa|gpa|academic|grade|score)\s+(?:is\s+)?"
+        r"(?:required|necessary|needed)\b",
+    ):
         return None
     if DEFERS_TO_ADMISSION.search(text) and not re.search(r"\d", _strip_brackets(text)):
         return _req("academic", label, NOT_EVALUATED, "Set by the university you apply to; checked during admission.",
@@ -465,49 +700,99 @@ def _academic_from_text(scholarship, profile):
     if HEDGED.search(main):
         return _req("academic", label, NOT_EVALUATED, "The stated grade requirement is approximate; check it manually.", text)
 
-    minimum, shown = _stated_minimum(main)       # as a share of the scale maximum
+    minimum, scale, shown = _stated_minimum(main)
     if minimum is None:
         return _req("academic", label, NOT_EVALUATED,
                     "The grade requirement isn't a fixed number (e.g. rank or class); check it manually.", text)
 
-    ratio = _student_ratio(profile)
-    if ratio is None:
-        return _req("academic", label, MISSING, f"Add your CGPA to your profile (minimum stated: {shown}).", text)
-    yours = f"{profile.cgpa:g}/{(profile.cgpa_scale or 4.0):g}"
-    note = " Grades on different scales are compared proportionally; the official equivalence may differ."
-    if ratio + 1e-9 >= minimum:
-        if HEALTH_TIER.search(text) and HEALTH_FIELD.search(profile.field_of_study or ""):
+    if scale is None:
+        return _req("academic", label, NOT_EVALUATED,
+                    f"The minimum ({shown}) has no stated grading scale; check it manually.", text)
+    profile_scale = getattr(profile, "cgpa_scale", None) if profile else None
+    if not profile or profile.cgpa is None or profile_scale is None or profile_scale <= 0:
+        return _req("academic", label, MISSING,
+                    f"Add your CGPA and grading scale to your profile (minimum stated: {shown}).", text)
+    yours = f"{profile.cgpa:g}/{profile.cgpa_scale:g}"
+    if abs(profile_scale - scale) > 1e-9:
+        return _req("academic", label, NOT_EVALUATED,
+                    f"Your CGPA {yours} and the minimum of {shown} use different scales, and there's no fixed conversion. "
+                    "Check how the scholarship converts grades.", text)
+    target_fields = _preferred_profile_fields(profile)
+    if profile.cgpa + 1e-9 >= minimum:
+        if HEALTH_TIER.search(text) and (
+            not target_fields or any(HEALTH_FIELD.search(field) for field in target_fields)
+        ):
             return _req("academic", label, NOT_EVALUATED,
                         f"Your CGPA {yours} meets {shown}, but a higher minimum applies to Health Sciences; check which applies.", text)
-        return _req("academic", label, SATISFIED, f"Your CGPA {yours} meets the stated minimum of {shown}.{note}", text)
-    return _req("academic", label, NOT_SATISFIED, f"Your CGPA {yours} is below the stated minimum of {shown}.{note}", text)
+        return _req("academic", label, SATISFIED, f"Your CGPA {yours} meets the stated minimum of {shown}.", text)
+    return _req("academic", label, NOT_SATISFIED, f"Your CGPA {yours} is below the stated minimum of {shown}.", text)
+
+
+def _preferred_profile_fields(profile):
+    return [
+        item.strip() for item in (getattr(profile, "preferred_fields", None) or [])
+        if isinstance(item, str) and item.strip()
+    ] if profile else []
 
 
 def _english_test_rule(scholarship, profile, text):
     """english_requirement_type "test_required": compares the scores the profile holds with stated minimums."""
     label = "English language"
     scores = [("IELTS", getattr(profile, "ielts_score", None), getattr(scholarship, "min_ielts", None)),
-              ("TOEFL", getattr(profile, "toefl_score", None), getattr(scholarship, "min_toefl", None))]
+              ("TOEFL", getattr(profile, "toefl_score", None), getattr(scholarship, "min_toefl", None)),
+              ("Duolingo English Test", None, getattr(scholarship, "min_duolingo", None))]
+    language_test = getattr(profile, "language_test", None) or {}
+    if isinstance(language_test, dict):
+        test_type = language_test.get("test_type")
+        overall_score = language_test.get("overall_score")
+        if test_type and test_type != "No Test / Not Taken" and overall_score is not None:
+            name = ("TOEFL" if test_type == "TOEFL iBT" else
+                    "Duolingo English Test" if "duolingo" in test_type.lower() else test_type)
+            matching_score = next((index for index, item in enumerate(scores) if item[0].lower() == name.lower()), None)
+            if matching_score is not None:
+                scores[matching_score] = (name, overall_score, scores[matching_score][2])
+            else:
+                minimum = (
+                    getattr(scholarship, "min_ielts", None) if name == "IELTS"
+                    else getattr(scholarship, "min_toefl", None) if name == "TOEFL"
+                    else getattr(scholarship, "min_duolingo", None) if name == "Duolingo English Test"
+                    else None
+                )
+                scores.append((name, overall_score, minimum))
     held = [item for item in scores if item[1] is not None]
     accepted = [name.lower() for name in getattr(scholarship, "accepted_english_tests", None) or []]
     usable = [item for item in held if not accepted or any(item[0].lower() in name for name in accepted)]
+    ambiguous_toefl = [item for item in usable if item[0] == "TOEFL" and item[1] <= 6]
+    comparable = [item for item in usable if item[2] is not None and item not in ambiguous_toefl]
+    moi_recorded = isinstance(language_test, dict) and str(language_test.get("medium_of_instruction", "")).strip().lower() in {
+        "yes", "true", "1",
+    }
+    moi_mentioned = bool(re.search(r"\b(moi|medium of instruction)\b", text or "", re.I))
     if not held:
+        if moi_recorded and moi_mentioned:
+            return _req("english", label, NOT_EVALUATED,
+                        "Your profile indicates medium of instruction may apply, but an official exemption needs confirmation; it is not treated as a waiver.",
+                        text)
         minimums = [f"{name} {minimum:g}" for name, _, minimum in scores if minimum is not None]
         needed = f" ({' or '.join(minimums)} required)" if minimums else ""
         return _req("english", label, MISSING, f"Add an English test score to your profile{needed}.", text)
-    compared = [item for item in usable if item[2] is not None]
-    if not compared:
+    if not comparable:
+        if ambiguous_toefl:
+            return _req("english", label, NOT_EVALUATED,
+                        "Your TOEFL score may use the 1-6 scale, while the scholarship minimum has no recorded scale; check the official requirement.",
+                        text)
         return _req("english", label, NOT_EVALUATED,
                     "A test is required, but the record has no minimum for the test in your profile; check the official page.", text)
-    passed = next((item for item in compared if item[1] >= item[2]), None)
+    passed = next((item for item in comparable if item[1] >= item[2]), None)
     if passed:
         name, score, minimum = passed
-        if re.search(r"\bband\b", text or "", re.I):
+        if re.search(r"\b(band|section|listening|reading|writing|speaking)\b", text or "", re.I):
             return _req("english", label, NOT_EVALUATED,
-                        f"Your {name} {score:g} meets the overall minimum of {minimum:g}, but band scores also count; check them.", text)
+                        f"Your {name} {score:g} meets the overall minimum of {minimum:g}, but section scores may also count; check them.", text)
         return _req("english", label, SATISFIED, f"Your {name} {score:g} meets the minimum of {minimum:g}.", text)
-    name, score, minimum = compared[0]
-    if len(compared) < len(held) or re.search(r"\bexempt", text or "", re.I):
+    name, score, minimum = comparable[0]
+    if (len(comparable) < len(held) or ambiguous_toefl or moi_recorded and moi_mentioned
+            or re.search(r"\b(exempt|waiv)", text or "", re.I)):
         return _req("english", label, NOT_EVALUATED,
                     f"Your {name} {score:g} is below {minimum:g}, but another test or an exemption may count; check the official page.", text)
     return _req("english", label, NOT_SATISFIED, f"Your {name} {score:g} is below the minimum of {minimum:g}.", text)
@@ -529,10 +814,23 @@ def check_english(scholarship, profile):
     if kind == "test_required":
         return _english_test_rule(scholarship, profile, text)
     if kind == "not_required":
+        if from_text and _is_unspecified(text):
+            if text:
+                return _conflict("english", label,
+                                 "the structured data says no test is needed but the wording is unspecified", text)
+            return None
         if from_text:
             return _conflict("english", label, "the structured data says no test is needed, but the wording states a requirement", text)
         return None
     if kind == "not_specified":
+        if _explicit_no_requirement(
+            text,
+            r"\bno\s+(?:ielts|english(?:\s+language)?|language)\s+"
+            r"(?:(?:test|proficiency)\s+)?(?:requirement|test|required|necessary|needed)\b|"
+            r"\b(?:ielts|english(?:\s+language)?|language)\s+(?:test\s+)?"
+            r"(?:is\s+)?not\s+(?:required|necessary|needed)\b",
+        ):
+            return _conflict("english", label, "the structured data says unspecified but the wording says no test is needed", text)
         return _req("english", label, NOT_EVALUATED,
                     "The record doesn't state an English requirement. That doesn't mean no test is needed, so check the official page.", text)
     return from_text or _req("english", label, NOT_EVALUATED, "Set by the university you apply to; checked during admission.",
@@ -542,25 +840,51 @@ def check_english(scholarship, profile):
 def _english_from_text(scholarship, profile):
     label = "English language"
     text = (scholarship.english_requirement or "").strip()
-    if not text or NOT_STATED.match(text) or NO_REQUIREMENT.match(text):
+    if _is_unspecified(text):
+        return _req("english", label, NOT_EVALUATED,
+                    "The record doesn't state an English requirement; check the official page.", text or None)
+    if _explicit_no_requirement(
+        text,
+        r"\bno\s+(?:ielts|english(?:\s+language)?|language)\s+"
+        r"(?:(?:test|proficiency)\s+)?(?:requirement|test|required|necessary|needed)\b|"
+        r"\bno\s+(?:english\s+)?test\s+(?:is\s+)?(?:required|necessary|needed)\b|"
+        r"\b(?:ielts|english(?:\s+language)?|language(?:\s+test)?)\s+"
+        r"(?:test\s+)?(?:is\s+)?not\s+(?:required|necessary|needed)\b",
+    ):
         return None
     main = _strip_brackets(text)
+    language_test = getattr(profile, "language_test", None) or {}
+    nested_type = language_test.get("test_type") if isinstance(language_test, dict) else None
+    nested_score = language_test.get("overall_score") if isinstance(language_test, dict) else None
+    ielts_score = getattr(profile, "ielts_score", None)
+    toefl_score = getattr(profile, "toefl_score", None)
+    if nested_score is not None:
+        if nested_type == "IELTS" and ielts_score is None:
+            ielts_score = nested_score
+        elif nested_type == "TOEFL iBT" and toefl_score is None:
+            toefl_score = nested_score
     ielts = re.search(r"\bIELTS\b[^\d]{0,20}(\d(?:\.\d)?)", main, re.I)
     if ielts:
         minimum = float(ielts.group(1))
-        if profile and profile.ielts_score is not None:
-            if profile.ielts_score >= minimum:
-                return _req("english", label, SATISFIED, f"Your IELTS {profile.ielts_score:g} meets the minimum of {minimum:g}.", text)
-            return _req("english", label, NOT_SATISFIED, f"Your IELTS {profile.ielts_score:g} is below the minimum of {minimum:g}.", text)
-        if profile and profile.toefl_score is not None:
+        if ielts_score is not None:
+            if ielts_score >= minimum:
+                return _req("english", label, SATISFIED, f"Your IELTS {ielts_score:g} meets the minimum of {minimum:g}.", text)
+            return _req("english", label, NOT_SATISFIED, f"Your IELTS {ielts_score:g} is below the minimum of {minimum:g}.", text)
+        if toefl_score is not None:
             return _req("english", label, NOT_EVALUATED,
                         f"The record gives IELTS {minimum:g} or an equivalent; compare your TOEFL score on the official page.", text)
+        if nested_score is not None and nested_type not in (None, "No Test / Not Taken"):
+            return _req("english", label, NOT_EVALUATED,
+                        f"Your {nested_type} score cannot be compared directly with IELTS {minimum:g}; check the official equivalency.", text)
         return _req("english", label, MISSING, f"Add an English test score to your profile (IELTS {minimum:g} required).", text)
-    if DEFERS_TO_ADMISSION.search(text) or re.match(r"yes\b", text, re.I) or re.search(r"required", text, re.I):
+    if DEFERS_TO_ADMISSION.search(text):
         return _req("english", label, NOT_EVALUATED, "Set by the university you apply to; checked during admission.",
                     text, scope="admission")
+    if re.match(r"yes\b", text, re.I) or re.search(r"required", text, re.I):
+        return _req("english", label, NOT_EVALUATED,
+                    "The record states an English requirement but doesn't provide enough detail to check it.", text)
     return _req("english", label, NOT_EVALUATED, "The English requirement can't be checked automatically.", text,
-                scope="admission")
+                scope="scholarship")
 
 
 def _age_on(birth: date, on: date) -> int:
@@ -585,16 +909,26 @@ def check_age(scholarship, profile, today: date):
     min_age = getattr(scholarship, "min_age", None)
     max_age = getattr(scholarship, "max_age", None)
     text = (scholarship.age_requirement or "").strip() or None
-    if from_text and from_text["status"] == NOT_EVALUATED:
+    no_age_rule = _explicit_no_requirement(
+        text,
+        r"\bno\s+age\s+(?:limit|restriction|requirement)\b|"
+        r"\bage\s+(?:limit|restriction|requirement)\s+(?:is\s+)?not\s+(?:required|restricted|limited)\b",
+    )
+    if no_age_rule and (min_age is not None or max_age is not None):
+        return _conflict("age", label, "the structured age limit conflicts with the explicit no-age-restriction wording", text)
+    if no_age_rule:
+        return None
+    if from_text and from_text["status"] == NOT_EVALUATED and text:
         return from_text
-    if from_text:
+    if from_text and text:
         kind, limit, _ = _stated_age_rule(_strip_brackets(text))
         stated = (limit, None) if kind == "min" else (None, limit - 1 if kind == "max_exclusive" else limit)
         if stated != (min_age, max_age):
             return _conflict("age", label, "the structured age limit doesn't match the original wording", text)
         return from_text
     if min_age is None and max_age is None:
-        return None
+        return _req("age", label, NOT_EVALUATED,
+                    "The record doesn't state whether there is an age restriction; check the official page.", text)
     shown = " and ".join(filter(None, [f"{min_age} or older" if min_age is not None else None,
                                        f"{max_age} or younger" if max_age is not None else None]))
     if not profile or not profile.date_of_birth:
@@ -608,11 +942,19 @@ def check_age(scholarship, profile, today: date):
 def _age_from_text(scholarship, profile, today: date):
     label = "Age"
     text = (scholarship.age_requirement or "").strip()
-    if not text or NOT_STATED.match(text) or NO_REQUIREMENT.match(text):
+    if _is_unspecified(text):
+        return _req("age", label, NOT_EVALUATED,
+                    "The record doesn't state whether there is an age restriction; check the official page.", text or None)
+    if _explicit_no_requirement(
+        text,
+        r"\bno\s+age\s+(?:limit|restriction|requirement)\b|"
+        r"\bage\s+(?:limit|restriction|requirement)\s+(?:is\s+)?not\s+(?:required|restricted|limited)\b",
+    ):
         return None
     main = _strip_brackets(text)
     if re.search(r"only bachelor'?s|not specified for master", main, re.I):
-        return None
+        return _req("age", label, NOT_EVALUATED,
+                    "The age wording appears degree-specific or incomplete; check which rule applies.", text)
     rule = _stated_age_rule(main)
     if rule is None:
         return _req("age", label, NOT_EVALUATED, "An age rule applies but isn't stated precisely; check the call.", text)
@@ -629,7 +971,15 @@ def _age_from_text(scholarship, profile, today: date):
 
 def check_work_experience(scholarship):
     text = (scholarship.work_experience or "").strip()
-    if not text or NOT_STATED.match(text) or NO_REQUIREMENT.match(text) or re.search(r"not (specified|required|a general)", text, re.I):
+    if _is_unspecified(text):
+        return _req("work_experience", "Work experience", NOT_EVALUATED,
+                    "The record doesn't state whether work experience is required; check the official page.", text or None)
+    if _explicit_no_requirement(
+        text,
+        r"\bno\s+(?:(?:relevant|prior|professional)\s+)?work\s+experience\s+"
+        r"(?:is\s+)?(?:required|necessary|needed)\b|"
+        r"\bwork\s+experience\s+(?:is\s+)?not\s+(?:required|necessary|needed)\b",
+    ):
         return None
     return _req("work_experience", "Work experience", NOT_EVALUATED,
                 "Your FitScholars profile doesn't record work experience; check this manually.", text)
@@ -641,12 +991,18 @@ def _sentences(text: Optional[str]):
 
 def check_stated_restrictions(scholarship):
     """Conditions stated in free text that the profile can't confirm, quoted as the record gives them."""
+    notes = getattr(scholarship, "notes", None)
     found = [part for part in _sentences(scholarship.eligible_nationalities) if PERSONAL_CONDITION.search(part)]
-    found += [part for part in _sentences(getattr(scholarship, "notes", None)) if STATED_RESTRICTION.search(part)]
+    found += [part for part in _sentences(notes)
+              if STATED_RESTRICTION.search(part) and not NO_CONDITION_DECLARATION.match(part)]
     tags = [tag for tag in getattr(scholarship, "applicant_restrictions", None) or [] if tag in RESTRICTION_LABELS
             and not (tag == "residency_required" and getattr(scholarship, "residency_requirement", None))]
     if not found and not tags:
-        return None
+        if _has_no_additional_conditions(notes):
+            return None
+        return _req("restrictions", "Other stated conditions", NOT_EVALUATED,
+                    "The record doesn't confirm whether additional applicant restrictions apply; check the official page.",
+                    notes)
     reason = "The record states conditions your profile can't confirm; check whether they apply to you."
     if tags:
         reason += " They include: " + "; ".join(RESTRICTION_LABELS[tag] for tag in tags) + "."
@@ -656,17 +1012,44 @@ def check_stated_restrictions(scholarship):
 
 
 def check_gender(scholarship):
-    if not getattr(scholarship, "gender_restriction", None):
+    restriction = getattr(scholarship, "gender_restriction", None)
+    notes = getattr(scholarship, "notes", None)
+    no_gender_rule = _explicit_no_requirement(
+        notes,
+        r"\bno\s+gender\s+(?:restriction|requirement)s?\b|"
+        r"\b(?:gender|sex)\s+(?:is\s+)?not\s+(?:restricted|a\s+requirement)\b",
+    )
+    if restriction and no_gender_rule:
+        return _conflict("gender", "Gender", "the structured restriction conflicts with the explicit no-restriction wording", notes)
+    if no_gender_rule:
         return None
+    if (
+        not restriction
+        and _has_no_additional_conditions(notes)
+        and check_stated_restrictions(scholarship) is None
+    ):
+        return None
+    if not restriction:
+        return _req("gender", "Gender", NOT_EVALUATED,
+                    "The record doesn't state whether a gender restriction applies; check the official page.", notes)
     return _req("gender", "Gender", NOT_EVALUATED,
-                "This scholarship is for women only. Your FitScholars profile doesn't record gender, so confirm this yourself.",
-                scholarship.eligible_nationalities)
+                "This scholarship has a gender restriction that can't be checked from your profile; confirm it yourself.",
+                notes or scholarship.eligible_nationalities)
 
 
 def check_residency(scholarship):
     text = getattr(scholarship, "residency_requirement", None)
-    if not text:
+    notes = getattr(scholarship, "notes", None)
+    no_residency_rule = _explicit_no_requirement(
+        text or notes,
+        r"\bno\s+(?:residency|residence|residential)\s+(?:requirement|restriction|condition)s?\b|"
+        r"\b(?:residency|residence)\s+(?:is\s+)?not\s+(?:required|restricted)\b",
+    )
+    if no_residency_rule:
         return None
+    if _is_unspecified(text):
+        return _req("residency", "Residency", NOT_EVALUATED,
+                    "The record doesn't state whether a residency condition applies; check the official page.", notes)
     return _req("residency", "Residency", NOT_EVALUATED,
                 "Your FitScholars profile doesn't record where you live, so check this yourself.", text)
 
@@ -681,14 +1064,14 @@ def check_record_review(scholarship):
                 "This record's details are being reviewed, so check them on the official page.", conflict=True)
 
 
-def check_source_evidence(scholarship):
-    """A record partly resting on secondary sources can't give a firm "eligible"."""
-    basis = getattr(scholarship, "verification_basis", None)
-    if scholarship.verification_status != "verified" or basis in (None, "official_source"):
+def check_source_evidence(scholarship, today=None):
+    """Only records with current official evidence can produce a firm eligibility result."""
+    issue = scholarship_source_issue(scholarship, today)
+    if not issue:
         return None
     return _req("source_evidence", "Source of these details", NOT_EVALUATED,
-                "Some details on this record come from secondary sources; confirm them on the official page.",
-                getattr(scholarship, "verification_notes", None))
+                f"{issue} Confirm the current details on the official page.",
+                getattr(scholarship, "official_info_url", None))
 
 
 # ---------------------------------------------------------------------------
@@ -773,7 +1156,7 @@ def evaluate_scholarship(scholarship, profile, today: Optional[date] = None) -> 
         check_nationality(scholarship, nationality),
         check_degree_level(scholarship, profile),
         check_bachelors_conditions(scholarship),
-        check_field(scholarship, profile.field_of_study if profile else None),
+        check_field(scholarship, profile),
         check_academic(scholarship, profile),
         check_english(scholarship, profile),
         check_age(scholarship, profile, today),
@@ -781,25 +1164,33 @@ def evaluate_scholarship(scholarship, profile, today: Optional[date] = None) -> 
         check_gender(scholarship),
         check_residency(scholarship),
         check_stated_restrictions(scholarship),
-        check_source_evidence(scholarship),
+        check_source_evidence(scholarship, today),
         check_record_review(scholarship),
     ]
     requirements = [item for item in checks if item]
     statuses = {item["requirement"]: item["status"] for item in requirements}
-    verified = scholarship.verification_status == "verified"
+    nationality_resolved = statuses.get("nationality") == SATISFIED or (
+        "nationality" not in statuses and _nationality_is_non_applicable(scholarship)
+    )
+    degree_level_resolved = statuses.get("degree_level") == SATISFIED or (
+        "degree_level" not in statuses and _previous_degree_is_non_applicable(scholarship)
+    )
+    verified = scholarship.verification_status == "verified" and not any(
+        item["requirement"] == "source_evidence" for item in requirements
+    )
     blocking_manual = [item for item in requirements if item["status"] == NOT_EVALUATED and item["scope"] == "scholarship"]
     notes = ["Meeting the stated requirements does not mean you will be selected or receive funding."]
 
     if not verified:
         status = NOT_EVALUATED
-        summary = "This scholarship record has not been verified against its official source, so no result is given."
+        summary = "This scholarship has not been verified using current official evidence, or its evidence needs review, so no result is given."
     elif any(item["status"] == NOT_SATISFIED for item in requirements):
         status = NOT_ELIGIBLE
         summary = "You don't meet at least one stated requirement."
     elif any(item["status"] == MISSING for item in requirements):
         status = MISSING
         summary = "Some information needed for this scholarship is missing from your profile."
-    elif statuses.get("nationality") == SATISFIED and statuses.get("degree_level") == SATISFIED and not blocking_manual:
+    elif nationality_resolved and degree_level_resolved and not blocking_manual:
         status = ELIGIBLE
         summary = "You meet the requirements this scholarship states."
         if any(item["scope"] == "admission" for item in requirements):

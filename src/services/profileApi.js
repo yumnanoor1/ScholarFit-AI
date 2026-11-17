@@ -1,10 +1,11 @@
-import { EMPTY_PROFILE } from '../data/profileModel';
+import { EMPTY_PROFILE, mergeProfile } from '../data/profileModel';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const GENERIC_SERVER_ERROR = 'Something went wrong on our side. Please try again.';
 
 function extractErrorMessage(data, fallback = 'Request failed') {
   if (!data) return fallback;
-  if (typeof data.detail === 'string') return data.detail;
+  if (typeof data.detail === 'string') return data.detail === GENERIC_SERVER_ERROR ? fallback : data.detail;
   if (Array.isArray(data.detail) && data.detail.length > 0) {
     const first = data.detail[0];
     return first?.msg || fallback;
@@ -84,7 +85,7 @@ export async function createProfileApi(token, payload) {
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const errorMsg = extractErrorMessage(data, 'Failed to create profile');
+    const errorMsg = extractErrorMessage(data, 'Your profile could not be saved. Your information is still available in this form. Please try again.');
     const error = new Error(errorMsg);
     error.status = response.status;
     throw error;
@@ -109,7 +110,7 @@ export async function updateProfileApi(token, payload) {
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const errorMsg = extractErrorMessage(data, 'Failed to update profile');
+    const errorMsg = extractErrorMessage(data, 'Your profile changes could not be saved. Your information is still available in this form. Please try again.');
     const error = new Error(errorMsg);
     error.status = response.status;
     throw error;
@@ -122,126 +123,119 @@ export async function updateProfileApi(token, payload) {
  * Maps the frontend multi-step form data into the backend StudentProfile schema
  */
 export function mapFrontendToBackendProfile(data, fallback = {}) {
-  const academic = data.academicBackground || fallback.academicBackground || {};
-  const english = data.englishProficiency || fallback.englishProficiency || {};
-  const preferences = data.studyPreferences || fallback.studyPreferences || {};
-  const personal = data.personalInfo || fallback.personalInfo || {};
+  const section = (name) => ({
+    ...(fallback[name] || {}),
+    ...(data[name] || {}),
+  });
+  const academic = section('academicBackground');
+  const english = section('englishProficiency');
+  const preferences = section('studyPreferences');
+  const personal = section('personalInfo');
+  const numberOrNull = (value, label) => {
+    if (value === '' || value === null || value === undefined) return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error(`${label} must be a valid non-negative number.`);
+    }
+    return parsed;
+  };
+  const list = (value) => (Array.isArray(value) ? value : [])
+    .map((item) => typeof item === 'string' ? item.trim() : '')
+    .filter((item, index, values) => item && values.indexOf(item) === index);
+  const stripFiles = (value) => {
+    if (typeof File !== 'undefined' && value instanceof File) return undefined;
+    if (Array.isArray(value)) return value.map(stripFiles).filter((item) => item !== undefined);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value)
+        .map(([key, item]) => [key, stripFiles(item)])
+        .filter(([, item]) => item !== undefined));
+    }
+    return value;
+  };
 
-  // 1. degree_level (Required by backend ProfileCreate)
-  const degreeLevel = academic.currentDegree || academic.degreeTitle || fallback.degreeLevel || "Bachelor's";
+  const degreeLevel = academic.currentDegree || academic.degreeTitle || fallback.degree_level || fallback.degreeLevel || null;
+  const fieldOfStudy = academic.major || academic.degreeTitle || fallback.field_of_study || null;
+  const scaleValue = academic.gradingScale === 'Other' ? academic.customGradingScale : academic.gradingScale;
+  const cgpa = numberOrNull(academic.cgpa ?? fallback.cgpa, 'CGPA');
+  const cgpaScale = numberOrNull(scaleValue ?? fallback.cgpa_scale, 'CGPA scale');
+  const countries = list(preferences.countries).filter((country) => country !== 'Other');
+  if (preferences.otherCountry?.trim()) countries.push(preferences.otherCountry.trim());
 
-  // 2. field_of_study (Required by backend ProfileCreate)
-  // The chosen fields come first: major is filled from this column on load, so it would hide every later edit
-  const chosenFields = Array.isArray(preferences.fields) ? preferences.fields.filter((f) => f !== 'Other') : [];
-  let fieldOfStudy = [...chosenFields, ...(preferences.customField ? [preferences.customField] : [])].join(', ');
-  if (!fieldOfStudy) {
-    fieldOfStudy = academic.major || fallback.fieldOfInterest || fallback.field_of_study || 'General';
+  const currency = String(preferences.currency || 'USD').trim().toUpperCase();
+  const tuitionAmount = numberOrNull(preferences.maxTuitionBudget, 'Annual tuition budget');
+  const livingAmount = numberOrNull(preferences.maxLivingCostBudget, 'Monthly living budget');
+  const testType = english.testType || null;
+  const hasEnglishTest = testType !== null && testType !== 'No Test / Not Taken';
+  const languageTest = {
+    test_type: testType,
+    other_test_name: english.otherTestName?.trim() || null,
+    overall_score: hasEnglishTest ? numberOrNull(english.overallScore, 'English test score') : null,
+    listening: hasEnglishTest ? numberOrNull(english.listening, 'English listening score') : null,
+    reading: hasEnglishTest ? numberOrNull(english.reading, 'English reading score') : null,
+    writing: hasEnglishTest ? numberOrNull(english.writing, 'English writing score') : null,
+    speaking: hasEnglishTest ? numberOrNull(english.speaking, 'English speaking score') : null,
+    test_date: english.testDate || null,
+    test_status: english.testStatus || null,
+    willing_to_test: english.willingToTest || null,
+    medium_of_instruction: english.mediumOfInstruction || null,
+  };
+  const savedDetails = {
+    personalInfo: personal,
+    academicBackground: academic,
+    englishProficiency: english,
+    studyPreferences: preferences,
+    documentAvailability: data.documentAvailability || fallback.documentAvailability || {},
+  };
+  const formDetails = stripFiles(savedDetails);
+  const legacyBudget = currency === 'USD' ? tuitionAmount : null;
+  const preferredFields = list(preferences.fields)
+    .filter((field) => field !== 'Other');
+  if (preferences.customField?.trim() && !preferredFields.includes(preferences.customField.trim())) {
+    preferredFields.push(preferences.customField.trim());
   }
-
-  // 3. cgpa & cgpa_scale (Required by backend ProfileCreate)
-  const chosenScale = academic.gradingScale === 'Other' ? academic.customGradingScale : academic.gradingScale;
-  let rawScale = chosenScale ? Number.parseFloat(chosenScale) : null;
-  if (rawScale === null || !Number.isFinite(rawScale) || rawScale <= 0) {
-    rawScale = fallback.cgpa_scale ? Number.parseFloat(fallback.cgpa_scale) : 4.0;
-  }
-  if (!rawScale || rawScale <= 0) rawScale = 4.0;
-
-  let rawCgpa = academic.cgpa !== undefined && academic.cgpa !== '' && academic.cgpa !== null
-    ? Number.parseFloat(academic.cgpa)
-    : null;
-  if (rawCgpa === null || !Number.isFinite(rawCgpa)) {
-    rawCgpa = fallback.cgpa ? Number.parseFloat(fallback.cgpa) : 0.0;
-  }
-
-  // Ensure CGPA is within [0, scale] to prevent backend 400 error
-  if (rawCgpa > rawScale) {
-    rawCgpa = rawScale;
-  }
-  if (rawCgpa < 0) {
-    rawCgpa = 0.0;
-  }
-
-  // 4. English language scores
-  const testType = english.testType || fallback.englishTest || '';
-  const scoreStr = english.overallScore || fallback.englishScore || '';
-  let ieltsScore = null;
-  let toeflScore = null;
-
-  if (/ielts/i.test(testType)) {
-    const parsed = Number.parseFloat(scoreStr);
-    if (Number.isFinite(parsed) && parsed >= 0) ieltsScore = parsed;
-  } else if (/toefl/i.test(testType)) {
-    const parsed = Number.parseInt(scoreStr, 10);
-    if (Number.isFinite(parsed) && parsed >= 0) toeflScore = parsed;
-  }
-
-  // 5. skills (comma-separated string)
-  const skillsList = [academic.technicalSkills, academic.programmingLanguages].filter(Boolean);
-  // A submitted form has the last word, so an optional field can be cleared
-  const submittedAcademic = Boolean(data.academicBackground);
-  let skills = skillsList.length > 0 || submittedAcademic
-    ? skillsList.join(', ')
-    : (Array.isArray(fallback.skills) ? fallback.skills.join(', ') : fallback.skills || null);
-
-  // 6. research_interests (string)
-  const researchInterests = academic.projects
-    || (submittedAcademic ? null : fallback.researchExperience || fallback.research_interests)
-    || null;
-
-  // 7. preferred_countries (comma-separated string)
-  let countriesList = [];
-  if (Array.isArray(preferences.countries)) {
-    countriesList = [
-      ...preferences.countries.filter((c) => c !== 'Other'),
-      ...(preferences.otherCountry ? [preferences.otherCountry] : [])
-    ];
-  } else if (typeof preferences.countries === 'string' && preferences.countries) {
-    countriesList = preferences.countries.split(',').map((c) => c.trim()).filter(Boolean);
-  } else if (Array.isArray(fallback.preferredCountries)) {
-    countriesList = fallback.preferredCountries;
-  }
-  const preferredCountries = countriesList.length > 0 ? countriesList.join(',') : null;
-
-  // 8. budget_usd (Float)
-  let budgetUsd = null;
-  if (preferences.maxTuitionBudget) {
-    const parsed = Number.parseFloat(preferences.maxTuitionBudget.toString().replace(/[^\d.]/g, ''));
-    if (Number.isFinite(parsed) && parsed >= 0) budgetUsd = parsed;
-  } else if (fallback.approximateBudget) {
-    const parsed = Number.parseFloat(fallback.approximateBudget.toString().replace(/[^\d.]/g, ''));
-    if (Number.isFinite(parsed) && parsed >= 0) budgetUsd = parsed;
+  const preferredDegreeLevels = list(preferences.preferredDegreeLevels);
+  if (!preferredDegreeLevels.length && preferences.intendedDegree) {
+    preferredDegreeLevels.push(preferences.intendedDegree);
   }
 
   return {
     degree_level: degreeLevel,
     field_of_study: fieldOfStudy,
-    cgpa: rawCgpa !== null ? rawCgpa : 0.0,
-    cgpa_scale: rawScale,
-    ielts_score: ieltsScore,
-    toefl_score: toeflScore,
-    skills: skills || null,
-    research_interests: researchInterests || null,
-    preferred_countries: preferredCountries || null,
-    budget_usd: budgetUsd,
-    // Used by scholarship eligibility (nationality and age limits)
-    nationality: (personal.citizenshipCountry || '').trim() || null,
-    date_of_birth: /^\d{4}-\d{2}-\d{2}$/.test(personal.dateOfBirth || '') ? personal.dateOfBirth : null,
-    // Used by profile improvement guidance
-    institution: (academic.institution || '').trim() || null,
+    cgpa,
+    cgpa_scale: cgpaScale,
+    ielts_score: hasEnglishTest && testType === 'IELTS' ? numberOrNull(english.overallScore, 'IELTS score') : null,
+    toefl_score: hasEnglishTest && testType === 'TOEFL iBT' ? numberOrNull(english.overallScore, 'TOEFL iBT score') : null,
+    skills: [academic.technicalSkills, academic.programmingLanguages].filter(Boolean).join(', ') || null,
+    research_interests: academic.projects || null,
+    preferred_countries: countries.join(', ') || null,
+    budget_usd: legacyBudget,
+    preferred_fields: preferredFields,
+    preferred_degree_levels: preferredDegreeLevels,
+    preferred_funding_types: list(preferences.fundingPreferences),
+    funding_preference: preferences.fundingPreference || null,
+    language_test: languageTest,
+    tuition_budget_amount: tuitionAmount,
+    tuition_budget_currency: tuitionAmount === null ? null : currency,
+    living_budget_amount: livingAmount,
+    living_budget_currency: livingAmount === null ? null : currency,
+    form_details: formDetails,
+    nationality: personal.citizenshipCountry?.trim() || null,
+    date_of_birth: personal.dateOfBirth || null,
+    institution: academic.institution?.trim() || null,
     academic_status: academic.academicStatus || null,
     graduation_date: (academic.academicStatus === 'graduated' ? academic.graduationDate : academic.expectedGraduationDate) || null,
-    work_experience: (academic.workExperience || '').trim() || null,
+    work_experience: academic.workExperience?.trim() || null,
   };
 }
 
 /**
- * Maps the backend StudentProfile response into the frontend StudentProfile structure,
- * merging with any cached client-side fields to preserve unsupported attributes.
+ * Maps persisted profile data into the frontend StudentProfile structure.
  */
-export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDraft = {}) {
-  const base = cachedDraft && cachedDraft.personalInfo
-    ? structuredClone(cachedDraft)
-    : structuredClone(EMPTY_PROFILE);
+export function mapBackendToFrontendProfile(backendProfile, user = {}) {
+  const storedDetails = backendProfile.form_details && typeof backendProfile.form_details === 'object'
+    ? backendProfile.form_details
+    : EMPTY_PROFILE;
+  const base = mergeProfile(storedDetails || EMPTY_PROFILE);
 
   const fullName = user.name || user.full_name || base.personalInfo.fullName || '';
   const email = user.email || base.personalInfo.email || '';
@@ -258,11 +252,11 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
   // 2. Academic Background (populated from backend)
   base.academicBackground = {
     ...base.academicBackground,
-    currentDegree: backendProfile.degree_level || base.academicBackground.currentDegree || "Bachelor's",
-    degreeTitle: base.academicBackground.degreeTitle || backendProfile.degree_level || "Bachelor's",
-    major: backendProfile.field_of_study || base.academicBackground.major || '',
+    currentDegree: backendProfile.degree_level || base.academicBackground.currentDegree || '',
+    degreeTitle: base.academicBackground.degreeTitle || backendProfile.degree_level || '',
+    major: backendProfile.field_of_study ?? base.academicBackground.major ?? '',
     cgpa: backendProfile.cgpa !== null && backendProfile.cgpa !== undefined ? String(backendProfile.cgpa) : base.academicBackground.cgpa,
-    gradingScale: backendProfile.cgpa_scale !== null && backendProfile.cgpa_scale !== undefined ? String(backendProfile.cgpa_scale) : (base.academicBackground.gradingScale || '4.00'),
+    gradingScale: backendProfile.cgpa_scale !== null && backendProfile.cgpa_scale !== undefined ? String(backendProfile.cgpa_scale) : (base.academicBackground.gradingScale || ''),
     technicalSkills: backendProfile.skills || base.academicBackground.technicalSkills || '',
     projects: backendProfile.research_interests || base.academicBackground.projects || '',
     institution: backendProfile.institution || base.academicBackground.institution || '',
@@ -274,38 +268,57 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     base.academicBackground[dateField] = backendProfile.graduation_date;
   }
 
-  // 3. English Proficiency (populated from backend test scores)
-  if (backendProfile.ielts_score !== null && backendProfile.ielts_score !== undefined) {
+  // 3. English Proficiency (the structured test record is authoritative; legacy totals remain readable)
+  const languageTest = backendProfile.language_test;
+  if (languageTest) {
     base.englishProficiency = {
       ...base.englishProficiency,
-      testType: 'IELTS',
-      overallScore: String(backendProfile.ielts_score),
+      testType: languageTest.test_type || '',
+      otherTestName: languageTest.other_test_name || '',
+      overallScore: languageTest.overall_score === null || languageTest.overall_score === undefined ? '' : String(languageTest.overall_score),
+      listening: languageTest.listening === null || languageTest.listening === undefined ? '' : String(languageTest.listening),
+      reading: languageTest.reading === null || languageTest.reading === undefined ? '' : String(languageTest.reading),
+      writing: languageTest.writing === null || languageTest.writing === undefined ? '' : String(languageTest.writing),
+      speaking: languageTest.speaking === null || languageTest.speaking === undefined ? '' : String(languageTest.speaking),
+      testDate: languageTest.test_date || '',
+      testStatus: languageTest.test_status || '',
+      willingToTest: languageTest.willing_to_test || '',
+      mediumOfInstruction: languageTest.medium_of_instruction || '',
     };
+  } else if (backendProfile.ielts_score !== null && backendProfile.ielts_score !== undefined) {
+    base.englishProficiency = { ...base.englishProficiency, testType: 'IELTS', overallScore: String(backendProfile.ielts_score) };
   } else if (backendProfile.toefl_score !== null && backendProfile.toefl_score !== undefined) {
-    base.englishProficiency = {
-      ...base.englishProficiency,
-      testType: 'TOEFL iBT',
-      overallScore: String(backendProfile.toefl_score),
-    };
+    base.englishProficiency = { ...base.englishProficiency, testType: 'TOEFL iBT', overallScore: String(backendProfile.toefl_score) };
   }
 
   // 4. Study Preferences (populated from backend)
-  const countriesArray = backendProfile.preferred_countries
+  const countriesArray = backendProfile.preferred_countries !== null && backendProfile.preferred_countries !== undefined
     ? backendProfile.preferred_countries.split(',').map((c) => c.trim()).filter(Boolean)
     : (base.studyPreferences.countries || []);
-
-  const fieldsArray = backendProfile.field_of_study
-    ? backendProfile.field_of_study.split(',').map((f) => f.trim()).filter(Boolean)
+  const fieldsArray = Array.isArray(backendProfile.preferred_fields)
+    ? backendProfile.preferred_fields
     : (base.studyPreferences.fields || []);
+  const tuitionBudget = backendProfile.tuition_budget_amount ?? backendProfile.budget_usd;
+  const tuitionCurrency = backendProfile.tuition_budget_currency
+    || (backendProfile.budget_usd !== null && backendProfile.budget_usd !== undefined ? 'USD' : null)
+    || backendProfile.living_budget_currency
+    || base.studyPreferences.currency;
 
   base.studyPreferences = {
     ...base.studyPreferences,
     fields: fieldsArray,
     countries: countriesArray,
-    maxTuitionBudget: backendProfile.budget_usd !== null && backendProfile.budget_usd !== undefined
-      ? String(backendProfile.budget_usd)
+    preferredDegreeLevels: backendProfile.preferred_degree_levels || base.studyPreferences.preferredDegreeLevels || [],
+    intendedDegree: backendProfile.preferred_degree_levels?.[0] || base.studyPreferences.intendedDegree || '',
+    fundingPreferences: backendProfile.preferred_funding_types || base.studyPreferences.fundingPreferences || [],
+    fundingPreference: backendProfile.funding_preference ?? base.studyPreferences.fundingPreference ?? '',
+    maxTuitionBudget: tuitionBudget !== null && tuitionBudget !== undefined
+      ? String(tuitionBudget)
       : base.studyPreferences.maxTuitionBudget,
-    currency: base.studyPreferences.currency || 'USD',
+    maxLivingCostBudget: backendProfile.living_budget_amount !== null && backendProfile.living_budget_amount !== undefined
+      ? String(backendProfile.living_budget_amount)
+      : base.studyPreferences.maxLivingCostBudget,
+    currency: tuitionCurrency || 'USD',
   };
 
   // 5. Top-level convenience properties used by Dashboard, matching, and header
@@ -327,11 +340,19 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     cgpa: backendProfile.cgpa !== null && backendProfile.cgpa !== undefined ? String(backendProfile.cgpa) : base.cgpa,
     englishTest: base.englishProficiency.testType || base.englishTest || 'IELTS',
     englishScore: base.englishProficiency.overallScore || base.englishScore || '',
-    fieldOfInterest: backendProfile.field_of_study || base.fieldOfInterest || '',
+    fieldOfInterest: fieldsArray.join(', ') || base.fieldOfInterest || '',
     skills: skillsList,
+    projects: base.academicBackground.projects
+      ? base.academicBackground.projects.split(',').map((project) => project.trim()).filter(Boolean)
+      : [],
+    researchExperience: base.academicBackground.projects || '',
     preferredCountries: countriesArray,
-    approximateBudget: backendProfile.budget_usd
-      ? `$${backendProfile.budget_usd.toLocaleString()} / year`
+    preferredDegree: backendProfile.preferred_degree_levels?.[0] || base.studyPreferences.intendedDegree || '',
+    fundingPreference: backendProfile.funding_preference ?? base.studyPreferences.fundingPreference ?? '',
+    fundingPreferences: backendProfile.preferred_funding_types || base.studyPreferences.fundingPreferences || [],
+    budget_usd: backendProfile.budget_usd,
+    approximateBudget: tuitionBudget !== null && tuitionBudget !== undefined
+      ? `${tuitionCurrency || 'USD'} ${Number(tuitionBudget).toLocaleString()} / year`
       : base.approximateBudget,
     // A stored row isn't a finished profile: the API's status decides that, in ProfileContext
     profileComplete: false,
@@ -340,4 +361,3 @@ export function mapBackendToFrontendProfile(backendProfile, user = {}, cachedDra
     hasBackendProfile: true,
   };
 }
-

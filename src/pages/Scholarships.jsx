@@ -1,22 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  Bookmark, Briefcase, Building2, ChevronRight, Info,
-} from 'lucide-react';
+import { Bookmark, Briefcase, Building2, ChevronRight, Info } from 'lucide-react';
 import { ComparisonSelectionBar, OpportunityCompareCheckbox } from '../components/opportunities/ComparisonControls';
 import EligibilityBadge from '../components/opportunities/EligibilityBadge';
 import ScholarshipFilters from '../components/opportunities/ScholarshipFilters';
-import { getCoverageNote, getEligibilityLabel, getEligibilityReason, getMatchTone, getScholarshipDeadlineLabel } from '../services/eligibilityBadges';
-import { fetchScholarshipProgramCoverage, getSelectedProgramId, mapScholarshipToFrontend } from '../services/opportunityApi';
+import { getEligibilityLabel, getEligibilityReason, getScholarshipDeadlineLabel } from '../services/eligibilityBadges';
+import { mapScholarshipToFrontend } from '../services/opportunityApi';
 import { EMPTY_FILTERS, PAGE_SIZE, buildSearchQuery, getPageCount } from '../services/scholarshipSearch';
 import MatchRing from '../components/opportunities/MatchRing';
 import { apiService } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
 import SavedStatusNotice from '../components/opportunities/SavedStatusNotice';
-import { useEligibilityProfileKey, useScholarshipEligibility } from '../hooks/useProgramEligibility';
-import { getScholarshipLogo } from '../services/programFit';
-import UniversityLogo from '../components/common/UniversityLogo';
+import { useEligibilityProfileKey, useScholarshipEligibility } from '../hooks/useScholarshipEligibility';
+import { getScholarshipLogo } from '../services/scholarshipLogos';
+import ScholarshipLogo from '../components/common/ScholarshipLogo';
 import './Universities.css';
 import './Scholarships.css';
 
@@ -60,15 +58,11 @@ export default function Scholarships() {
   const [searchText, setSearchText] = useState('');
   const [sort, setSort] = useState('');
   const [page, setPage] = useState(1);
-  const [programChoice, setProgramChoice] = useState(undefined);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [options, setOptions] = useState(null);
-  const [coverage, setCoverage] = useState({});
   const [result, setResult] = useState(null);
   const [retry, setRetry] = useState(0);
-  // Until the student chooses, the journey's active program applies
-  const programId = programChoice === undefined ? getSelectedProgramId(activeOpportunityId) : programChoice;
-  const query = buildSearchQuery(filters, { programId, sort, page });
+  const query = buildSearchQuery(filters, { sort, page });
   const requestKey = `${token || ''}|${query}|${profileKey}|${retry}`;
 
   // Any change to what's being asked for goes back to the first page
@@ -87,10 +81,6 @@ export default function Scholarships() {
     apiService.getScholarshipFilterOptions()
       .then((data) => { if (isCurrent) setOptions(data); })
       .catch((error) => console.warn('Filter options are unavailable.', error?.message));
-    // A small extra note, so the page works the same without it
-    fetchScholarshipProgramCoverage()
-      .then((rows) => { if (isCurrent) setCoverage(rows); })
-      .catch((error) => console.warn('Program coverage is unavailable.', error?.message));
     return () => { isCurrent = false; };
   }, []);
 
@@ -132,7 +122,6 @@ export default function Scholarships() {
 
   const clearAll = () => {
     setSearchText('');
-    setProgramChoice(null);
     changeFilters(EMPTY_FILTERS);
   };
 
@@ -145,8 +134,6 @@ export default function Scholarships() {
         filters={filters}
         onChange={(next) => { setSearchText(next.q); changeFilters(next); }}
         options={options}
-        programId={programId}
-        onProgramChange={(value) => { setProgramChoice(value); changeFilters({ ...filters, match: [] }); }}
         sort={sort}
         onSortChange={(value) => { setSort(value); setPage(1); }}
         total={loadError ? null : total}
@@ -186,7 +173,11 @@ export default function Scholarships() {
           </div>
         ) : visibleScholarships.length === 0 ? (
           <div className="university-message" role="status">
-            <p>No scholarships match this search. Try removing a filter or using fewer words.</p>
+            <p>
+              {total === 0 && options?.verification?.every((option) => option.value !== 'verified')
+                ? 'No verified scholarships are currently available.'
+                : 'No scholarships match this search. Try removing a filter or using fewer words.'}
+            </p>
             <button type="button" className="scholarships-clear" onClick={clearAll}>Clear all filters</button>
           </div>
         ) : (
@@ -220,7 +211,7 @@ export default function Scholarships() {
                   }}
                 >
                   <div className="program-row-main">
-                    <UniversityLogo
+                    <ScholarshipLogo
                       src={getScholarshipLogo(item)}
                       size={42}
                       bareFallback
@@ -232,11 +223,7 @@ export default function Scholarships() {
                       {item.fundingType && (
                         <span className="program-row-tags"><em className="is-scholarship">{item.fundingType}</em></span>
                       )}
-                      {getCoverageNote(coverage[item.id]) && <small>{getCoverageNote(coverage[item.id])}</small>}
-                      {item.program_match && (
-                        <small><span className={`program-status is-${getMatchTone(item.program_match.outcome)}`}>{item.program_match.label}</span></small>
-                      )}
-                      {item.verificationStatus === 'unverified' && <small>Unverified record</small>}
+                      <small>{item.verificationLabel}{item.lastVerified ? ` · last verified ${item.lastVerified}` : ''}</small>
                       {item.has_conflict && <small>Conflicting information on this record</small>}
                       {item.nationality_status === 'not_evaluated' && <small>Your citizenship needs a manual check</small>}
                       {item.matched_fields.length > 0 && <small>Found in: {item.matched_fields.join(', ')}</small>}

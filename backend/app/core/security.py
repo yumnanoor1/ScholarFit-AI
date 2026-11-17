@@ -8,9 +8,13 @@ import os
 import secrets
 from dotenv import load_dotenv
 
-from app.core.config import is_production
+from app.core.config import BACKEND_ENV_PATH, is_production
 
-load_dotenv()
+# backend/.env by absolute path, exactly as app.core.config loads it. A bare
+# load_dotenv() searches upward from the working directory, which from the
+# repository root finds the FRONTEND .env instead. That file is Vite's and is
+# never loaded here.
+load_dotenv(BACKEND_ENV_PATH)
 
 logger = logging.getLogger(__name__)
 

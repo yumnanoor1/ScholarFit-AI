@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ArrowDown, ArrowRight, FileText, GraduationCap, Upload, X } from 'lucide-react';
+import { ArrowDown, ArrowRight, FileText, Info, Upload, X } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
 import {
   aggregateRequiredDocuments,
@@ -58,7 +58,6 @@ export default function Documents() {
   const progressPercentage = requiredDocuments.length
     ? (uploadedCount / requiredDocuments.length) * 100
     : 0;
-
   const handleFile = (documentId, file) => {
     if (!file) return;
     const isPdf = file.type === 'application/pdf' || (!file.type && /\.pdf$/i.test(file.name));
@@ -99,11 +98,11 @@ export default function Documents() {
       <header className="documents-heading">
         <div>
           <h1 className="page-title">Documents</h1>
-          <p className="page-subtitle">Prepare the documents required by your selected opportunity. FitScholars does not submit applications.</p>
+          <p className="page-subtitle">Prepare the documents listed for your selected scholarship. FitScholar does not submit applications.</p>
         </div>
         {currentOpportunity && (
           <div className="documents-opportunity">
-            <GraduationCap size={16} aria-hidden="true" />
+            <FileText size={16} aria-hidden="true" />
             <strong>For:</strong>
             {opportunityOptions.length > 1 ? (
               <label>
@@ -149,7 +148,7 @@ export default function Documents() {
         )}
 
         {!currentOpportunity ? (
-          <p className="documents-empty">Select an opportunity to see its documented requirements.</p>
+          <p className="documents-empty">Select a scholarship to see its recorded document requirements.</p>
         ) : requiredDocuments.length ? (
           <>
             <ul className="document-list">
@@ -172,8 +171,8 @@ export default function Documents() {
                         <span className={`document-status document-status-${status}`}>{STATUS_LABELS[status]}</span>
                         {isRequiredForActive && <span className="document-required-chip">Required</span>}
                       </div>
-                      {item.sourceStatus === 'unverified-sample' && (
-                        <p className="document-item-note">Sample requirement · confirm with the official provider</p>
+                      {item.sourceStatus !== 'official-verified' && (
+                        <p className="document-item-note">Requirement source needs verification · confirm with the official provider</p>
                       )}
                       {record && (
                         <p className="document-record">
@@ -211,6 +210,7 @@ export default function Documents() {
                           type="button"
                           className="btn btn-danger"
                           onClick={() => removeDocumentRecord(item.id)}
+                          aria-label={`Remove ${record.fileName}`}
                         >
                           <X size={14} aria-hidden="true" /> Remove
                         </button>
@@ -230,10 +230,10 @@ export default function Documents() {
                 How to write a statement of purpose <ArrowRight size={14} aria-hidden="true" />
               </a>
             </aside>
-            <p className="documents-upload-note">This demo records file metadata only. Upload the actual files through each university or scholarship’s official application portal.</p>
+            <p className="documents-upload-note"><Info size={15} aria-hidden="true" /> Uploaded files are not read or verified; FitScholar stores file metadata only. Submit files through the official scholarship portal.</p>
           </>
         ) : (
-          <p className="documents-empty">No opportunity-specific document requirements are available. No generic checklist is being assumed.</p>
+          <p className="documents-empty">No opportunity-specific document requirements are recorded. Confirm the current checklist with the official provider.</p>
         )}
       </section>
     </div>

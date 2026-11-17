@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  compareByRank, getCategoryTone, getCoverageNote, getEligibilityReason, getExclusionLabel, getMatchTone, getScholarshipDeadlineLabel,
+  compareByRank, getCategoryTone, getEligibilityReason, getExclusionLabel, getScholarshipDeadlineLabel,
 } from './eligibilityBadges.js';
-import { getSelectedProgramId, mapScholarshipEligibilityToFrontend, selectRelevantMatches } from './opportunityApi.js';
+import { mapScholarshipEligibilityToFrontend } from './opportunityApi.js';
 
 test('only confirmed-eligible categories look positive', () => {
   assert.equal(getCategoryTone('strong'), 'success');
@@ -14,8 +14,8 @@ test('only confirmed-eligible categories look positive', () => {
 });
 
 test('ranked items come first and unranked ones keep their place', () => {
-  const items = [{ id: 'program' }, { id: 'b', rank: 2 }, { id: 'a', rank: 1 }];
-  assert.deepEqual([...items].sort(compareByRank).map((item) => item.id), ['a', 'b', 'program']);
+  const items = [{ id: 'unranked' }, { id: 'b', rank: 2 }, { id: 'a', rank: 1 }];
+  assert.deepEqual([...items].sort(compareByRank).map((item) => item.id), ['a', 'b', 'unranked']);
 });
 
 test('exclusions are named plainly', () => {
@@ -23,40 +23,10 @@ test('exclusions are named plainly', () => {
   assert.equal(getExclusionLabel(null), '');
 });
 
-test('only a backend program counts as the selected program', () => {
-  assert.equal(getSelectedProgramId('11'), 11);
-  assert.equal(getSelectedProgramId('sch-db-11'), null);
-  assert.equal(getSelectedProgramId(''), null);
-  assert.equal(getSelectedProgramId(null), null);
-});
-
 test('My Matches states that a score is not a probability', () => {
   const source = readFileSync(new URL('../pages/Recommendations.jsx', import.meta.url), 'utf8');
-  assert.ok(source.includes("aren't your chance of winning"));
+  assert.ok(source.includes('not the chance of receiving an award'));
   assert.ok(!source.includes('illustrative sample data'));
-});
-
-test('each relationship outcome looks different', () => {
-  const tones = ['confirmed', 'potential', 'not_a_match', 'needs_verification'].map(getMatchTone);
-  assert.equal(new Set(tones).size, 4);
-  assert.equal(getMatchTone('something_else'), 'neutral');
-});
-
-test('the listing note never presents a potential match as confirmed', () => {
-  assert.equal(getCoverageNote({ confirmed: 2, potential: 1, needs_verification: 0 }), 'Confirmed for 2 programs');
-  assert.equal(getCoverageNote({ confirmed: 0, potential: 1, needs_verification: 3 }), 'Possible for 1 program');
-  assert.equal(getCoverageNote({ confirmed: 0, potential: 0, needs_verification: 3 }), null);
-  assert.equal(getCoverageNote(undefined), null);
-});
-
-test('details pages leave out pairs split only by host country', () => {
-  const kept = selectRelevantMatches([
-    { outcome: 'not_a_match', blocking_criterion: 'country' },
-    { outcome: 'not_a_match', blocking_criterion: 'university' },
-    { outcome: 'needs_verification', blocking_criterion: null },
-  ]);
-  assert.equal(kept.length, 2);
-  assert.deepEqual(selectRelevantMatches(undefined), []);
 });
 
 test('each deadline state has its own label', () => {
@@ -64,7 +34,7 @@ test('each deadline state has its own label', () => {
   assert.equal(getScholarshipDeadlineLabel({ status: 'closed', date: '2026-02-20' }).note, 'Closed · check next cycle');
   assert.deepEqual(getScholarshipDeadlineLabel({ status: 'upcoming', date: '2027-02-01', opens_on: '2026-11-10', days_left: 10 }), { label: 'Opens Nov 10, 2026', note: 'Opens in 10 days' });
   assert.equal(getScholarshipDeadlineLabel({ status: 'rolling' }).label, 'Rolling');
-  assert.equal(getScholarshipDeadlineLabel({ status: 'no_separate_deadline' }).label, 'No separate deadline');
+  assert.equal(getScholarshipDeadlineLabel({ status: 'no_separate_deadline' }).label, 'No separate scholarship deadline');
   assert.equal(getScholarshipDeadlineLabel({ status: 'unknown', text: 'Varies' }), null);
 });
 

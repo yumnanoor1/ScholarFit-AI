@@ -25,7 +25,7 @@ export default function ProfileVerification() {
     setSaveError('');
     try {
       const result = await updateProfile(draft, { ...progress, source: 'cv' });
-      if (result?.success) return true;
+      if (result?.success) return result;
       setSaveError(result?.error || 'Your progress could not be saved. Please try again.');
       return false;
     } catch (error) {
@@ -42,6 +42,7 @@ export default function ProfileVerification() {
       onGenerateRecommendations={() => navigate('/recommendations')}
       initialValues={profile.profileDraft || profile.extractedProfile}
       initialStep={initialStep}
+      extractionSource={profile.cvUpload?.extractionSource}
       isProfileComplete={profile.profileComplete || false}
       isSaving={loading}
       saveError={saveError}

@@ -1,21 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
-  AlertCircle, ArrowRight, Check, CheckCircle2, Circle, Clock3, GraduationCap, ListChecks, Loader2, Sparkles, Target,
+  AlertCircle, ArrowRight, ListChecks, Loader2, Sparkles, Target,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useProfile } from '../context/ProfileContext';
-import { useScholarshipRecommendations } from '../hooks/useProgramEligibility';
 import { apiService } from '../services/api';
 import { getImprovementQuery } from '../services/opportunityApi';
 import {
-  getOpportunityTimelineTasks,
+  buildPersonalizedGuidanceActions,
   getOpportunityTitle,
 } from '../services/opportunityJourney';
-import { getSelectedApplicationStrategy } from '../services/applicationWorkflow';
 import RetryButton from '../components/common/RetryButton';
 
-const EMPTY_TASK_STATUSES = {};
 const RELATED_PREVIEW = 6;
 const PRIORITIES = ['High', 'Medium', 'Low'];
 
@@ -44,14 +41,8 @@ const STATUS_NOTICES = {
   error: ['Guidance could not be loaded. Please try again later.', null, null],
 };
 
-function getTaskRoute(task, opportunity) {
-  if (task.kind === 'document') return '/documents';
-  if (task.kind === 'pathway') return '/pathway';
-  return opportunity.kind === 'scholarship' ? `/scholarships/${opportunity.id}` : `/universities/${opportunity.id}`;
-}
-
 function relatedRoute(item) {
-  return item.kind === 'scholarship' ? `/scholarships/sch-db-${item.id}` : `/universities/${item.id}`;
+  return `/scholarships/sch-db-${item.id}`;
 }
 
 function Recommendation({ item }) {
@@ -85,6 +76,9 @@ function Recommendation({ item }) {
                 {opportunity.organization && <small>{opportunity.organization}</small>}
                 <small>{opportunity.result}</small>
                 {opportunity.requirement_text && <small>Record says: {opportunity.requirement_text}</small>}
+                {opportunity.source_url && (
+                  <a href={opportunity.source_url} target="_blank" rel="noopener noreferrer">Official source</a>
+                )}
               </li>
             ))}
           </ul>
@@ -101,31 +95,16 @@ function Recommendation({ item }) {
 }
 
 export default function ProfileImprovement() {
-  const navigate = useNavigate();
-  const { token, user } = useAuth();
-  const userId = user?.id;
-  const {
-    profile,
-    activeOpportunity,
-    opportunityTaskStatuses,
-    setOpportunityTaskStatus,
-  } = useProfile();
-  const activeOpportunityId = activeOpportunity?.id;
-  const activeOpportunityKind = activeOpportunity?.kind;
+  const { token } = useAuth();
+  const { profile, activeOpportunity } = useProfile();
   const selectedQuery = getImprovementQuery(activeOpportunity);
   const [scopeChoice, setScopeChoice] = useState('all');
   const [filter, setFilter] = useState('all');
-  const [pathwayResult, setPathwayResult] = useState(null);
   const [guidance, setGuidance] = useState(null);
-  const [error, setError] = useState('');
-  const profileGaps = useScholarshipRecommendations().data?.profile_gaps || [];
 
   // Refetches when the saved profile, the selection or the scope changes; older responses are dropped
   const query = scopeChoice === 'selected' && selectedQuery ? selectedQuery : null;
-  const requestKey = JSON.stringify([
-    token || '', query, profile?.profileStatus, profile?.personalInfo, profile?.academicBackground,
-    profile?.englishProficiency, profile?.studyPreferences,
-  ]);
+  const requestKey = JSON.stringify([token || '', query, profile]);
   useEffect(() => {
     let current = true;
     apiService.getProfileImprovements(query, token).then((result) => {
@@ -136,53 +115,9 @@ export default function ProfileImprovement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestKey]);
 
-  useEffect(() => {
-    if (!activeOpportunityId || activeOpportunityKind !== 'program') return undefined;
-    let current = true;
-    apiService.getApplicationPathway(
-      activeOpportunityId,
-      getSelectedApplicationStrategy(userId, activeOpportunityId),
-    ).then((result) => { if (current) setPathwayResult({ opportunityId: activeOpportunityId, value: result }); })
-      .catch((loadError) => {
-        console.error('Unable to load opportunity pathway for profile guidance.', loadError);
-        if (current) setError('Opportunity tasks could not be loaded.');
-      });
-    return () => { current = false; };
-  }, [userId, activeOpportunityId, activeOpportunityKind]);
-
-  const pathway = pathwayResult && pathwayResult.opportunityId === activeOpportunity?.id
-    ? pathwayResult.value
-    : null;
-  const taskStatuses = activeOpportunity ? opportunityTaskStatuses[activeOpportunity.id] || EMPTY_TASK_STATUSES : EMPTY_TASK_STATUSES;
-  // Requirements now come from the backend guidance; these are the application steps
-  const allTasks = useMemo(() => activeOpportunity
-    ? getOpportunityTimelineTasks(profile, activeOpportunity, pathway)
-      .filter((task) => task.kind !== 'deadline' && task.kind !== 'requirement')
-      .map((task) => ({ ...task, status: taskStatuses[task.id] || task.status }))
-    : [],
-  [activeOpportunity, profile, pathway, taskStatuses]);
-  const completedCount = allTasks.filter((task) => task.status === 'done').length;
-  const completion = allTasks.length ? Math.round((completedCount / allTasks.length) * 100) : 0;
-
-  const updateTaskStatus = (task, status) => {
-    try {
-      setOpportunityTaskStatus(activeOpportunity.id, task.id, status);
-      setError('');
-    } catch (statusError) {
-      console.error('Unable to save improvement task status.', statusError);
-      setError('Task progress could not be saved.');
-    }
-  };
-
-  const handleTaskAction = (task) => {
-    if (task.status === 'todo') updateTaskStatus(task, 'in-progress');
-    navigate(getTaskRoute(task, activeOpportunity));
-  };
-
-  const statusLabel = (status) => status === 'done' ? 'Done' : status === 'in-progress' ? 'In progress' : 'To do';
-
   const current = guidance?.key === requestKey ? guidance : null;
   const data = current?.state === 'ok' ? current.data : null;
+  const actionPlan = useMemo(() => buildPersonalizedGuidanceActions(data), [data]);
   const notice = current && current.state !== 'ok' ? STATUS_NOTICES[current.state] || STATUS_NOTICES.error : null;
   const activeFilter = FILTERS.find((item) => item.id === filter) || FILTERS[0];
   const visible = (data?.recommendations || []).filter(activeFilter.match);
@@ -198,7 +133,6 @@ export default function ProfileImprovement() {
         <div><h1>Profile Improvement</h1></div>
         <div className="improvement-mode-badge"><Sparkles size={15} aria-hidden="true" /> Based on your saved profile</div>
       </header>
-      {error && <p className="improvement-data-warning" role="alert"><AlertCircle size={16} />{error}</p>}
 
       <div className="improvement-layout">
         <section className="improvement-chat-panel" aria-label="Personal improvement guidance">
@@ -206,7 +140,7 @@ export default function ProfileImprovement() {
             <div className="improvement-bot-avatar"><ListChecks size={20} aria-hidden="true" /></div>
             <div>
               <h2>Your improvement guidance</h2>
-              {data ? <p>{data.scope.description} · {data.summary.opportunities_evaluated} checked</p> : <p>Compared with real program and scholarship requirements</p>}
+              {data ? <p>{data.scope.description} · {data.summary.opportunities_evaluated} checked</p> : <p>Compared with scholarship requirements and source records</p>}
             </div>
           </div>
           <div className="improvement-guidance-tools">
@@ -246,9 +180,9 @@ export default function ProfileImprovement() {
           </div>
         </section>
 
-        <aside className="improvement-task-panel" aria-label="Personalized improvement tracker">
+        <aside className="improvement-task-panel" aria-label="Prioritized personalized action plan">
           <div className="improvement-task-heading">
-            <div className="improvement-task-title"><span><Target size={18} aria-hidden="true" /></span><div><h2>Your next steps</h2><p>{data ? data.scope.description : 'Eligibility overview'}</p></div></div>
+            <div className="improvement-task-title"><span><Target size={18} aria-hidden="true" /></span><div><h2>Prioritized action plan</h2><p>{data ? data.scope.description : 'Based on your saved profile'}</p></div></div>
           </div>
           {data && (
             <div className="improvement-summary-grid">
@@ -257,17 +191,6 @@ export default function ProfileImprovement() {
               <div><strong>{data.summary.missing_information}</strong><span>Missing information</span></div>
               <div><strong>{data.summary.not_evaluated}</strong><span>Verify manually</span></div>
             </div>
-          )}
-          {profileGaps.length > 0 && (
-            <section className="improvement-missing-section">
-              <h3><AlertCircle size={15} aria-hidden="true" /> Improve your recommendations</h3>
-              {profileGaps.map((gap) => (
-                <p className="improvement-task-empty" key={gap.field}>
-                  <strong>{gap.label}:</strong> needed to check {gap.scholarships_affected} scholarship{gap.scholarships_affected === 1 ? '' : 's'}
-                </p>
-              ))}
-              <p className="improvement-task-empty">Adding these makes your scores more accurate. It doesn't mean you'll be eligible. <Link to="/profile">Update your profile</Link></p>
-            </section>
           )}
           {data && query && data.opportunities[0] && (
             <section className="improvement-missing-section">
@@ -278,35 +201,49 @@ export default function ProfileImprovement() {
                 .map(([label, items]) => <p className="improvement-task-empty" key={label}><strong>{label}:</strong> {items.map((item) => item.requirement).join(', ')}</p>)}
             </section>
           )}
-          {activeOpportunity && allTasks.length > 0 && (
-            <>
-              <div className="improvement-progress"><div><span>Application steps</span><strong>{completedCount}/{allTasks.length}</strong></div><div className="improvement-progress-track"><span style={{ width: `${completion}%` }} /></div></div>
-              <section className="improvement-tasks-section">
-                <h3><GraduationCap size={15} aria-hidden="true" /> {getOpportunityTitle(activeOpportunity)}</h3>
-                {allTasks.map((task, index) => {
-                  const status = task.status;
-                  return (
-                    <article className={`improvement-task ${status === 'done' ? 'is-done' : ''}`} key={task.id}>
-                      <div className="improvement-task-topline">
-                        <span className="improvement-task-type optional">Step</span>
-                        <span className={`improvement-task-status ${status}`}>{status === 'done' ? <CheckCircle2 size={12} /> : status === 'in-progress' ? <Clock3 size={12} /> : <Circle size={12} />}{statusLabel(status)}</span>
-                      </div>
-                      <h4>{index + 1}. {task.title}</h4>
-                      <p>{task.reason}</p>
-                      <div className="improvement-task-actions">
-                        {status !== 'done' && <button type="button" className="improvement-fix-button" onClick={() => handleTaskAction(task)}>Open <ArrowRight size={13} aria-hidden="true" /></button>}
-                        <button type="button" className="improvement-complete-button" onClick={() => updateTaskStatus(task, status === 'done' ? 'todo' : 'done')}>{status === 'done' ? 'Undo' : <><Check size={13} aria-hidden="true" /> Mark done</>}</button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </section>
-            </>
+          {data && actionPlan.length === 0 && (
+            <p className="improvement-task-empty" role="status">
+              No next actions were identified from the information available. Confirm requirements and deadlines on official pages.
+            </p>
+          )}
+          {data && actionPlan.slice(0, 6).map((action, index) => (
+            <article className="improvement-task" key={action.id}>
+              <div className="improvement-task-topline">
+                <span className="improvement-task-type optional">{action.kind}</span>
+                <span className={`improvement-tag is-${action.priority.toLowerCase()}`}>{action.priority} priority</span>
+              </div>
+              <h4>{index + 1}. {action.title}</h4>
+              <p>{action.explanation}</p>
+              <p><strong>Why it matters:</strong> {action.reason}</p>
+              <p><strong>Next step:</strong> {action.nextStep}</p>
+              {action.requirement && <p><strong>Supporting requirement:</strong> {action.requirement}</p>}
+              {action.dueDate && <p><strong>Date:</strong> {action.dueDate}</p>}
+              {action.completionCondition && <p><strong>Complete when:</strong> {action.completionCondition}</p>}
+              {action.sourceUrl && (
+                <p><a href={action.sourceUrl} target="_blank" rel="noopener noreferrer">Official source</a></p>
+              )}
+              {action.related?.length > 0 && (
+                <p>{action.related.map((related, relatedIndex) => (
+                  <span key={`${related.kind}-${related.id}`}>
+                    {relatedIndex > 0 && ', '}
+                    <Link to={relatedRoute(related)}>{related.name}</Link>
+                  </span>
+                ))}</p>
+              )}
+              <div className="improvement-task-actions">
+                <Link className="improvement-fix-button" to={action.route}>Open next step <ArrowRight size={13} aria-hidden="true" /></Link>
+              </div>
+            </article>
+          ))}
+          {data && actionPlan.length > 6 && (
+            <p className="improvement-task-empty">
+              Showing the six highest-priority actions. Review all guidance on this page or visit <Link to="/recommendations">Recommendations</Link>.
+            </p>
           )}
         </aside>
       </div>
       <p className="improvement-page-note">
-        {data?.notes[0] || 'Addressing these gaps does not guarantee admission or a scholarship.'} Confirm requirements on each official page.
+        {data?.notes[0] || 'Addressing these gaps does not guarantee a scholarship.'} Confirm requirements on each official page.
       </p>
     </div>
   );

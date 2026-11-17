@@ -1,24 +1,19 @@
 import { beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_APPLICATION_STRATEGY,
-  getSelectedApplicationStrategy,
-  saveApplicationTaskStatuses,
-  saveSelectedApplicationStrategy,
-} from './applicationWorkflow.js';
-import {
   ACTIVE_OPPORTUNITY_KEY,
   APPLIED_OPPORTUNITIES_KEY,
   COMPARISON_OPPORTUNITIES_KEY,
   DOCUMENT_RECORDS_KEY,
   SAVED_OPPORTUNITIES_KEY,
   SELECTED_OPPORTUNITIES_KEY,
-  APPLICATION_TASK_STATUS_KEY,
   EMAIL_ALERTS_KEY,
+  JOURNEY_COMPLETED_STEPS_KEY,
   PROFILE_KEY,
   getUserStorageKey,
   readEmailAlerts,
   readOpportunityData,
+  readUserStorage,
   readUserProfile,
   writeUserProfile,
   writeUserStorage,
@@ -59,41 +54,24 @@ test('each account sees only its own saved scholarships across logout and login'
   assert.deepEqual(readOpportunityData(USER_A).savedOpportunities, ['sch-db-1']); // A returns
 });
 
-test('compare, selected, active, applied, task and document data are isolated', () => {
+test('scholarship selections are isolated and legacy tracking data stays untouched', () => {
   writeUserStorage(COMPARISON_OPPORTUNITIES_KEY, USER_A, ['sch-db-1', 'sch-db-2']);
   writeUserStorage(SELECTED_OPPORTUNITIES_KEY, USER_A, [{ id: 'sch-db-1', kind: 'scholarship' }]);
   writeUserStorage(ACTIVE_OPPORTUNITY_KEY, USER_A, 'sch-db-1');
   writeUserStorage(APPLIED_OPPORTUNITIES_KEY, USER_A, ['sch-db-1']);
-  writeUserStorage(APPLICATION_TASK_STATUS_KEY, USER_A, { 'sch-db-1': { review: 'done' } });
   writeUserStorage(DOCUMENT_RECORDS_KEY, USER_A, { passport: { fileName: 'passport.pdf' } });
 
   assert.deepEqual(readOpportunityData(USER_B), readOpportunityData(null));
   assert.deepEqual(readOpportunityData(USER_B).comparisonOpportunityIds, []);
-  assert.deepEqual(readOpportunityData(USER_B).appliedOpportunityIds, []);
   assert.equal(readOpportunityData(USER_B).activeOpportunityId, null);
 
   const own = readOpportunityData(USER_A);
   assert.deepEqual(own.comparisonOpportunityIds, ['sch-db-1', 'sch-db-2']);
-  assert.deepEqual(own.appliedOpportunityIds, ['sch-db-1']);
   assert.equal(own.activeOpportunityId, 'sch-db-1');
-  assert.deepEqual(own.opportunityTaskStatuses, { 'sch-db-1': { review: 'done' } });
   assert.equal(own.documentRecords.passport.fileName, 'passport.pdf');
-});
-
-test('application strategy and task progress are isolated', () => {
-  saveSelectedApplicationStrategy(USER_A, 'univ-db-1', 'Scholarship First');
-  assert.equal(getSelectedApplicationStrategy(USER_A, 'univ-db-1'), 'Scholarship First');
-  assert.equal(getSelectedApplicationStrategy(USER_B, 'univ-db-1'), DEFAULT_APPLICATION_STRATEGY);
-
-  saveApplicationTaskStatuses(USER_A, 'sch-db-1', { review: 'done' });
-  assert.deepEqual(readOpportunityData(USER_A).opportunityTaskStatuses, { 'sch-db-1': { review: 'done' } });
-  assert.deepEqual(readOpportunityData(USER_B).opportunityTaskStatuses, {});
-});
-
-test('saving application progress without a user ID fails instead of using a shared key', () => {
-  assert.throws(() => saveSelectedApplicationStrategy(undefined, 'univ-db-1', 'Scholarship First'));
-  assert.throws(() => saveApplicationTaskStatuses(undefined, 'sch-db-1', { review: 'done' }));
-  assert.equal(window.localStorage.items.size, 0);
+  assert.equal('appliedOpportunityIds' in own, false);
+  assert.equal('opportunityTaskStatuses' in own, false);
+  assert.equal(window.localStorage.getItem(`${APPLIED_OPPORTUNITIES_KEY}.${USER_A}`), '["sch-db-1"]');
 });
 
 test('nothing is written or read without a stable user ID', () => {
@@ -117,7 +95,6 @@ test('legacy keys with no owner are never read, changed or removed', () => {
   const data = readOpportunityData(USER_A);
   assert.deepEqual(data.savedOpportunities, []);
   assert.deepEqual(data.comparisonOpportunityIds, []);
-  assert.deepEqual(data.appliedOpportunityIds, []);
   assert.equal(data.activeOpportunityId, null);
 
   saveFor(USER_A, 'sch-db-1');
@@ -184,6 +161,13 @@ test('email alerts have no shared fallback without a user ID', () => {
   assert.equal(readEmailAlerts(undefined), true);
   assert.equal(writeUserStorage(EMAIL_ALERTS_KEY, undefined, false), false);
   assert.equal(window.localStorage.items.size, 1);
+});
+
+test('journey completion status is saved per account', () => {
+  writeUserStorage(JOURNEY_COMPLETED_STEPS_KEY, USER_A, ['profile', 'documents']);
+  assert.deepEqual(readUserStorage(JOURNEY_COMPLETED_STEPS_KEY, USER_A, []), ['profile', 'documents']);
+  assert.deepEqual(readUserStorage(JOURNEY_COMPLETED_STEPS_KEY, USER_B, []), []);
+  assert.equal(writeUserStorage(JOURNEY_COMPLETED_STEPS_KEY, null, ['profile']), false);
 });
 
 test('email alert values saved before this change still load', () => {

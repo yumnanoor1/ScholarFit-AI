@@ -34,11 +34,10 @@ test('a page turns into skip', () => {
   assert.equal(params({}, { page: 3 }).get('skip'), String(2 * PAGE_SIZE));
 });
 
-test('program compatibility is sent only with a program', () => {
-  assert.equal(params({ match: ['confirmed'] }).has('match'), false);
-  const query = params({ match: ['confirmed'] }, { programId: 4 });
-  assert.equal(query.get('match'), 'confirmed');
-  assert.equal(query.get('program_id'), '4');
+test('unsupported program-match filters are never sent', () => {
+  const query = params({ match: ['confirmed'], program_id: '4' });
+  assert.equal(query.has('match'), false);
+  assert.equal(query.has('program_id'), false);
 });
 
 test('toggling adds then removes', () => {

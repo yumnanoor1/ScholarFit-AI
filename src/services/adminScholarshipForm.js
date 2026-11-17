@@ -21,7 +21,7 @@ export const FORM_SECTIONS = [
     fields: [
       text('name', 'Scholarship name', { required: true }), text('provider', 'Provider'), area('study_type', 'Description'),
       text('country', 'Host country', { required: true }), pick('institution_scope', 'Institution scope', options('single_institution', 'participating_list', 'national')),
-      text('host_institution', 'Host institution'), { name: 'host_university_id', label: 'Host university in the catalog', type: 'university' },
+      text('host_institution', 'Host institution'),
     ],
   },
   {
@@ -108,7 +108,7 @@ function parseField(field, raw) {
   const value = raw.trim();
   if (!value) return null;
   if (field.type === 'lines') return value.split('\n').map((line) => line.trim()).filter(Boolean);
-  if (field.type === 'number' || field.type === 'integer' || field.type === 'university') return Number(value);
+  if (field.type === 'number' || field.type === 'integer') return Number(value);
   if (field.type === 'boolean') return value === 'true';
   return value;
 }
@@ -139,6 +139,7 @@ export function isDirty(values, original) {
 export const ISSUE_FILTERS = [
   ['', 'All records'], ['attention', 'Needs attention'], ['conflict', 'Conflicting'], ['unverified', 'Unverified'],
   ['missing_official_source', 'No official source'], ['missing_application_url', 'No application link'], ['missing_deadline', 'Deadline missing'],
-  ['missing_funding', 'Funding missing'], ['missing_eligibility', 'Eligibility missing'], ['weak_evidence', 'Not fully officially sourced'],
+  ['missing_funding', 'Funding missing'], ['missing_eligibility', 'Eligibility missing'], ['never_verified', 'Never verified'],
+  ['weak_evidence', 'Not fully officially sourced'],
   ['stale_verification', 'Verification old'], ['broken_url', 'Broken link'], ['duplicate', 'Duplicates'],
 ];

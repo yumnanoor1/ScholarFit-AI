@@ -1,5 +1,8 @@
 from typing import List, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
+
+from app.schemas.opportunity import ScholarshipSourceProvenance
+from app.services.source_url_safety import safe_source_url
 
 
 class RequirementResult(BaseModel):
@@ -70,20 +73,30 @@ class ScholarshipEligibilityResult(BaseModel):
     last_verified: Optional[str]
     official_url: Optional[str]
     source_name: Optional[str]
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
     match_score: Optional[float] = None   # always None here; scores come from GET /recommendations/scholarships
     notes: List[str]
+
+    @field_serializer("official_url")
+    def sanitize_official_url(self, value):
+        return safe_source_url(value)
 
 
 # ---------- Profile improvement guidance ----------
 
 class RelatedOpportunity(BaseModel):
-    kind: Literal["program", "scholarship"]
+    kind: Literal["scholarship"]
     id: int
     name: str
     organization: Optional[str] = None
     requirement_text: Optional[str] = None   # the record's own wording
     result: str                              # what the comparison found
     source_url: Optional[str] = None
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
+
+    @field_serializer("source_url")
+    def sanitize_source_url(self, value):
+        return safe_source_url(value)
 
 
 class ImprovementRecommendation(BaseModel):
@@ -110,7 +123,7 @@ class OpportunityRequirementResult(BaseModel):
 
 
 class OpportunityEvaluation(BaseModel):
-    kind: Literal["program", "scholarship"]
+    kind: Literal["scholarship"]
     id: int
     name: str
     organization: Optional[str] = None
@@ -121,11 +134,16 @@ class OpportunityEvaluation(BaseModel):
     manual_verification: List[OpportunityRequirementResult]
     source_url: Optional[str] = None
     last_verified: Optional[str] = None
+    deadline: Optional[DeadlineStatus] = None
+    source_provenance: Optional[ScholarshipSourceProvenance] = None
+
+    @field_serializer("source_url")
+    def sanitize_source_url(self, value):
+        return safe_source_url(value)
 
 
 class ImprovementSummary(BaseModel):
     opportunities_evaluated: int
-    programs_evaluated: int
     scholarships_evaluated: int
     eligible: int
     not_eligible: int

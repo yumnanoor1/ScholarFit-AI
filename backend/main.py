@@ -3,14 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import is_production, validate_settings
 from app.core.cors import allowed_origins
 from app.core.http_security import install_http_security
-from app.database import Base, engine
+from app.database import create_application_schema, engine
 from app import models  # noqa: F401
-from app.routers import auth, profile, universities, programs, scholarships, saved_scholarships, eligibility, financial_feasibility, recommendations, admin_scholarships, assistant
+from app.routers import auth, profile, scholarships, saved_scholarships, eligibility, financial_feasibility, recommendations, admin_scholarships, assistant
+from app.routers import health
+from app.services.scholarship_knowledge_schema import schema_is_ready
 # Unsafe production settings stop the API here, before anything else runs
 validate_settings()
 
-# Database tables create karo
-Base.metadata.create_all(bind=engine)
+# Keep the vector tables out of startup DDL; their explicit migration checks pgvector first.
+create_application_schema(bind=engine)
 
 app = FastAPI(
     title="FitScholar API",
@@ -21,6 +23,27 @@ app = FastAPI(
     redoc_url=None if is_production() else "/redoc",
     openapi_url=None if is_production() else "/openapi.json",
 )
+
+with engine.connect() as connection:
+    app.state.scholarship_knowledge_schema_ready = schema_is_ready(connection)
+
+
+@app.on_event("shutdown")
+def _release_outbound_clients() -> None:
+    """Close pooled sockets on the way out: provider clients, then the pool."""
+    import logging
+
+    from app.services.scholarship_discovery_extraction import (
+        close_cached_groq_clients,
+    )
+
+    logger = logging.getLogger(__name__)
+    for failure in close_cached_groq_clients():
+        logger.error("Groq client close failed: %s", failure)
+    try:
+        engine.dispose()
+    except Exception as exc:
+        logger.error("Database pool dispose failed: %s", type(exc).__name__)
 
 # Added first so it runs inside CORS, and error replies stay readable by the frontend
 install_http_security(app)
@@ -38,8 +61,6 @@ app.add_middleware(
 # Routers include karo
 app.include_router(auth.router)
 app.include_router(profile.router)
-app.include_router(universities.router)
-app.include_router(programs.router)
 app.include_router(scholarships.router)
 app.include_router(saved_scholarships.router)
 app.include_router(eligibility.router)
@@ -47,6 +68,7 @@ app.include_router(financial_feasibility.router)
 app.include_router(recommendations.router)
 app.include_router(admin_scholarships.router)
 app.include_router(assistant.router)
+app.include_router(health.router)
 
 
 @app.get("/")

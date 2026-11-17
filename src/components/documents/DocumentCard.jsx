@@ -43,7 +43,7 @@ export default function DocumentCard({ document, onDelete, onViewDetails }) {
           <strong style={{ color: 'var(--color-dark)', display: 'block', marginBottom: '4px' }}>Extracted Parameters:</strong>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }}>
             {extractedInfo.degree && <div>• Degree: {extractedInfo.degree}</div>}
-            {extractedInfo.cgpa && <div>• CGPA: {extractedInfo.cgpa}</div>}
+            {extractedInfo.cgpa !== null && extractedInfo.cgpa !== undefined && extractedInfo.cgpa !== '' && <div>• CGPA: {extractedInfo.cgpa}</div>}
             {extractedInfo.institution && <div>• Institution: {extractedInfo.institution}</div>}
           </div>
         </div>

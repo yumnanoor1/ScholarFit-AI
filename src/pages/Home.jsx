@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowRight, BookOpen, CheckCircle2, ChevronDown, ClipboardCheck, Globe2, GraduationCap,
-  Landmark, Search, UserRound,
+  ArrowRight, CheckCircle2, ChevronDown, ClipboardCheck, Search, UserRound,
 } from 'lucide-react';
-import { apiService } from '../services/api';
 import BrandLogo from '../components/common/BrandLogo';
 import './Home.css';
 
@@ -14,45 +12,35 @@ const navLinks = [
   ['FAQ', '#faq'],
 ];
 
-// Fields counted for the stats band (same "contains" rule as GET /programs/?field_of_study=)
-const fields = [
-  { name: 'Computer Science', match: 'computer science' },
-  { name: 'Data Science', match: 'data science' },
-  { name: 'Artificial Intelligence', match: 'artificial intelligence' },
-  { name: 'Machine Learning', match: 'machine learning' },
-  { name: 'Cybersecurity', match: 'cybersecurity' },
-  { name: 'Software Engineering', match: 'software engineering' },
-];
-
 const aboutPoints = [
-  'Official program requirements',
-  'Eligibility checks for your profile',
-  'Deadline and intake tracking',
-  'Tuition and funding analysis',
+  'Scholarship eligibility checks',
+  'Official scholarship source links',
+  'Funding and affordability information',
+  'Preparation steps for scholarship applications',
 ];
 
 const steps = [
-  { icon: UserRound, title: 'Create Your Profile', text: 'Add your degree, CGPA, English test, budget, and preferred countries in minutes.' },
-  { icon: Search, title: 'Get Matched', text: 'Each program is checked against your profile using requirements from official university pages.' },
-  { icon: ClipboardCheck, title: 'Apply Confidently', text: 'Follow a step-by-step pathway, track deadlines, and prepare the right documents.' },
+  { icon: UserRound, title: 'Create Your Profile', text: 'Add the academic, nationality, language, and funding information relevant to scholarship checks.' },
+  { icon: Search, title: 'Explore Scholarships', text: 'Review scholarship eligibility, funding information, and source verification.' },
+  { icon: ClipboardCheck, title: 'Prepare Your Application', text: 'Review official scholarship requirements, documents, application links, and verified deadlines.' },
 ];
 
 const faqs = [
   {
-    q: 'Where does the program information come from?',
-    a: 'Each program is checked against its official university page. Every record stores its source link and the date it was last verified.',
+    q: 'Where does scholarship information come from?',
+    a: 'Scholarship records include their recorded source and verification details. Confirm current requirements, funding, and dates with the official provider.',
   },
   {
-    q: 'Does an eligibility match guarantee admission?',
-    a: 'No. FitScholars checks published minimums such as CGPA, English scores, and degree level. Universities make the final admission decision.',
+    q: 'Does an eligibility result guarantee a scholarship?',
+    a: 'No. FitScholar checks the available stated scholarship requirements. Providers make the final award decisions.',
   },
   {
     q: 'Is FitScholars free for students?',
-    a: 'Yes. Create an account, complete your profile, and explore programs, scholarships, and application pathways.',
+    a: 'Yes. Create an account, complete your profile, and explore scholarships and preparation guidance.',
   },
   {
     q: 'I have not taken IELTS or TOEFL yet. Can I still use it?',
-    a: 'Yes. Programs that need a test score will show “missing information” so you know exactly what to prepare.',
+    a: 'Yes. If a scholarship lists a language requirement and your profile lacks a comparable result, the check shows missing information rather than treating it as a failure.',
   },
 ];
 
@@ -86,43 +74,8 @@ function useRevealOnScroll() {
   return [ref, visible];
 }
 
-function useHomeStats() {
-  const [programs, setPrograms] = useState(null);
-  useEffect(() => {
-    let isCurrent = true;
-    apiService.getMatchedUniversities()
-      .then((items) => { if (isCurrent) setPrograms(items); })
-      .catch(() => { if (isCurrent) setPrograms([]); });
-    return () => { isCurrent = false; };
-  }, []);
-
-  return useMemo(() => {
-    if (!programs || programs.length === 0) return null;
-    const byCountry = {};
-    programs.forEach((program) => {
-      if (!program.country) return;
-      const entry = byCountry[program.country] || { country: program.country, programs: 0, universities: new Set() };
-      entry.programs += 1;
-      if (program.university) entry.universities.add(program.university);
-      byCountry[program.country] = entry;
-    });
-    const fieldCounts = Object.fromEntries(fields.map((field) => [
-      field.name,
-      programs.filter((program) => (program.fieldOfStudy || '').toLowerCase().includes(field.match)).length,
-    ]));
-    return {
-      programs: programs.length,
-      universities: new Set(programs.map((program) => program.university).filter(Boolean)).size,
-      countries: Object.values(byCountry).sort((a, b) => b.programs - a.programs || a.country.localeCompare(b.country)),
-      fieldCounts,
-      fieldsCovered: Object.values(fieldCounts).filter(Boolean).length,
-    };
-  }, [programs]);
-}
-
 export default function Home() {
   const navigate = useNavigate();
-  const stats = useHomeStats();
   const [aboutVisualRef, aboutVisualVisible] = useRevealOnScroll();
 
   return (
@@ -154,10 +107,10 @@ export default function Home() {
           <div className="home-hero-inner">
             <div className="home-hero-copy">
               <h1 id="home-hero-title">
-                Find your<br />Master’s program<br />abroad.
+                Find your<br />scholarship<br />opportunities.
               </h1>
               <p className="home-hero-subtitle">
-                Programs, scholarships, and funding matched to your academic profile, budget, and goals.
+                Scholarship opportunities and funding information matched to your profile.
               </p>
               <div className="home-hero-actions">
                 <button type="button" className="home-pill home-pill-dark" onClick={() => navigate('/register')}>
@@ -167,7 +120,7 @@ export default function Home() {
               </div>
 
               <div className="home-hero-count">
-                {stats ? `${stats.programs}+ ` : ''}Verified Programs
+                Scholarship eligibility · Funding · Preparation
               </div>
             </div>
 
@@ -178,7 +131,7 @@ export default function Home() {
                 </defs>
                 <text>
                   <textPath href="#home-ring-path" startOffset="0" textLength="1325" lengthAdjust="spacing">
-                    VERIFIED PROGRAMS • ELIGIBILITY CHECKS • DEADLINES • SCHOLARSHIPS • FUNDING •
+                    SCHOLARSHIPS • ELIGIBILITY CHECKS • FUNDING • PREPARATION •
                   </textPath>
                 </text>
               </svg>
@@ -203,12 +156,8 @@ export default function Home() {
           <div className="home-about-copy">
             <h2 id="home-about-title">Plan your studies abroad with confidence</h2>
             <p>
-              Thousands of universities, countless scholarships, and endless application forms. Most students miss
-              opportunities because they can’t find them, or can’t tell whether they qualify.
-            </p>
-            <p>
-              FitScholars brings verified programs, requirements, costs, and deadlines together, then shows how your
-              profile compares, so you can focus on the applications that fit.
+              Scholarship information can be difficult to compare. FitScholar brings recorded requirements,
+              funding, source status, and deadlines together, then explains how your profile compares.
             </p>
             <ul className="home-checklist">
               {aboutPoints.map((point) => (
@@ -240,30 +189,10 @@ export default function Home() {
           </ol>
         </section>
 
-        {/* ---------- Stats band ---------- */}
-        {stats && (
-          <section className="home-stats" aria-label="FitScholars in numbers">
-            <div className="home-stats-inner">
-              {[
-                [GraduationCap, stats.programs, 'Verified Programs'],
-                [Landmark, stats.universities, 'Universities'],
-                [Globe2, stats.countries.length, 'Countries'],
-                [BookOpen, stats.fieldsCovered, 'Fields of Study'],
-              ].map(([Icon, value, label]) => (
-                <div key={label} className="home-stat">
-                  <Icon size={30} strokeWidth={1.5} aria-hidden="true" />
-                  <strong>{value}</strong>
-                  <span>{label}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
         {/* ---------- CTA band ---------- */}
         <section className="home-cta-wrap" aria-labelledby="home-cta-title">
           <div className="home-cta">
-            <h2 id="home-cta-title">Every requirement, cost, and deadline in one place. Plan at your own pace.</h2>
+            <h2 id="home-cta-title">Understand scholarship requirements, funding, and preparation steps.</h2>
             <button type="button" className="home-button home-button-light home-button-small" onClick={() => navigate('/register')}>
               Get Started
             </button>
@@ -298,7 +227,7 @@ export default function Home() {
           </nav>
         </div>
         <p className="home-footer-note">
-          © {new Date().getFullYear()} FitScholars. Always confirm requirements, costs, and deadlines with the official university or provider.
+          © {new Date().getFullYear()} FitScholars. Confirm scholarship requirements, funding, and deadlines with the official provider.
         </p>
       </footer>
     </div>

@@ -295,7 +295,7 @@
   background: linear-gradient(110deg, #fff 0%, #fbfdff 100%);
 }
 
-.dashboard-campus-placeholder {
+.dashboard-scholarship-logo {
   display: block;
   display: grid;
   width: 82px;
@@ -726,7 +726,7 @@
     padding: 6px;
   }
 
-  .dashboard-campus-placeholder,
+  .dashboard-scholarship-logo,
   .dashboard-campus-photo,
   .dashboard-university-logo {
     width: 64px;

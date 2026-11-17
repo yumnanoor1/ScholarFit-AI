@@ -137,9 +137,12 @@ def backfill(session: Session) -> dict:
         if problems:
             report["problems"][scholarship_id] = problems
             continue
+        content_changed = any(getattr(row, field) != value for field, value in values.items())
         for field, value in values.items():
             setattr(row, field, value)
         row.structured_data_version = STRUCTURED_DATA_VERSION
+        if content_changed:
+            row.record_version = (row.record_version or 0) + 1
         report["updated"].append(scholarship_id)
     session.commit()
     return report

@@ -27,9 +27,11 @@ In-kind benefits ("visa costs covered", "return economy ticket") count against t
 when that expense is known; allowances without an amount are listed but not counted.
 """
 import re
+from datetime import date
 from typing import Optional
 
 from app.services.exchange_rates import convert, rates_info
+from app.services.source_verification import scholarship_source_issue, source_freshness_issue
 
 NEAR_MISS_SHARE = 0.20
 
@@ -124,7 +126,7 @@ def _not_counted(category, label, reason, text=None):
             "source_text": text}
 
 
-def _tuition_benefit(text, tuition_total, annual_tuition, coverage_months, currency):
+def _tuition_benefit(text, tuition_total, annual_tuition, coverage_months, convert_amount=convert):
     """Funding line for the tuition benefit, or a package line covering tuition and living."""
     label = "Tuition coverage"
     if not text or NOT_OFFERED_RE.search(text):
@@ -138,7 +140,7 @@ def _tuition_benefit(text, tuition_total, annual_tuition, coverage_months, curre
         if len(amounts) > 1 or RANGE_RE.search(text) or HEDGE_RE.search(text):
             return _not_counted("tuition", label, "The listed amount varies or is approximate.", text)
         amount, cur, period = amounts[0]
-        converted = convert(amount, cur, currency)
+        converted = convert_amount(amount, cur)
         if converted is None:
             return _not_counted("tuition", label, f"No exchange rate available for {cur}.", text)
         is_package = bool(re.search(r"living", text, re.I))
@@ -178,7 +180,7 @@ def _tuition_benefit(text, tuition_total, annual_tuition, coverage_months, curre
             "counted": True, "reason": reason, "source_text": text}
 
 
-def _living_benefit(text, living_total, coverage_months, currency, in_package):
+def _living_benefit(text, living_total, coverage_months, in_package, convert_amount=convert):
     label = "Living stipend"
     if not text or NOT_OFFERED_RE.search(text):
         return None
@@ -195,7 +197,7 @@ def _living_benefit(text, living_total, coverage_months, currency, in_package):
     amount, cur, period = min(amounts, key=lambda item: item[0])
     if period is None:
         return _not_counted("living_costs", label, "The stipend's payment period is not stated.", text)
-    converted = convert(amount, cur, currency)
+    converted = convert_amount(amount, cur)
     if converted is None:
         return _not_counted("living_costs", label, f"No exchange rate available for {cur}.", text)
     if coverage_months is None:
@@ -256,7 +258,7 @@ IN_KIND_RE = re.compile(r"\b(covered|included|coverage|cover|ticket|airfare|paid
 PARTIAL_BENEFIT_RE = re.compile(r"\b(allowance|contribution|subsid\w*|up to|partial|where applicable|top-up)\b", re.I)
 
 
-def _other_benefit(label, category, text, cost_amount, currency):
+def _other_benefit(label, category, text, cost_amount, convert_amount=convert):
     """Benefit paying for one expense (health insurance, visa, travel). None when not offered."""
     if not text or NOT_OFFERED_RE.search(text) or re.match(r"\s*not specified", text, re.I):
         return None
@@ -266,7 +268,7 @@ def _other_benefit(label, category, text, cost_amount, currency):
         return _not_counted(category, label, "This expense is unknown, so the benefit can't be applied.", text)
     if len(amounts) == 1 and not HEDGE_RE.search(main):
         amount, cur, _ = amounts[0]
-        converted = convert(amount, cur, currency)
+        converted = convert_amount(amount, cur)
         if converted is None:
             return _not_counted(category, label, f"No exchange rate available for {cur}.", text)
         return {"category": category, "label": label, "amount": min(converted, cost_amount), "counted": True,
@@ -279,15 +281,16 @@ def _other_benefit(label, category, text, cost_amount, currency):
 
 
 def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=None, profile_budget_usd=None,
-                          currency=None, expenses=None, today=None, match=None):
+                          currency=None, expenses=None, today=None, match=None, profile_budget=None):
     """
     program: Program row (with .university and .costs); scholarship: Scholarship row or None.
     match: scholarship_matching result for this pair, or None when there's no relationship information.
     budget: MoneyInput sent with this calculation; falls back to saved_budget (a MoneyInput),
-    then profile_budget_usd. expenses: ExpenseInputs or None.
+    then the currency-aware profile budget, then legacy profile_budget_usd. expenses: ExpenseInputs or None.
     Returns a dict matching schemas.financial.FeasibilityResult.
     """
     university = getattr(program, "university", None)
+    today = today or date.today()
     tuition_currency = (program.tuition_currency or "").upper() or None
     currency = currency or tuition_currency or "USD"
     months = program.duration_months
@@ -318,12 +321,20 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
         missing.append("The program record has no duration, so totals for the study period can't be calculated.")
 
     tuition_total = annual_tuition * months / 12 if annual_tuition is not None and months else None
+    tuition_source_issue = source_freshness_issue(
+        getattr(program, "source_url", None), getattr(program, "last_verified", None), today
+    )
+    if tuition_total is not None and tuition_source_issue:
+        missing.append(f"The program tuition source needs verification: {tuition_source_issue}")
     costs = [{
         "category": "tuition", "label": "Tuition", "amount": tuition_total,
         "original_amount": program.tuition_amount if program.tuition_amount is not None else program.tuition_usd_per_year,
         "original_currency": tuition_currency or ("USD" if program.tuition_usd_per_year is not None else None),
         "period": "yearly", "source": "program_record", "is_estimate": False,
         "note": "Published annual fee × program duration." if tuition_total is not None else None,
+        "source_url": getattr(program, "source_url", None),
+        "last_verified": getattr(program, "last_verified", None).isoformat()
+        if getattr(program, "last_verified", None) else None,
     }]
 
     # ---- Living and other expenses ----
@@ -340,21 +351,41 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
         expense = getattr(expenses, field, None) if expenses else None
         record = records.get(field)
         if field in included_in and record is None:
+            included_source = included_in[field]
+            source_issue = source_freshness_issue(
+                included_source.source_url, included_source.last_verified, today
+            )
             costs.append({"category": field, "label": label, "amount": 0.0, "original_amount": None,
                           "original_currency": None, "period": None, "source": "included", "is_estimate": False,
-                          "note": f"Already included in {included_in[field].category.replace('_', ' ')}."})
+                          "note": f"Already included in {included_source.category.replace('_', ' ')}."})
+            if source_issue:
+                reason = f"{label} inclusion source needs verification: {source_issue}"
+                if essential:
+                    missing.append(reason)
+                else:
+                    has_unknown_optional = True
+                    uncertainties.append(reason)
             continue
         line = {"category": field, "label": label, "amount": None, "original_amount": None,
                 "original_currency": None, "period": None, "source": "not_provided", "is_estimate": False,
                 "note": None}
         if expense is None and record is not None:
             record_max = getattr(record, "amount_max", None)
+            source_issue = source_freshness_issue(record.source_url, record.last_verified, today)
             line.update(original_amount=record.amount, original_amount_max=record_max,
                         original_currency=record.currency, period=record.period,
                         source="program_record", is_estimate=bool(record.is_estimate),
                         note=getattr(record, "note", None),
                         source_name=record.source_name, source_url=record.source_url,
                         last_verified=record.last_verified.isoformat() if record.last_verified else None)
+            if source_issue:
+                line["is_estimate"] = True
+                line["note"] = " ".join(filter(None, [line["note"], source_issue]))
+                if essential:
+                    missing.append(f"{label} source needs verification: {source_issue}")
+                else:
+                    has_unknown_optional = True
+                    uncertainties.append(f"{label} source needs verification: {source_issue}")
             converted = to_currency(record_max if record_max is not None else record.amount, record.currency)
             if converted is None:
                 line["note"] = f"No exchange rate from {record.currency} to {currency}."
@@ -402,6 +433,12 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
                        "source": "request" if budget is not None else "saved"}
         if budget_amount is None:
             missing.append(f"No exchange rate from {chosen_budget.currency} to {currency} for your budget.")
+    elif profile_budget is not None:
+        budget_amount = to_currency(profile_budget.amount, profile_budget.currency)
+        budget_info = {"amount": budget_amount, "original_amount": profile_budget.amount,
+                       "original_currency": profile_budget.currency, "source": "profile"}
+        if budget_amount is None:
+            missing.append(f"No exchange rate from {profile_budget.currency} to {currency} for your profile budget.")
     elif profile_budget_usd is not None:
         budget_amount = to_currency(profile_budget_usd, "USD")
         budget_info = {"amount": budget_amount, "original_amount": profile_budget_usd,
@@ -411,19 +448,27 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
     else:
         budget_amount = None
         budget_info = {"amount": None, "original_amount": None, "original_currency": None, "source": "not_provided"}
-        missing.append("No budget: add one to your profile or enter it for this calculation.")
+        missing.append("No total study budget is recorded; enter the amount available for the full study period.")
 
     # ---- Scholarship ----
     funding = []
     scholarship_info = None
     if scholarship is not None:
-        verified = scholarship.verification_status == "verified"
+        verification_issue = scholarship_source_issue(scholarship, today)
+        verified = verification_issue is None
+        last_verified = getattr(scholarship, "last_verified_date", None) or getattr(scholarship, "last_verified", None)
+        if hasattr(last_verified, "isoformat"):
+            last_verified = last_verified.isoformat()
         applies, not_applicable_reason = _scholarship_applies(
             scholarship, university.country if university else None, university.name if university else None)
         scholarship_info = {
             "id": scholarship.id, "name": scholarship.name, "funding_type": scholarship.funding_type,
-            "verification_status": scholarship.verification_status, "last_verified": scholarship.last_verified,
-            "source_url": scholarship.official_url, "applicable": applies, "counted": False,
+            "verification_status": "verified" if verified else "unverified",
+            "verification_issue": verification_issue,
+            "last_verified": last_verified,
+            "source_url": getattr(scholarship, "official_info_url", None)
+            or getattr(scholarship, "official_url", None),
+            "applicable": applies, "counted": False,
             "match_outcome": match["outcome"] if match else None,
             "match_label": match["label"] if match else None,
             "match_explanation": match["explanation"] if match else None,
@@ -433,6 +478,7 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
             scholarship_info["applicable"] = False
         if not verified:
             funding.append(_not_counted("all", "All benefits",
+                                        verification_issue or
                                         "This scholarship record is not verified, so none of its funding is counted."))
         elif not applies:
             funding.append(_not_counted("all", "All benefits", not_applicable_reason))
@@ -442,7 +488,9 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
             coverage, coverage_note = _coverage_months(scholarship.duration, months)
             if coverage_note:
                 uncertainties.append(f"{scholarship.name}: {coverage_note}")
-            tuition_line = _tuition_benefit(scholarship.tuition_coverage, tuition_total, annual_tuition, coverage, currency)
+            tuition_line = _tuition_benefit(
+                scholarship.tuition_coverage, tuition_total, annual_tuition, coverage, to_currency
+            )
             in_package = bool(tuition_line and tuition_line["category"] == "tuition_and_living")
             if tuition_line and in_package:
                 cap = tuition_total + (living_total or 0)
@@ -450,8 +498,10 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
                 tuition_line["reason"] += " Capped at tuition plus living costs."
             if tuition_line:
                 funding.append(tuition_line)
-            living = _living_benefit(scholarship.living_stipend, living_total if living_total is not None else 0,
-                                     coverage, currency, in_package)
+            living = _living_benefit(
+                scholarship.living_stipend, living_total if living_total is not None else 0,
+                coverage, in_package, to_currency
+            )
             if living:
                 if living_total is None and living["counted"]:
                     living = _not_counted("living_costs", living["label"],
@@ -463,7 +513,7 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
                                            ("travel_airfare", "travel", "Travel / airfare"),
                                            ("visa_support", "visa", "Visa support")]:
                 benefit = _other_benefit(label, category, getattr(scholarship, field, None),
-                                         line_amount.get(category), currency)
+                                         line_amount.get(category), to_currency)
                 if benefit:
                     funding.append(benefit)
             # Documented, but with no matching expense or fixed value
@@ -485,6 +535,12 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
 
     confirmed_funding = sum(line["amount"] for line in funding if line["counted"])
     potential_funding = sum(line["amount"] for line in funding if line.get("potential"))
+
+    rates = rates_info(today)
+    if rates["stale"] and rates_used:
+        missing.append(
+            "The configured exchange-rate data is outdated; converted amounts can't support a current affordability result."
+        )
 
     # ---- Totals and status ----
     essentials_known = not missing
@@ -540,7 +596,6 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
             status = "not_feasible"
             explanation.append(f"Your budget falls short by {currency} {funding_gap:,.0f}.")
 
-    rates = rates_info(today)
     if rates["stale"] and rates_used:
         uncertainties.append(
             f"Exchange rates are from {rates['date']} ({rates['age_days']} days old), so converted amounts may be out of date.")
@@ -585,4 +640,3 @@ def calculate_feasibility(program, scholarship=None, budget=None, saved_budget=N
         "missing_data": missing,
         "uncertainties": uncertainties,
     }
-

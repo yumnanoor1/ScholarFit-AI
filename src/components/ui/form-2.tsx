@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown, GraduationCap, Globe2, Lightbulb, Save, AlertCircle, WalletCards, FileText, Info, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, CalendarDays, Check, ChevronDown, GraduationCap, Languages, Lightbulb, Pencil, Save, AlertCircle, Target, UserRound, WalletCards, FileText, Info, type LucideIcon } from "lucide-react";
 import { Button } from "./button";
 import { EMPTY_PROFILE, LAST_PROFILE_STEP, PROFILE_STEPS as STEPS, mergeProfile, type StudentProfile } from "../../data/profileModel";
 
@@ -168,6 +168,8 @@ export function validateStep(step: number, values: StudentProfile) {
     if (academic.cgpa && (!Number.isFinite(grade) || grade < 0 || (Number.isFinite(scale) && grade > scale))) errors.cgpa = `Enter a grade between 0 and ${academic.gradingScale || "the selected scale"}.`;
     if (!academic.gradingScale || !Number.isFinite(scale) || scale <= 0) errors.gradingScale = "Enter the maximum grade or percentage.";
     if (academic.gradingScale === "Other" && (!academic.customGradingScale || !Number.isFinite(scale) || scale <= 0)) errors.customGradingScale = "Enter a valid maximum grade.";
+    if (academic.expectedGraduationDate && !/^\d{4}-(0[1-9]|1[0-2])$/.test(academic.expectedGraduationDate)) errors.expectedGraduationDate = "Use the YYYY-MM date format.";
+    if (academic.graduationDate && !/^\d{4}-(0[1-9]|1[0-2])$/.test(academic.graduationDate)) errors.graduationDate = "Use the YYYY-MM date format.";
     if (academic.degreeStartDate && academic.expectedGraduationDate && academic.expectedGraduationDate < academic.degreeStartDate) errors.expectedGraduationDate = "Expected graduation cannot be before the start date.";
     if (academic.degreeStartDate && academic.graduationDate && academic.graduationDate < academic.degreeStartDate) errors.graduationDate = "Graduation cannot be before the start date.";
   }
@@ -175,10 +177,6 @@ export function validateStep(step: number, values: StudentProfile) {
     if (!goals.fields.length) errors.fields = "Select at least one preferred study field.";
     // Recommendations and the profile status work from countries, so a region alone isn't enough
     if (!goals.countries.some((country) => country !== "Other") && !goals.otherCountry.trim()) errors.countries = "Select at least one preferred country.";
-    if (!goals.intake) errors.intake = "Select an intended intake.";
-    if (!goals.admissionYear) errors.admissionYear = "Select an admission year.";
-    if (!goals.programPreference) errors.programPreference = "Select a program type.";
-    if (!goals.languageOfInstruction.trim()) errors.languageOfInstruction = "Enter a preferred language.";
   }
   if (step === 3) {
     if (!values.studyPreferences.fundingPreference) errors.fundingPreference = "Select a funding preference.";
@@ -187,15 +185,52 @@ export function validateStep(step: number, values: StudentProfile) {
       if (!value) errors[field] = `Enter your ${label.toLowerCase()}.`;
       else if (!Number.isFinite(Number(value)) || Number(value) < 0) errors[field] = `${label} must be a valid non-negative number.`;
     }
+    if (!/^[A-Za-z]{3}$/.test(values.studyPreferences.currency || "")) errors.currency = "Enter a valid 3-letter currency code, such as USD.";
     if (!values.studyPreferences.fundingPreferences.length) errors.fundingPreferences = "Select at least one preferred funding type.";
     if (!values.englishProficiency.willingToTest) errors.willingToTest = "Choose whether you are willing to take an English proficiency test.";
     if (!values.englishProficiency.testStatus) errors.testStatus = "Select your English test status.";
     if (values.englishProficiency.testStatus === "Completed") {
-      if (!values.englishProficiency.testType) errors.testType = "Select the English test you took.";
+      if (!values.englishProficiency.testType || values.englishProficiency.testType === "No Test / Not Taken") errors.testType = "Select the English test you took.";
       if (!values.englishProficiency.overallScore) errors.overallScore = "Enter your overall score.";
+      if (values.englishProficiency.testType === "Other" && !values.englishProficiency.otherTestName.trim()) errors.otherTestName = "Enter the name of the English test.";
+    }
+    if (values.englishProficiency.overallScore && !values.englishProficiency.testType) errors.testType = "Select the test type for this score.";
+    if (values.englishProficiency.testType === "No Test / Not Taken"
+      && [values.englishProficiency.overallScore, values.englishProficiency.listening, values.englishProficiency.reading, values.englishProficiency.writing, values.englishProficiency.speaking].some(Boolean)) {
+      errors.testType = "Clear the test scores or select the test they belong to.";
     }
     if (values.englishProficiency.overallScore && (!Number.isFinite(Number(values.englishProficiency.overallScore)) || Number(values.englishProficiency.overallScore) < 0)) {
       errors.overallScore = "Enter a valid non-negative score.";
+    }
+    const limits = {
+      IELTS: { overall: 9, section: 9 },
+      "TOEFL iBT": { overall: 120, section: 30 },
+      PTE: { overall: 90, section: 90 },
+      "Duolingo English Test": { overall: 160, section: 160 },
+    };
+    const scoreLimits = limits[values.englishProficiency.testType];
+    if (scoreLimits && values.englishProficiency.overallScore) {
+      const score = Number(values.englishProficiency.overallScore);
+      if (score > scoreLimits.overall) errors.overallScore = `The ${values.englishProficiency.testType} overall score cannot exceed ${scoreLimits.overall}.`;
+      if (values.englishProficiency.testType === "TOEFL iBT" && !Number.isInteger(score)) errors.overallScore = "The TOEFL iBT overall score must be a whole number.";
+    }
+    if (scoreLimits) {
+      for (const field of ["listening", "reading", "writing", "speaking"] as const) {
+        const value = values.englishProficiency[field];
+        if (value && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > scoreLimits.section)) {
+          errors[field] = `The ${values.englishProficiency.testType} ${field} score must be between 0 and ${scoreLimits.section}.`;
+        }
+      }
+    }
+    const testDate = values.englishProficiency.testDate;
+    const [year, month, day] = (testDate || "").split("-").map(Number);
+    const parsedTestDate = new Date(Date.UTC(year, month - 1, day));
+    const validTestDate = /^\d{4}-\d{2}-\d{2}$/.test(testDate || "")
+      && parsedTestDate.getUTCFullYear() === year
+      && parsedTestDate.getUTCMonth() === month - 1
+      && parsedTestDate.getUTCDate() === day;
+    if (testDate && (!validTestDate || testDate > new Date().toISOString().slice(0, 10))) {
+      errors.testDate = "Enter a valid test date that is not in the future.";
     }
   }
   return errors;
@@ -214,14 +249,23 @@ function reviewList(items: (string | undefined)[]) {
   return items.filter((item) => item && item !== "Other").join(", ");
 }
 
-function reviewSections(values: StudentProfile): [string, [string, string][]][] {
+type ReviewSectionTitle = "About You" | "Academic Background" | "Study Goals" | "Language & Funding";
+
+const REVIEW_SECTION_META: Record<ReviewSectionTitle, { icon: LucideIcon; step: number }> = {
+  "About You": { icon: UserRound, step: 0 },
+  "Academic Background": { icon: GraduationCap, step: 1 },
+  "Study Goals": { icon: Target, step: 2 },
+  "Language & Funding": { icon: Languages, step: 3 },
+};
+
+function reviewSections(values: StudentProfile): [ReviewSectionTitle, [string, string][]][] {
   const { personalInfo: personal, academicBackground: academic, studyPreferences: goals, englishProficiency: english } = values;
   const scale = academic.gradingScale === "Other" ? academic.customGradingScale : academic.gradingScale;
   return [
-    ["About You", [["Full name", personal.fullName], ["Email", personal.email], ["Nationality", personal.citizenshipCountry], ["Country of residence", personal.currentCountry], ["Date of birth", personal.dateOfBirth]]],
-    ["Academic Background", [["Degree", academic.currentDegree], ["Degree title / major", academic.degreeTitle], ["University", academic.institution], ["Current semester / year", academic.currentYear], ["CGPA", academic.cgpa && `${academic.cgpa} / ${scale}`], ["Graduation", academic.academicStatus === "graduated" ? academic.graduationDate : academic.expectedGraduationDate]]],
-    ["Study Goals", [["Preferred fields", reviewList([...goals.fields, goals.customField])], ["Preferred destinations", reviewList([...goals.countries, goals.otherCountry, ...goals.regions])], ["Intake", reviewList([goals.intake, goals.admissionYear])]]],
-    ["Language & Funding", [["English test status", english.testStatus], ["English test", english.testType], ["Overall score", english.overallScore], ["Funding preference", goals.fundingPreference]]],
+    ["About You", [["Full Name", personal.fullName], ["Email", personal.email], ["Nationality", personal.citizenshipCountry], ["Country of Residence", personal.currentCountry], ["Date of Birth", personal.dateOfBirth], ["Phone Number", personal.phoneNumber]]],
+    ["Academic Background", [["Degree", academic.currentDegree], ["Degree Title / Major", academic.degreeTitle], ["Academic Field", academic.major], ["University", academic.institution], ["Current Semester / Year", academic.currentYear], ["CGPA", academic.cgpa !== "" ? `${academic.cgpa} / ${scale}` : ""], [academic.academicStatus === "graduated" ? "Graduation Date" : "Expected Graduation", academic.academicStatus === "graduated" ? academic.graduationDate : academic.expectedGraduationDate], ["Skills", reviewList([academic.technicalSkills, academic.programmingLanguages])], ["Research Interests", academic.projects]]],
+    ["Study Goals", [["Target Degree Level", goals.intendedDegree], ["Preferred Fields", reviewList([...goals.fields, goals.customField])], ["Preferred Destinations", reviewList([...goals.countries, goals.otherCountry, ...goals.regions])]]],
+    ["Language & Funding", [["English Test Status", english.testStatus], ["Willingness to Take an English Test", english.willingToTest], ["English Test", english.testType === "Other" ? english.otherTestName : english.testType], ["Overall Score", english.overallScore], ["Listening", english.listening], ["Reading", english.reading], ["Writing", english.writing], ["Speaking", english.speaking], ["Test Date", english.testDate], ["Funding Preference", goals.fundingPreference], ["Preferred Funding Types", reviewList(goals.fundingPreferences)], ["Annual Tuition Budget", goals.maxTuitionBudget !== "" ? `${goals.currency} ${goals.maxTuitionBudget}` : ""], ["Monthly Living Budget", goals.maxLivingCostBudget !== "" ? `${goals.currency} ${goals.maxLivingCostBudget}` : ""]]],
   ];
 }
 
@@ -239,8 +283,9 @@ export default function FormLayout01({
   editing = false,
   completionPercent = 0,
   notice = null,
+  extractionSource = "",
 }: {
-  onSave?: (values: any, progress: { step: number; complete: boolean }) => Promise<boolean> | boolean;
+  onSave?: (values: any, progress: { step: number; complete: boolean }) => Promise<boolean | { success?: boolean; persisted?: boolean }> | boolean | { success?: boolean; persisted?: boolean };
   onComplete?: () => void;
   onCancel?: () => void;
   onStepChange?: (step: number) => void;
@@ -253,6 +298,7 @@ export default function FormLayout01({
   editing?: boolean;
   completionPercent?: number;
   notice?: React.ReactNode;
+  extractionSource?: string;
   [key: string]: any;
 }) {
   const [values, setValues] = React.useState(() => mergeProfile(initialValues || EMPTY_PROFILE));
@@ -260,7 +306,10 @@ export default function FormLayout01({
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [feedback, setFeedback] = React.useState("");
   const [reviewConfirmed, setReviewConfirmed] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const submitLock = React.useRef(false);
   const progressPercent = editing ? completionPercent : Math.round(((step + 1) / STEPS.length) * 100);
+  const isBusy = isSaving || isSubmitting;
   const cancel = () => (onCancel ? onCancel() : window.history.back());
 
   React.useEffect(() => {
@@ -280,28 +329,42 @@ export default function FormLayout01({
   const save = async (complete = false) => {
     setFeedback("");
     const result = await onSave?.(values, { step, complete });
-    if (result !== false) setFeedback(complete ? "Profile saved successfully." : "Draft saved. You can continue later.");
-    return result !== false;
+    if (result === false || (result && typeof result === "object" && result.success === false)) return false;
+    if (result && typeof result === "object" && result.persisted === false) setFeedback("Draft saved on this device. It has not been synced to your account.");
+    else setFeedback(complete ? "Profile saved successfully." : "Draft saved. You can continue later.");
+    return true;
   };
   const continueStep = async () => {
-    if (step < LAST_PROFILE_STEP && !editing) {
-      const nextErrors = validateStep(step, values);
-      setErrors(nextErrors);
-      if (Object.keys(nextErrors).length) return;
-      if (await save(false)) goTo(step + 1);
-      return;
+    if (submitLock.current || isBusy) return;
+    submitLock.current = true;
+    setIsSubmitting(true);
+    try {
+      if (step < LAST_PROFILE_STEP && !editing) {
+        const nextErrors = validateStep(step, values);
+        setErrors(nextErrors);
+        if (Object.keys(nextErrors).length) return;
+        if (await save(false)) goTo(step + 1);
+        return;
+      }
+      const problem = firstInvalidStep(values);
+      if (problem) {
+        setErrors(problem.errors);
+        goTo(problem.step);
+        return;
+      }
+      if (requiresReviewConfirmation && !reviewConfirmed) {
+        setErrors({ reviewConfirmed: "Confirm that you have checked the details taken from your CV." });
+        return;
+      }
+      if (await save(true)) onComplete?.();
+    } finally {
+      submitLock.current = false;
+      setIsSubmitting(false);
     }
-    const problem = firstInvalidStep(values);
-    if (problem) {
-      setErrors(problem.errors);
-      goTo(problem.step);
-      return;
-    }
-    if (requiresReviewConfirmation && !reviewConfirmed) {
-      setErrors({ reviewConfirmed: "Confirm that you have checked the details taken from your CV." });
-      return;
-    }
-    if (await save(true)) onComplete?.();
+  };
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void continueStep();
   };
 
   const personal = values.personalInfo;
@@ -346,33 +409,59 @@ export default function FormLayout01({
     : goals.fields;
   const destinationOptions = [...COUNTRIES, ...REGIONS];
   const selectedDestinations = [...goals.countries, ...goals.regions];
-  const languageOptions = ["English", "French", "German", "Spanish", "Italian", "Japanese", "Mandarin", "Other"];
-  if (goals.languageOfInstruction && !languageOptions.includes(goals.languageOfInstruction)) {
-    languageOptions.unshift(goals.languageOfInstruction);
-  }
   const updateDestinations = (destinations) => {
     update("studyPreferences", "countries", destinations.filter((destination) => !REGIONS.includes(destination)));
     update("studyPreferences", "regions", destinations.filter((destination) => REGIONS.includes(destination)));
   };
 
-  const footerActions = <footer className={`profile-wizard-actions mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800${step === 1 ? " is-academic-sticky" : ""}`}>{!editing && <Button type="button" variant="outline" size="sm" onClick={() => save(false)} disabled={isSaving}><Save size={12} className="mr-1.5" />Save Draft</Button>}<div className="ml-auto flex gap-2">{(step === 0 || editing) && <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={isSaving}>Cancel</Button>}{step > 0 && !editing && <Button type="button" variant="outline" size="sm" onClick={() => goTo(step - 1)} disabled={isSaving}><ArrowLeft size={12} className="mr-1" />Back</Button>}<Button type="button" size="sm" onClick={continueStep} disabled={isSaving}>{isSaving ? "Saving..." : editing ? "Save Changes" : step === LAST_PROFILE_STEP ? finalButtonLabel : "Continue"}{step === LAST_PROFILE_STEP || editing ? <Check size={12} className="ml-1.5" /> : <ArrowRight size={12} className="ml-1.5" />}</Button></div></footer>;
+  const footerActions = <footer className={`profile-wizard-actions mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4 dark:border-slate-800${step === 1 ? " is-academic-sticky" : ""}${step === LAST_PROFILE_STEP ? " profile-review-actions" : ""}`}>{!editing && <Button type="button" variant="outline" size="sm" onClick={() => save(false)} disabled={isBusy}><Save size={12} className="mr-1.5" />Save Draft</Button>}<div className="ml-auto flex gap-2">{(step === 0 || editing) && <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={isBusy}>Cancel</Button>}{step > 0 && <Button type="button" variant="outline" size="sm" onClick={() => goTo(step - 1)} disabled={isBusy}><ArrowLeft size={12} className="mr-1" />Back</Button>}<Button type="submit" size="sm" disabled={isBusy}>{isBusy ? "Saving..." : editing ? "Save Changes" : step === LAST_PROFILE_STEP ? finalButtonLabel : "Continue"}{step === LAST_PROFILE_STEP || editing ? <Check size={12} className="ml-1.5" /> : <ArrowRight size={12} className="ml-1.5" />}</Button></div></footer>;
+  const review = reviewSections(values);
+  const renderReviewSection = ([title, rows]: ReturnType<typeof reviewSections>[number]) => {
+    const { icon: Icon, step: editStep } = REVIEW_SECTION_META[title];
+    return <section key={title} aria-label={title} className="profile-review-card">
+      <header className="profile-review-card-header">
+        <div className="profile-review-card-title">
+          <span className="profile-review-card-icon"><Icon size={16} aria-hidden="true" /></span>
+          <h2>{title}</h2>
+        </div>
+        <button type="button" onClick={() => goTo(editStep)} className="profile-review-edit" aria-label={`Edit ${title} section`}>
+          <Pencil size={14} aria-hidden="true" /> <span>Edit Section</span>
+        </button>
+      </header>
+      <dl className="profile-review-rows">
+        {rows.map(([label, value]) => {
+          const missing = !value.trim();
+          return (
+            <div key={label} className="profile-review-row">
+              <dt>{label}</dt>
+              <dd className={missing ? "profile-review-value is-missing" : "profile-review-value"}>{missing ? "Not provided" : value}</dd>
+            </div>
+          );
+        })}
+      </dl>
+    </section>;
+  };
 
   return <div className="profile-wizard-root min-h-[calc(100vh-48px)] w-full bg-slate-50 dark:bg-slate-950">
     <div className="profile-wizard-content w-full">
-    <header className="profile-wizard-header mb-6">
+    <header className={`profile-wizard-header mb-6${step === LAST_PROFILE_STEP ? " profile-review-header" : ""}`}>
       <div className="profile-wizard-heading flex flex-wrap items-end justify-between gap-3">
-        <div className="flex items-start gap-2"><button type="button" onClick={cancel} className="mt-0.5 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Go back"><ArrowLeft size={16} /></button><div><h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-[26px]">{editing ? "Edit your profile" : "Build your Master's profile"}</h1></div></div>
+        <div className="flex items-start gap-2"><button type="button" onClick={cancel} className="mt-0.5 rounded-md p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white" aria-label="Go back"><ArrowLeft size={16} /></button><div><h1 className="text-2xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-[26px]">{step === LAST_PROFILE_STEP ? "Review Your Profile" : editing ? "Edit your profile" : "Build your Master's profile"}</h1>{step === LAST_PROFILE_STEP && <p className="profile-review-subtitle">Review your information before completing your profile.</p>}</div></div>
+        {step === LAST_PROFILE_STEP && <span className="profile-review-completion"><Check size={13} aria-hidden="true" />{progressPercent}% complete</span>}
       </div>
-      <div className="mt-4">
+      {step < LAST_PROFILE_STEP && <div className="mt-4">
         <p className="text-xs font-semibold text-sky-700 dark:text-sky-300">{editing ? <>Profile {progressPercent}% complete</> : <>Step {step + 1} of {STEPS.length} · {progressPercent}% complete</>}</p>
         <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800" role="progressbar" aria-label="Profile setup progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><div className="h-full rounded-full bg-sky-600 transition-all" style={{ width: `${progressPercent}%` }} /></div>
-      </div>
-      <div className="profile-wizard-stepper mt-5 flex items-center" aria-label="Profile progress">{STEPS.map((title, index) => <React.Fragment key={title}><button type="button" onClick={() => (index <= step || editing) && goTo(index)} className="flex min-w-0 items-center gap-2 text-left" aria-label={`Go to ${title}`}><span className={`profile-wizard-step-number flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${index <= step ? "border-sky-600 bg-sky-600 text-white" : "border-slate-200 bg-slate-100 text-slate-500 dark:border-slate-700 dark:bg-slate-900"}`}>{index < step ? <Check size={12} strokeWidth={3} /> : index + 1}</span><span className={`profile-wizard-step-label hidden truncate text-[11px] sm:inline ${index === step ? "font-semibold text-sky-700 dark:text-sky-300" : "text-slate-500"}`}>{title}</span></button>{index < STEPS.length - 1 && <span className={`profile-wizard-step-line mx-2 h-px min-w-5 flex-1 ${index < step ? "bg-sky-300" : "bg-slate-200 dark:bg-slate-700"}`} />}</React.Fragment>)}</div>
+      </div>}
+      <div className="profile-wizard-stepper mt-5 flex items-center" aria-label="Profile progress">{STEPS.map((title, index) => <React.Fragment key={title}><button type="button" onClick={() => (index <= step || editing) && goTo(index)} className="flex min-w-0 items-center gap-2 text-left" aria-label={`Go to ${title}`}><span className={`profile-wizard-step-number flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${index <= step ? "border-sky-600 bg-sky-600 text-white" : "border-slate-200 bg-slate-100 text-slate-500 dark:border-slate-700 dark:bg-slate-900"}`}>{index < step ? <Check size={12} strokeWidth={3} /> : index + 1}</span><span className={`profile-wizard-step-label text-[11px] ${index === step ? "font-semibold text-sky-700 dark:text-sky-300" : "text-slate-500"}`}>{title}</span></button>{index < STEPS.length - 1 && <span className={`profile-wizard-step-line mx-2 h-px min-w-5 flex-1 ${index < step ? "bg-sky-300" : "bg-slate-200 dark:bg-slate-700"}`} />}</React.Fragment>)}</div>
     </header>
 
     {notice}
     {saveError && <p role="alert" className="profile-wizard-notice border border-red-200 bg-red-50 text-red-700"><AlertCircle size={16} aria-hidden="true" />{saveError}</p>}
     {feedback && <p role="status" className="profile-wizard-notice border border-emerald-200 bg-emerald-50 text-emerald-700"><Check size={16} aria-hidden="true" />{feedback}</p>}
+
+    <form onSubmit={handleSubmit} noValidate>
+    {Object.values(errors).some(Boolean) && <p role="alert" className="profile-wizard-notice border border-red-200 bg-red-50 text-red-700">Please correct the highlighted fields before continuing.</p>}
 
     {step === 0 && <Section title="About You" description="Let's start with your basic information." className="profile-about-panel"><div className="profile-about-fields grid gap-4 sm:grid-cols-2">
       <Field label="Full Name" required error={errors.fullName}>{input("personalInfo", "fullName", { autoComplete: "name" })}</Field>
@@ -468,23 +557,6 @@ export default function FormLayout01({
           <MultiSelect label="Preferred Countries / Regions" options={destinationOptions} value={selectedDestinations} onChange={updateDestinations} placeholder="Search or select destinations..." />
           <span className="profile-goal-helper">Select multiple options</span>
         </GroupField>
-        <Field label="Intended Intake" required error={errors.intake} className="profile-goal-intake">
-          <span className="profile-goal-icon-control"><CalendarDays size={12} aria-hidden="true" />{select("studyPreferences", "intake", ["Spring", "Fall"])}</span>
-        </Field>
-        <Field label="Intended Admission Year" required error={errors.admissionYear} className="profile-goal-year">
-          <span className="profile-goal-icon-control"><CalendarDays size={12} aria-hidden="true" />{select("studyPreferences", "admissionYear", ["2027", "2028", "2029", "2030"])}</span>
-        </Field>
-        <GroupField label="Program Type" required error={errors.programPreference} className="profile-goal-program">
-          <div className="profile-program-options" role="group" aria-label="Preferred program type">
-            {["Coursework", "Research", "Either"].map((program) => <button key={program} type="button" aria-pressed={goals.programPreference === program} className={goals.programPreference === program ? "is-selected" : ""} onClick={() => update("studyPreferences", "programPreference", program)}><span className="profile-program-radio">{goals.programPreference === program && <span />}</span>{program}</button>)}
-          </div>
-        </GroupField>
-        <Field label="Preferred Language of Instruction" required error={errors.languageOfInstruction} className="profile-goal-language">
-          <span className="profile-goal-icon-control"><Globe2 size={12} aria-hidden="true" />{select("studyPreferences", "languageOfInstruction", languageOptions)}</span>
-        </Field>
-        <Field label={<>Preferred Program Duration <span className="font-normal text-slate-500">(Optional)</span></>} className="profile-goal-duration">
-          <span className="profile-goal-icon-control"><CalendarDays size={12} aria-hidden="true" />{select("studyPreferences", "preferredProgramDuration", [{ value: "1 year", label: "1 year" }, { value: "1-2 years", label: "1–2 years" }, { value: "2 years", label: "2 years" }, { value: "3+ years", label: "3+ years" }])}</span>
-        </Field>
         {goals.fields.includes("Other") && <Field label="Other preferred field" className="profile-goal-other-field">{input("studyPreferences", "customField", { placeholder: "Enter your preferred field" })}</Field>}
         {goals.countries.includes("Other") && <Field label="Other preferred destination" className="profile-goal-other-country">{input("studyPreferences", "otherCountry", { placeholder: "Enter a country" })}</Field>}
         <div className="profile-study-tip"><Lightbulb size={13} aria-hidden="true" /><span>You can always update your preferences later. We'll match you with opportunities based on your current choices.</span></div>
@@ -507,6 +579,9 @@ export default function FormLayout01({
         <Field label={<>Monthly Living Expense Budget ({goals.currency || "USD"})</>} required error={errors.maxLivingCostBudget} className="profile-funding-living">
           <span className="profile-money-control"><span>{goals.currency === "USD" || !goals.currency ? "$" : goals.currency}</span>{input("studyPreferences", "maxLivingCostBudget", { type: "number", min: "0", placeholder: "e.g. 800" })}</span>
         </Field>
+        <Field label="Budget Currency (3-letter code)" required error={errors.currency} className="profile-funding-currency">
+          {input("studyPreferences", "currency", { type: "text", maxLength: 3, placeholder: "USD", autoCapitalize: "characters" })}
+        </Field>
         <GroupField label="Preferred Funding Types (Select all that apply)" required error={errors.fundingPreferences} className="profile-funding-types">
           <div className="profile-funding-type-options">
             {FUNDING_TYPES.map((type) => {
@@ -526,9 +601,20 @@ export default function FormLayout01({
         <Field label="English Test Type" error={errors.testType} className="profile-funding-test-type">
           {select("englishProficiency", "testType", ["IELTS", "TOEFL iBT", "PTE", "Duolingo English Test", "Other", "No Test / Not Taken"], { "aria-label": "English test type (optional)" })}
         </Field>
+        {english.testType === "Other" && <Field label="Other English Test" error={errors.otherTestName} className="profile-funding-other-test">
+          {input("englishProficiency", "otherTestName", { placeholder: "Enter the test name" })}
+        </Field>}
         <Field label="Expected Test Score (Overall)" error={errors.overallScore} className="profile-funding-score">
           {input("englishProficiency", "overallScore", { type: "number", min: "0", step: "any", placeholder: "e.g. 7.0", "aria-label": "English test score (optional)" })}
         </Field>
+        <Field label="Test Date" error={errors.testDate} className="profile-funding-test-date">
+          {input("englishProficiency", "testDate", { type: "date" })}
+        </Field>
+        {["IELTS", "TOEFL iBT", "PTE"].includes(english.testType) && (["listening", "reading", "writing", "speaking"] as const).map((field) => (
+          <Field key={field} label={field[0].toUpperCase() + field.slice(1)} error={errors[field]} className="profile-funding-section-score">
+            {input("englishProficiency", field, { type: "number", min: "0", step: "any" })}
+          </Field>
+        ))}
         <Field label="Medium of Instruction (MOI) Certificate Available?" className="profile-funding-moi">
           {select("englishProficiency", "mediumOfInstruction", ["Yes", "No", "Not available"])}
         </Field>
@@ -552,22 +638,24 @@ export default function FormLayout01({
       {footerActions}
     </section>}
 
-    {step === LAST_PROFILE_STEP && <Section title="Review & Complete" description="Check your details. Use Back or the steps above to change anything.">
-      <div className="grid gap-6 sm:grid-cols-2">
-        {reviewSections(values).map(([title, rows]) => <section key={title} aria-label={title}>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{title}</h3>
-          <dl className="mt-2 space-y-1.5 text-sm">
-            {rows.map(([label, value]) => <div key={label} className="flex justify-between gap-4"><dt className="text-slate-500 dark:text-slate-400">{label}</dt><dd className="text-right font-medium text-slate-900 dark:text-slate-100">{value || "Not provided"}</dd></div>)}
-          </dl>
-        </section>)}
+    {step === LAST_PROFILE_STEP && <section className="profile-review-panel" aria-label="Profile information review">
+      <div className="profile-review-grid">
+        <div className="profile-review-column">{review.slice(0, 2).map(renderReviewSection)}</div>
+        <div className="profile-review-column">{review.slice(2).map(renderReviewSection)}</div>
       </div>
+      {requiresReviewConfirmation && <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">
+        {extractionSource === "api"
+          ? "This draft includes information from the configured external CV extraction service. Review every field before saving."
+          : "This draft was extracted locally in your browser. No external AI service was used. Review every field before saving."}
+      </p>}
       {requiresReviewConfirmation && <label className="mt-5 flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200">
         <input type="checkbox" className="mt-0.5" aria-invalid={Boolean(errors.reviewConfirmed)} checked={reviewConfirmed} onChange={(event) => { setReviewConfirmed(event.target.checked); setErrors((current) => ({ ...current, reviewConfirmed: undefined })); }} />
         <span>I have checked the details taken from my CV, and they are correct.</span>
       </label>}
       {errors.reviewConfirmed && <span role="alert" className="mt-1 flex items-center gap-1 text-xs text-red-600 dark:text-red-300"><AlertCircle size={12} />{errors.reviewConfirmed}</span>}
       {footerActions}
-    </Section>}
+    </section>}
+    </form>
     </div>
   </div>;
 }

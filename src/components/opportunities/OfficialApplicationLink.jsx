@@ -9,24 +9,18 @@ function isHttpUrl(value) {
 }
 
 // FitScholars never submits applications; this only links to the official portal when a verified URL exists.
-export default function OfficialApplicationLink({ opportunity, applied, onToggleApplied }) {
+export default function OfficialApplicationLink({ opportunity }) {
   const verified = opportunity.applicationUrlStatus === 'official-verified' && isHttpUrl(opportunity.applicationUrl);
   return (
     <section className="official-application" aria-label="Official application">
-      <h2>Apply on the official website</h2>
-      <p>FitScholars does not submit applications. You must complete and submit your application yourself on the official website.</p>
+      <h2><ExternalLink size={17} aria-hidden="true" />Official application</h2>
+      <p>Apply directly with the provider. FitScholar does not submit applications.</p>
       {verified ? (
         <a className="btn btn-primary" href={opportunity.applicationUrl} target="_blank" rel="noopener noreferrer">
-          Apply on Official Website <ExternalLink size={14} aria-hidden="true" />
+          Apply officially <ExternalLink size={14} aria-hidden="true" />
         </a>
       ) : (
-        <p role="status">A verified official application link is not available yet for this opportunity. Check the provider&apos;s official website directly.</p>
-      )}
-      {onToggleApplied && (
-        <label className="official-application-record">
-          <input type="checkbox" checked={Boolean(applied)} onChange={(event) => onToggleApplied(event.target.checked)} />
-          I have submitted this application myself (recorded by you; not checked by FitScholars)
-        </label>
+        <p role="status">No verified application link. Visit the provider&apos;s official website.</p>
       )}
     </section>
   );

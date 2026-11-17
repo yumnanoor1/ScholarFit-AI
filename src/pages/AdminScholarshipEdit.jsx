@@ -1,22 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { ArrowLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { adminApi } from '../services/adminApi';
 import {
   FORM_SECTIONS, REVIEW_LABELS, getOpenReviewGroups, isDirty, toFormValues, toPayload, validateForm,
 } from '../services/adminScholarshipForm';
-import { getMatchTone } from '../services/eligibilityBadges';
+import { createLatestRequestGuard } from '../services/discoveryReviewState.js';
+import AdminScholarshipImport from './AdminScholarshipImport';
 import './AdminScholarships.css';
 
 const SEVERITY_TONES = { high: 'danger', medium: 'warning', low: 'neutral' };
 const FLAGS = [['conflicting_information', 'Conflicting information'], ['outdated_source', 'Outdated source'], ['broken_source', 'Broken source'], ['needs_reverification', 'Needs re-verification']];
 const SOURCE_TONES = { ok: 'success', broken: 'danger', inconclusive: 'neutral', invalid: 'warning' };
-const OUTCOMES = [['confirmed', 'Confirmed Match'], ['potential', 'Potential Match'], ['needs_verification', 'Needs Verification'], ['not_a_match', 'Not a Match']];
-const LINK_TYPES = ['unconfirmed', 'named_program', 'all_programs_at_university', 'programs_meeting_stated_criteria'];
-const EMPTY_LINK = { program_id: '', outcome: 'potential', relationship_type: 'unconfirmed', evidence: '', source_url: '', verification_status: 'unverified', last_verified: '', notes: '' };
 
-function FormField({ field, value, error, onChange, universities }) {
+function FormField({ field, value, error, onChange }) {
   const id = `field-${field.name}`;
   const common = { id, value, onChange: (event) => onChange(field.name, event.target.value), 'aria-invalid': Boolean(error) };
   let input = <input {...common} type={field.type === 'date' ? 'date' : 'text'} inputMode={field.type === 'number' || field.type === 'integer' ? 'decimal' : undefined} />;
@@ -25,9 +23,6 @@ function FormField({ field, value, error, onChange, universities }) {
     input = <select {...common}><option value="">Not recorded</option>{field.options.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>;
   }
   if (field.type === 'boolean') input = <select {...common}><option value="">Not recorded</option><option value="true">Yes</option><option value="false">No</option></select>;
-  if (field.type === 'university') {
-    input = <select {...common}><option value="">Not in the catalog</option>{universities.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
-  }
   return (
     <div className={`admin-field ${field.type === 'textarea' || field.type === 'lines' ? 'is-wide' : ''}`}>
       <label htmlFor={id}>{field.label}{field.required ? ' *' : ''}</label>
@@ -56,10 +51,12 @@ function VerificationPanel({ token, record, onDone, run }) {
       </p>
       <div className="admin-grid">
         <div className="admin-field"><label htmlFor="v-status">Decision</label>
-          <select id="v-status" value={form.status} onChange={(event) => set('status', event.target.value)}><option value="verified">Verified</option><option value="unverified">Unverified</option></select>
+          <select id="v-status" value={form.status} onChange={(event) => set('status', event.target.value)}><option value="verified" disabled={form.basis !== 'official_source'}>Verified</option><option value="unverified">Unverified</option></select>
         </div>
         <div className="admin-field"><label htmlFor="v-basis">Source type</label>
-          <select id="v-basis" value={form.basis} onChange={(event) => set('basis', event.target.value)}>
+          <select id="v-basis" value={form.basis} onChange={(event) => setForm((current) => ({
+            ...current, basis: event.target.value, status: event.target.value === 'official_source' ? current.status : 'unverified',
+          }))}>
             <option value="official_source">Official source</option><option value="mixed_sources">Official and secondary sources</option>
             <option value="secondary_only">Secondary sources only</option><option value="not_verified">Not verified</option>
           </select>
@@ -115,90 +112,17 @@ function SourcesPanel({ token, record, onDone, run }) {
   );
 }
 
-function RelationshipsPanel({ token, record, relationships, onDone, run }) {
-  const [programs, setPrograms] = useState([]);
-  const [form, setForm] = useState(EMPTY_LINK);
-  const [removing, setRemoving] = useState(null);
-  useEffect(() => { adminApi.programs(token).then(setPrograms).catch(() => setPrograms([])); }, [token]);
-  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
-  const edit = (item) => setForm({
-    program_id: String(item.program_id), outcome: item.outcome, relationship_type: item.relationship_type || 'unconfirmed', evidence: item.evidence || '',
-    source_url: item.source_url || '', verification_status: item.relationship_verification_status || 'unverified', last_verified: item.last_verified || '', notes: item.notes || '',
-  });
-  const save = () => run(async () => {
-    const { program_id: programId, ...body } = form;
-    await adminApi.saveLink(token, record.id, programId, {
-      ...body, evidence: body.evidence.trim() || null, source_url: body.source_url.trim() || null, last_verified: body.last_verified || null, notes: body.notes.trim() || null,
-    });
-    onDone(await adminApi.detail(token, record.id));
-    setForm(EMPTY_LINK);
-    return 'Relationship saved.';
-  });
-  const remove = (programId) => run(async () => {
-    await adminApi.removeLink(token, record.id, programId);
-    setRemoving(null);
-    onDone(await adminApi.detail(token, record.id));
-    return 'Relationship removed.';
-  });
-  return (
-    <section className="admin-card" aria-label="Program relationships">
-      <h2>Program relationships</h2>
-      <p className="admin-muted">This is separate from the scholarship's own verification. A Confirmed Match needs evidence, a source and a checked date.</p>
-      <ul className="admin-list">
-        {relationships.map((item) => (
-          <li key={item.program_id}>
-            <span className={`program-status is-${getMatchTone(item.outcome)}`}>{item.label}</span>
-            <span>{item.program_name}, {item.university_name}<small>{item.has_relationship ? item.evidence || 'No evidence recorded' : item.explanation}</small></span>
-            {item.has_relationship && (
-              <span className="admin-actions">
-                <button type="button" className="admin-link" onClick={() => edit(item)}>Edit</button>
-                {removing === item.program_id
-                  ? <button type="button" className="admin-link is-danger" onClick={() => remove(item.program_id)}>Confirm removal</button>
-                  : <button type="button" className="admin-link" onClick={() => setRemoving(item.program_id)}>Remove</button>}
-              </span>
-            )}
-          </li>
-        ))}
-        {relationships.length === 0 && <li>No relationships yet.</li>}
-      </ul>
-      <h3>Add or update a relationship</h3>
-      <div className="admin-grid">
-        <div className="admin-field"><label htmlFor="l-program">Program</label>
-          <select id="l-program" value={form.program_id} onChange={(event) => set('program_id', event.target.value)}>
-            <option value="">Choose a program</option>
-            {programs.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
-        </div>
-        <div className="admin-field"><label htmlFor="l-outcome">Outcome</label>
-          <select id="l-outcome" value={form.outcome} onChange={(event) => set('outcome', event.target.value)}>{OUTCOMES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-        </div>
-        <div className="admin-field"><label htmlFor="l-type">Coverage type</label>
-          <select id="l-type" value={form.relationship_type} onChange={(event) => set('relationship_type', event.target.value)}>{LINK_TYPES.map((value) => <option key={value} value={value}>{value.replace(/_/g, ' ')}</option>)}</select>
-        </div>
-        <div className="admin-field"><label htmlFor="l-status">Relationship verification</label>
-          <select id="l-status" value={form.verification_status} onChange={(event) => set('verification_status', event.target.value)}><option value="unverified">Unverified</option><option value="verified">Verified</option></select>
-        </div>
-        <div className="admin-field"><label htmlFor="l-url">Source URL</label><input id="l-url" value={form.source_url} onChange={(event) => set('source_url', event.target.value)} /></div>
-        <div className="admin-field"><label htmlFor="l-date">Date checked</label><input id="l-date" type="date" value={form.last_verified} onChange={(event) => set('last_verified', event.target.value)} /></div>
-        <div className="admin-field is-wide"><label htmlFor="l-evidence">Evidence</label><textarea id="l-evidence" rows={2} value={form.evidence} onChange={(event) => set('evidence', event.target.value)} /></div>
-        <div className="admin-field is-wide"><label htmlFor="l-notes">Notes</label><textarea id="l-notes" rows={2} value={form.notes} onChange={(event) => set('notes', event.target.value)} /></div>
-      </div>
-      <div className="admin-actions"><button type="button" className="btn btn-outline" disabled={!form.program_id} onClick={save}>Save relationship</button></div>
-    </section>
-  );
-}
-
 function ArchivePanel({ token, detail, onDone, run, onDeleted }) {
   const { scholarship: record, references } = detail;
   const [reason, setReason] = useState('');
   const [typed, setTyped] = useState('');
-  const inUse = references.saved_by_students + references.program_links + references.duplicates_pointing_here > 0;
+  const inUse = references.saved_by_students + references.internal_links + references.duplicates_pointing_here > 0;
   return (
     <section className="admin-card is-danger" aria-label="Archive or delete">
       <h2>Archive or delete</h2>
       <p>
-        Used by {references.saved_by_students} saved item{references.saved_by_students === 1 ? '' : 's'}, {references.program_links} program
-        relationship{references.program_links === 1 ? '' : 's'} and {references.duplicates_pointing_here} duplicate record{references.duplicates_pointing_here === 1 ? '' : 's'}.
+        Used by {references.saved_by_students} saved item{references.saved_by_students === 1 ? '' : 's'}, {references.internal_links} internal
+        link{references.internal_links === 1 ? '' : 's'} and {references.duplicates_pointing_here} duplicate record{references.duplicates_pointing_here === 1 ? '' : 's'}.
       </p>
       {record.archived ? (
         <>
@@ -237,10 +161,15 @@ export default function AdminScholarshipEdit() {
   const [original, setOriginal] = useState(() => toFormValues(null));
   const [errors, setErrors] = useState({});
   const [reviewed, setReviewed] = useState([]);
-  const [universities, setUniversities] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [requestGuard] = useState(createLatestRequestGuard);
+  const [importState, setImportState] = useState({
+    sourceCount: 0,
+    conflictsResolved: true,
+    confirmed: false,
+  });
 
   const apply = useCallback((data) => {
     setDetail(data);
@@ -252,13 +181,22 @@ export default function AdminScholarshipEdit() {
 
   const load = useCallback(() => {
     if (isNew) return;
+    const requestId = requestGuard.begin();
     adminApi.detail(token, id)
-      .then((data) => { apply(data); setLoadError(''); })
-      .catch((failure) => setLoadError(failure.message));
-  }, [token, id, isNew, apply]);
-  useEffect(load, [load]);
-  useEffect(() => { adminApi.universities(token).then(setUniversities).catch(() => setUniversities([])); }, [token]);
-
+      .then((data) => {
+        if (requestGuard.isCurrent(requestId)) {
+          apply(data);
+          setLoadError('');
+        }
+      })
+      .catch((failure) => {
+        if (requestGuard.isCurrent(requestId)) setLoadError(failure.message);
+      });
+  }, [token, id, isNew, apply, requestGuard]);
+  useEffect(() => {
+    load();
+    return () => requestGuard.invalidate();
+  }, [load, requestGuard]);
   const dirty = isDirty(values, original);
   useEffect(() => {
     if (!dirty) return undefined;
@@ -301,12 +239,25 @@ export default function AdminScholarshipEdit() {
       return result.warnings.length ? `Saved. ${result.warnings.join(' ')}` : 'Saved.';
     });
   };
+  const applyImportValues = useCallback((patch) => {
+    setValues((current) => ({ ...current, ...patch }));
+    setErrors((current) => Object.fromEntries(
+      Object.entries(current).filter(([name]) => !Object.hasOwn(patch, name)),
+    ));
+  }, []);
+  const handleImportStatus = useCallback((status) => {
+    setImportState((current) => ({
+      sourceCount: status.sourceCount,
+      conflictsResolved: status.conflictsResolved,
+      confirmed: status.sourceCount > current.sourceCount ? false : current.confirmed,
+    }));
+  }, []);
 
   if (loadError) {
     return (
       <div className="page-container admin-page">
         <p className="admin-notice is-error" role="alert">{loadError} <button type="button" className="admin-link" onClick={load}>Try again</button></p>
-        <Link to="/admin/scholarships">Back to records</Link>
+        <Link to="/admin/scholarships?section=records">Back to records</Link>
       </div>
     );
   }
@@ -317,7 +268,7 @@ export default function AdminScholarshipEdit() {
 
   return (
     <div className="page-container admin-page">
-      <Link className="admin-back" to="/admin/scholarships"><ArrowLeft size={15} aria-hidden="true" /> Back to records</Link>
+      <Link className="admin-back" to="/admin/scholarships?section=records"><ArrowLeft size={15} aria-hidden="true" /> Back to records</Link>
       <header className="admin-header">
         <div>
           <h1>{isNew ? 'Add scholarship' : record.name}</h1>
@@ -327,6 +278,15 @@ export default function AdminScholarshipEdit() {
       </header>
 
       {notice && <p className={`admin-notice is-${notice.tone}`} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.text}</p>}
+
+      {isNew && (
+        <AdminScholarshipImport
+          token={token}
+          values={values}
+          onApply={applyImportValues}
+          onStatusChange={handleImportStatus}
+        />
+      )}
 
       {!isNew && (
         <section className="admin-card" aria-label="Data quality">
@@ -345,7 +305,10 @@ export default function AdminScholarshipEdit() {
 
       {FORM_SECTIONS.map((section, index) => (
         <details className="admin-card" key={section.id} open={index === 0}>
-          <summary>{section.title}</summary>
+          <summary className="admin-chevron-summary">
+            <ChevronRight size={16} aria-hidden="true" />
+            {section.title}
+          </summary>
           <div className="admin-grid">
             {section.fields.map((field) => (
               <FormField
@@ -353,7 +316,6 @@ export default function AdminScholarshipEdit() {
                 field={field}
                 value={values[field.name]}
                 error={errors[field.name]}
-                universities={universities}
                 onChange={(name, value) => setValues((current) => ({ ...current, [name]: value }))}
               />
             ))}
@@ -377,8 +339,36 @@ export default function AdminScholarshipEdit() {
         </section>
       )}
 
+      {isNew && importState.sourceCount > 0 && (
+        <section className="admin-card" aria-label="Import review confirmation">
+          <h2>Confirm imported draft</h2>
+          <p className="admin-muted">
+            Imported information remains unverified. Review the populated form and source evidence;
+            creating the scholarship does not verify it or add it to RAG.
+          </p>
+          <label className="admin-check">
+            <input
+              type="checkbox"
+              checked={importState.confirmed}
+              onChange={(event) => setImportState((current) => ({ ...current, confirmed: event.target.checked }))}
+            />
+            I reviewed this draft and confirm that it is ready to create as an unverified scholarship.
+          </label>
+          {!importState.conflictsResolved && (
+            <p className="admin-field-error" role="alert">Resolve all imported source conflicts before creating.</p>
+          )}
+        </section>
+      )}
+
       <div className="admin-save-bar">
-        <button type="button" className="btn btn-primary" disabled={saving || (!dirty && reviewed.length === 0 && !isNew)} onClick={save}>{saving ? 'Saving...' : isNew ? 'Create scholarship' : 'Save changes'}</button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={saving || (!dirty && reviewed.length === 0 && !isNew) || (isNew && importState.sourceCount > 0 && (!importState.confirmed || !importState.conflictsResolved))}
+          onClick={save}
+        >
+          {saving ? 'Saving...' : isNew ? 'Create scholarship' : 'Save changes'}
+        </button>
         {dirty && <span className="admin-muted">Unsaved changes</span>}
       </div>
 
@@ -386,7 +376,6 @@ export default function AdminScholarshipEdit() {
         <>
           <VerificationPanel key={record.record_version} token={token} record={record} onDone={apply} run={run} />
           <SourcesPanel token={token} record={record} onDone={apply} run={run} />
-          <RelationshipsPanel token={token} record={record} relationships={detail.relationships} onDone={apply} run={run} />
           <section className="admin-card" aria-label="Change history">
             <h2>Change history</h2>
             {detail.audit.length === 0 && <p>No administrative changes yet.</p>}
@@ -403,7 +392,7 @@ export default function AdminScholarshipEdit() {
               ))}
             </ul>
           </section>
-          <ArchivePanel token={token} detail={detail} onDone={apply} run={run} onDeleted={() => navigate('/admin/scholarships', { replace: true })} />
+          <ArchivePanel token={token} detail={detail} onDone={apply} run={run} onDeleted={() => navigate('/admin/scholarships?section=records', { replace: true })} />
         </>
       )}
     </div>

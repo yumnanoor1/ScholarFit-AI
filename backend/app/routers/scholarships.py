@@ -1,18 +1,17 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.core.permissions import profile_incomplete_error, require_admin
-from app.models.opportunity import Program, Scholarship, ScholarshipProgramLink
+from app.models.opportunity import Scholarship
 from app.models.user import StudentProfile, User
 from app.routers.auth import get_optional_user
-from app.schemas.matching import MatchOutcome, MatchResult, ScholarshipCoverageCounts, ScholarshipProgramLinkWrite
 from app.schemas.opportunity import (
     ScholarshipCreate,
     ScholarshipUpdate,
-    ScholarshipResponse,
+    StudentScholarshipResponse,
     ScholarshipWriteResult,
 )
 from app.schemas.search import (
@@ -20,14 +19,18 @@ from app.schemas.search import (
     ScholarshipSearchResult, ScopeFilter, SortOption, VerificationFilter,
 )
 from app.services.profile_completion import profile_completion
-from app.services.scholarship_matching import coverage_counts, evaluate_match, get_link, programs_for_scholarship
-from app.services.scholarship_quality import create_record, delete_record, field_changes, record_audit, update_record, write_result
+from app.services.scholarship_quality import create_record, delete_record, update_record, write_result
 from app.services.scholarship_search import filter_options, search_scholarships
+from app.services.student_scholarship_visibility import (
+    get_student_scholarship,
+    get_student_scholarships,
+    scholarship_response_payload,
+)
 
 router = APIRouter(prefix="/scholarships", tags=["Scholarships"])
 
 
-@router.get("/", response_model=List[ScholarshipResponse])
+@router.get("/", response_model=List[StudentScholarshipResponse])
 def list_scholarships(
     country: Optional[str] = Query(None, description="Country contains, e.g. Germany"),
     funding_type: Optional[str] = Query(None, description="e.g. Fully Funded or Partially Funded"),
@@ -41,10 +44,12 @@ def list_scholarships(
 ):
     """List scholarships with optional filters. Anyone can view.
     Unverified records are hidden unless include_unverified=true."""
-    query = db.query(Scholarship).filter(Scholarship.archived_at.is_(None))
-
-    if not include_unverified:
-        query = query.filter(Scholarship.verification_status == "verified")
+    records = get_student_scholarships(db, include_unverified=include_unverified)
+    if not records:
+        return []
+    query = db.query(Scholarship.id).filter(
+        Scholarship.id.in_([record.scholarship.id for record in records])
+    )
     if country:
         query = query.filter(Scholarship.country.ilike(f"%{country}%"))
     if funding_type:
@@ -56,7 +61,18 @@ def list_scholarships(
     if search:
         query = query.filter(Scholarship.name.ilike(f"%{search}%"))
 
-    return query.order_by(Scholarship.name).offset(skip).limit(limit).all()
+    ordered_ids = [
+        row[0]
+        for row in query.order_by(Scholarship.name, Scholarship.id)
+        .offset(skip)
+        .limit(limit)
+        .all()
+    ]
+    records_by_id = {record.scholarship.id: record for record in records}
+    return [
+        scholarship_response_payload(records_by_id[scholarship_id])
+        for scholarship_id in ordered_ids
+    ]
 
 
 @router.get("/filter-options", response_model=ScholarshipFilterOptions)
@@ -78,8 +94,6 @@ def search(
     benefit: List[BenefitFilter] = Query([], description="All chosen benefits must be offered"),
     deadline: List[DeadlineFilter] = Query([]),
     verification: List[VerificationFilter] = Query([], description="Verified only unless unverified is asked for"),
-    program_id: Optional[int] = Query(None, gt=0),
-    match: List[MatchOutcome] = Query([], description="Needs program_id"),
     eligibility: List[EligibilityFilter] = Query([], description="Needs a signed-in student"),
     sort: Optional[SortOption] = Query(None),
     skip: int = Query(0, ge=0),
@@ -88,8 +102,6 @@ def search(
     current_user: Optional[User] = Depends(get_optional_user),
 ):
     """Search and filter scholarships. Anyone can browse; personal results use the signed-in student only."""
-    if match and program_id is None:
-        raise HTTPException(status_code=422, detail="Choose a program to filter by relationship")
     if current_user is None and (eligibility or sort == "recommendation"):
         raise HTTPException(status_code=401, detail="Log in to use your eligibility or recommendation score")
     personal = current_user is not None
@@ -100,36 +112,22 @@ def search(
                 raise profile_incomplete_error(completion)
             # Browsing stays open to everyone, so an unfinished profile sees what a visitor sees
             personal = False
-    program = None
-    if program_id is not None:
-        program = db.query(Program).filter(Program.id == program_id).first()
-        if not program:
-            raise HTTPException(status_code=404, detail="Program not found")
     profile = None
     if personal:
         profile = db.query(StudentProfile).filter(StudentProfile.user_id == current_user.id).first()
     filters = dict(q=q, host_country=host_country, nationality=nationality, nationality_scope=nationality_scope, degree=degree,
                    discipline=discipline, academic_condition=academic_condition, funding=funding, benefit=benefit, deadline=deadline,
-                   verification=verification, match=match, eligibility=eligibility)
-    return search_scholarships(db, filters, profile, personal, program, sort, skip, limit)
+                   verification=verification, eligibility=eligibility)
+    return search_scholarships(db, filters, profile, personal, sort=sort, skip=skip, limit=limit)
 
 
-@router.get("/program-coverage", response_model=List[ScholarshipCoverageCounts])
-def program_coverage(
-    include_unverified: bool = Query(False, description="Also count unverified records"),
-    db: Session = Depends(get_db),
-):
-    """How many catalog programs each scholarship may support. Anyone can view."""
-    return coverage_counts(db, include_unverified=include_unverified)
-
-
-@router.get("/{scholarship_id}", response_model=ScholarshipResponse)
+@router.get("/{scholarship_id}", response_model=StudentScholarshipResponse)
 def get_scholarship(scholarship_id: int, db: Session = Depends(get_db)):
     """Get a single scholarship by id"""
-    item = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-    if not item:
+    record = get_student_scholarship(db, scholarship_id)
+    if not record:
         raise HTTPException(status_code=404, detail="Scholarship not found")
-    return item
+    return scholarship_response_payload(record)
 
 
 @router.post("/", response_model=ScholarshipWriteResult, status_code=201)
@@ -168,77 +166,3 @@ def delete_scholarship(
     if not item:
         raise HTTPException(status_code=404, detail="Scholarship not found")
     delete_record(db, item, admin)
-
-
-def _pair(db: Session, scholarship_id: int, program_id: int):
-    scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-    if not scholarship:
-        raise HTTPException(status_code=404, detail="Scholarship not found")
-    program = db.query(Program).filter(Program.id == program_id).first()
-    if not program:
-        raise HTTPException(status_code=404, detail="Program not found")
-    return scholarship, program
-
-
-@router.get("/{scholarship_id}/programs", response_model=List[MatchResult])
-def scholarship_programs(
-    scholarship_id: int = Path(..., gt=0),
-    include_not_matches: bool = Query(False, description="Also return programs that are ruled out"),
-    db: Session = Depends(get_db),
-):
-    """Programs this scholarship may support, best evidence first. Anyone can view."""
-    scholarship = db.query(Scholarship).filter(Scholarship.id == scholarship_id).first()
-    if not scholarship:
-        raise HTTPException(status_code=404, detail="Scholarship not found")
-    return programs_for_scholarship(db, scholarship, include_not_matches=include_not_matches)
-
-
-@router.get("/{scholarship_id}/programs/{program_id}", response_model=MatchResult)
-def scholarship_program_match(
-    scholarship_id: int = Path(..., gt=0),
-    program_id: int = Path(..., gt=0),
-    db: Session = Depends(get_db),
-):
-    """The matching outcome for one scholarship and program, with its explanation and evidence."""
-    scholarship, program = _pair(db, scholarship_id, program_id)
-    return evaluate_match(scholarship, program, get_link(db, scholarship_id, program_id))
-
-
-@router.put("/{scholarship_id}/programs/{program_id}", response_model=MatchResult)
-def set_scholarship_program_link(
-    data: ScholarshipProgramLinkWrite,
-    scholarship_id: int = Path(..., gt=0),
-    program_id: int = Path(..., gt=0),
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    """Add or replace the relationship for this pair (admin only). A pair has at most one."""
-    scholarship, program = _pair(db, scholarship_id, program_id)
-    link = get_link(db, scholarship_id, program_id)
-    if link is None:
-        link = ScholarshipProgramLink(scholarship_id=scholarship_id, program_id=program_id)
-        db.add(link)
-    before = {field: getattr(link, field, None) for field in data.model_dump()}
-    for field, value in data.model_dump().items():
-        setattr(link, field, value)
-    record_audit(db, scholarship_id, "relationship", admin, field_changes(before, data.model_dump()), f"Program {program_id}")
-    db.commit()
-    db.refresh(link)
-    return evaluate_match(scholarship, program, link)
-
-
-@router.delete("/{scholarship_id}/programs/{program_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_scholarship_program_link(
-    scholarship_id: int = Path(..., gt=0),
-    program_id: int = Path(..., gt=0),
-    db: Session = Depends(get_db),
-    admin=Depends(require_admin),
-):
-    """Remove the relationship for this pair (admin only). The scholarship and program stay."""
-    _pair(db, scholarship_id, program_id)
-    link = get_link(db, scholarship_id, program_id)
-    if not link:
-        raise HTTPException(status_code=404, detail="Relationship not found")
-    record_audit(db, scholarship_id, "relationship_removed", admin, {"outcome": [link.outcome, None]}, f"Program {program_id}")
-    db.delete(link)
-    db.commit()

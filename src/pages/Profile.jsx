@@ -84,7 +84,7 @@ export default function Profile() {
     setSaveError('');
     try {
       const result = await updateProfile(formData, progress);
-      if (result?.success) return true;
+      if (result?.success) return result;
       // An edit that left the profile unfinished: onboarding explains what's missing
       if (result?.incomplete && !isFirstCompletion) {
         navigate(ONBOARDING_PATH, { replace: true });
@@ -115,8 +115,12 @@ export default function Profile() {
     const preferences = completedProfile.studyPreferences || {};
     const editSection = (index) => navigate(`/profile?edit=1&step=${index}`);
     const fullName = personal.fullName || user?.name || '';
-    const cgpaText = academic.cgpa && academic.gradingScale ? `${academic.cgpa} / ${academic.gradingScale}` : academic.cgpa;
-    const hasEnglishScore = english.testType && english.testType !== 'No Test / Not Taken' && english.overallScore;
+    const cgpaText = academic.cgpa !== '' && academic.cgpa !== null && academic.cgpa !== undefined && academic.gradingScale
+      ? `${academic.cgpa} / ${academic.gradingScale}`
+      : academic.cgpa;
+    const hasEnglishScore = english.testType
+      && english.testType !== 'No Test / Not Taken'
+      && english.overallScore !== '' && english.overallScore !== null && english.overallScore !== undefined;
     const highlights = [
       ['Current degree', academic.currentDegree],
       ['CGPA / GPA', cgpaText],
@@ -199,11 +203,10 @@ export default function Profile() {
           <ProfileSection index={3} onEdit={() => editSection(3)} items={[
             ["Preferred Master's fields", [...(preferences.fields || []), preferences.customField].filter(Boolean)],
             ['Preferred countries', [...(preferences.countries || []).filter((country) => country !== 'Other'), preferences.otherCountry].filter(Boolean)],
-            ['Preferred regions', preferences.regions], ['Preferred intake', preferences.intake], ['Study mode', preferences.studyMode],
-            ['Program preference', preferences.programPreference], ['Funding preference', preferences.fundingPreferences],
+            ['Preferred regions', preferences.regions], ['Funding preference', preferences.fundingPreferences],
             ['Maximum tuition budget', preferences.maxTuitionBudget && `${preferences.currency} ${preferences.maxTuitionBudget}`],
             ['Maximum living cost budget', preferences.maxLivingCostBudget && `${preferences.currency} ${preferences.maxLivingCostBudget}`],
-            ['Program duration', preferences.duration], ['Additional preferences', preferences.additionalPreferences],
+            ['Additional preferences', preferences.additionalPreferences],
           ]} />
         </div>
       </div>

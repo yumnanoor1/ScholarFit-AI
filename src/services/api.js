@@ -1,11 +1,6 @@
-import { getProfileApi } from './profileApi';
+import { getProfileApi, updateProfileApi } from './profileApi';
+import { extractDocumentData } from './documentAnalysis.js';
 import {
-  fetchMappedPrograms,
-  fetchProgramById,
-  mapProgramToFrontend,
-  fetchProgramEligibilities,
-  fetchProgramEligibilityById,
-  mapEligibilityToFrontend,
   getEligibilityErrorState,
   fetchMappedScholarships,
   fetchScholarshipById,
@@ -16,7 +11,7 @@ import {
   askAssistant,
   fetchFinancialPlan,
   putFinancialBudget,
-  putProgramExpenses,
+  putScholarshipExpenses,
   fetchScholarshipEligibilities,
   fetchScholarshipEligibilityById,
   mapScholarshipEligibilityToFrontend,
@@ -25,17 +20,12 @@ import {
   fetchScholarshipSearch,
   fetchScholarshipFilterOptions,
 } from './opportunityApi';
-import {
-  mockProfile,
-  mockScholarships,
-  mockApplicationPathways,
-} from '../data/mockData';
-
+import { buildApplicationPathway } from './opportunityJourney.js';
 /**
  * Service Layer for FitScholars
  * Provides an abstraction layer between UI components and backend services.
- * Profile, Programs, Universities, Scholarships, and Program eligibility call the real FastAPI backend.
- * Pathways, Recommendations, and Document extraction have no backend endpoints yet and use local data.
+ * Profiles and scholarship features call the real FastAPI backend.
+ * Features without a backend source return unavailable states instead of sample records.
  */
 function readStoredToken() {
   return typeof window !== 'undefined' ? localStorage.getItem('fitscholar_token') : null;
@@ -52,17 +42,8 @@ export const apiService = {
    */
   getProfile: async () => {
     const token = readStoredToken();
-    if (token) {
-      try {
-        const { exists, data } = await getProfileApi(token);
-        if (exists && data) return data;
-      } catch (err) {
-        console.warn('apiService.getProfile backend error:', err?.message);
-      }
-    }
-    return new Promise((resolve) => {
-      setTimeout(() => resolve({ ...mockProfile }), 300);
-    });
+    if (!token) return { exists: false, data: null };
+    return getProfileApi(token);
   },
 
   /**
@@ -70,83 +51,12 @@ export const apiService = {
    * FastAPI Target Endpoint: PUT /profile/
    */
   updateProfile: async (updatedData) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const updated = { ...mockProfile, ...updatedData };
-        resolve({ success: true, data: updated });
-      }, 400);
-    });
+    const token = readStoredToken();
+    if (!token) throw new Error('Sign in to update your profile.');
+    return updateProfileApi(token, updatedData);
   },
 
   // ---------------------------------------------------------------------------
-  // University & Admission Matching Endpoints
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Retrieve programs from the real FastAPI backend.
-   * FastAPI Endpoint: GET /programs/ + GET /universities/
-   * Returns frontend-mapped program objects joined with university data.
-   * Falls back to an empty array — never falls back to mock data.
-   */
-  getMatchedUniversities: async () => {
-    return fetchMappedPrograms();
-  },
-
-  /**
-   * Fetch details for a specific university program by its ID.
-   * ID may be a string (e.g. "3") because ProfileContext stores string IDs.
-   * FastAPI Endpoints: GET /programs/{id} + GET /universities/{university_id}
-   * Returns null if not found.
-   */
-  getUniversityById: async (id) => {
-    const result = await fetchProgramById(id);
-    if (!result) return null;
-    return mapProgramToFrontend(result.program, result.university);
-  },
-
-  // ---------------------------------------------------------------------------
-  // Program Eligibility Endpoints (authenticated)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Check the student's backend profile against every program.
-   * FastAPI Endpoint: GET /eligibility/programs
-   * Never rejects. Resolves to { state, results } where state is
-   * 'ok' | 'logged-out' | 'no-profile' | 'error' and results maps the
-   * frontend program ID (string) to a mapped evaluation.
-   */
-  getProgramEligibilities: async (token = readStoredToken()) => {
-    if (!token) return { state: 'logged-out', results: {} };
-    try {
-      const data = await fetchProgramEligibilities(token);
-      const results = Object.fromEntries(
-        (Array.isArray(data) ? data : []).map((item) => [String(item.program_id), mapEligibilityToFrontend(item)]),
-      );
-      return { state: 'ok', results };
-    } catch (err) {
-      console.warn('apiService.getProgramEligibilities backend error:', err?.message);
-      return { state: getEligibilityErrorState(err), results: {} };
-    }
-  },
-
-  /**
-   * Check the student's backend profile against one program.
-   * FastAPI Endpoint: GET /eligibility/programs/{id}
-   * Never rejects. Resolves to { state, evaluation } where state is
-   * 'ok' | 'logged-out' | 'no-profile' | 'not-found' | 'error'.
-   */
-  getProgramEligibilityById: async (id, token = readStoredToken()) => {
-    if (!token) return { state: 'logged-out', evaluation: null };
-    if (!Number.isFinite(Number(id))) return { state: 'not-found', evaluation: null };
-    try {
-      const data = await fetchProgramEligibilityById(token, id);
-      return { state: 'ok', evaluation: mapEligibilityToFrontend(data) };
-    } catch (err) {
-      console.warn('apiService.getProgramEligibilityById backend error:', err?.message);
-      return { state: getEligibilityErrorState(err), evaluation: null };
-    }
-  },
-
   /**
    * Check the student's backend profile against every verified scholarship.
    * FastAPI Endpoint: GET /eligibility/scholarships
@@ -231,26 +141,14 @@ export const apiService = {
 
   /**
    * Resolve a previously selected opportunity by ID.
-   * Checks programs from the real backend first, then mock scholarships.
+   * Checks programs and scholarships from the real backend.
    */
   getOpportunityById: async (id) => {
-    // Try real backend programs first
-    try {
-      const result = await fetchProgramById(id);
-      if (result) {
-        return { ...mapProgramToFrontend(result.program, result.university), kind: 'program' };
-      }
-    } catch (err) {
-      console.warn('getOpportunityById: backend lookup failed:', err?.message);
-    }
-    // Backend scholarships use "sch-db-<id>"
     if (parseScholarshipId(id) != null) {
       const scholarship = await fetchScholarshipById(id);
       return scholarship ? mapScholarshipToFrontend(scholarship) : null;
     }
-    // Older saved selections may still hold sample scholarship IDs (sch-1…)
-    const sample = mockScholarships.find((item) => item.id === id);
-    return sample ? { ...sample, kind: 'scholarship' } : null;
+    return null;
   },
 
   /**
@@ -266,23 +164,19 @@ export const apiService = {
   // Application Pathway & Financial Feasibility
   // ---------------------------------------------------------------------------
 
-  /**
-   * Get sequential application pathway steps for a target university.
-   * FastAPI Target Endpoint: GET /api/v1/pathways/{universityId}
-   */
-  getApplicationPathway: async (universityId, strategy = 'University First') => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const pathway = mockApplicationPathways.find(
-          (item) => item.universityId === universityId && item.type === strategy,
-        );
-        resolve(pathway ? { ...pathway, opportunityId: universityId } : null);
-      }, 300);
-    });
+  getApplicationPathway: async (opportunityOrId, strategyOrDocumentRecords = {}) => {
+    const opportunity = opportunityOrId && typeof opportunityOrId === 'object'
+      ? opportunityOrId
+      : await apiService.getOpportunityById(opportunityOrId);
+    const documentRecords = strategyOrDocumentRecords
+      && typeof strategyOrDocumentRecords === 'object'
+      ? strategyOrDocumentRecords
+      : {};
+    return buildApplicationPathway(opportunity, { documentRecords });
   },
 
   /**
-   * Calculate whether a program (optionally with a scholarship) fits the student's budget.
+   * Calculate scholarship affordability using verified linked cost data.
    * FastAPI Endpoint: POST /financial-feasibility/calculate
    * Rejects with an error carrying `.status` (401 when signed out).
    */
@@ -296,8 +190,8 @@ export const apiService = {
   },
 
   /**
-   * The student's saved budget and expense estimates.
-   * FastAPI Endpoints: GET /financial-feasibility/plan, PUT .../plan/budget, PUT .../plan/expenses/{programId}
+   * The student's saved budget and scholarship cost inputs.
+   * FastAPI Endpoints: GET /financial-feasibility/plan, PUT .../plan/budget and scholarship expenses.
    * Reject with an error carrying `.status` (401 when signed out).
    */
   getFinancialPlan: async (token = readStoredToken()) => {
@@ -310,20 +204,20 @@ export const apiService = {
     return putFinancialBudget(token, budget);
   },
 
-  saveProgramExpenses: async (programId, expenses, token = readStoredToken()) => {
+  saveScholarshipExpenses: async (scholarshipId, expenses, token = readStoredToken()) => {
     if (!token) throw Object.assign(new Error('Sign in to save your costs.'), { status: 401 });
-    return putProgramExpenses(token, programId, expenses);
+    return putScholarshipExpenses(token, scholarshipId, expenses);
   },
 
   /**
-   * Scholarships ranked for the logged-in student, optionally for one program.
+   * Scholarships ranked for the logged-in student.
    * FastAPI Endpoint: GET /recommendations/scholarships
    * Never rejects. Resolves to { state, data }; state is 'ok' | 'logged-out' | 'not-found' | 'error'.
    */
-  getRecommendations: async (programId = null, token = readStoredToken()) => {
+  getRecommendations: async (token = readStoredToken()) => {
     if (!token) return { state: 'logged-out', data: null };
     try {
-      return { state: 'ok', data: await fetchScholarshipRecommendations(token, programId) };
+      return { state: 'ok', data: await fetchScholarshipRecommendations(token) };
     } catch (err) {
       console.warn('apiService.getRecommendations backend error:', err?.message);
       return { state: getEligibilityErrorState(err), data: null };
@@ -335,41 +229,18 @@ export const apiService = {
    * FastAPI Endpoint: GET /recommendations/scholarships/{id}
    * Never rejects. Resolves to { state, data }.
    */
-  getScholarshipRecommendation: async (id, programId = null, token = readStoredToken()) => {
+  getScholarshipRecommendation: async (id, token = readStoredToken()) => {
     if (!token) return { state: 'logged-out', data: null };
     try {
-      return { state: 'ok', data: await fetchScholarshipRecommendation(token, id, programId) };
+      return { state: 'ok', data: await fetchScholarshipRecommendation(token, id) };
     } catch (err) {
       console.warn('apiService.getScholarshipRecommendation backend error:', err?.message);
       return { state: getEligibilityErrorState(err), data: null };
     }
   },
 
-  // ---------------------------------------------------------------------------
-  // Document Parsing & Analysis Simulator
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Simulate uploading CV or Transcript for OCR / LLM information extraction.
-   * FastAPI Target Endpoint: POST /api/v1/documents/analyze
-   */
+  // Document extraction has no backend implementation.
   extractDocumentData: async (file) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve({
-          fileName: file ? file.name : 'Official_Transcript.pdf',
-          extractedData: {
-            degreeFound: 'BS Computer Science',
-            cgpaFound: '3.65',
-            institutionFound: 'National University of Sciences',
-            gradYearFound: '2024',
-          },
-          missingData: [
-            'Official GRE Quantitative score report missing',
-            'University registrar seal unverified on transcript page 2',
-          ],
-        });
-      }, 800);
-    });
+    return extractDocumentData(file);
   },
 };
